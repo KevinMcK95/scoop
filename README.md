@@ -334,3 +334,8 @@ of nearby structures. Full plan:
 
 ## Yilun's idea
 - [ ] orchastration of literature, data agents.
+
+
+## Xuan's idea
+
+- [ ] locate the exoplanet hosts??
