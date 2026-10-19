@@ -123,3 +123,9 @@ want SCOOP to cover, open an issue.
 
 - [ ] Something related to RL? Just to get practice
 - [ ] Rememeber to pull from MMU
+
+## Duo's plan
+
+Duo Xu is working on **data reduction and cross-matching across all data sets**
+(standardizing every archive's output into a common schema, then matching
+sources across surveys). Full plan: [plans/duo_xu.md](plans/duo_xu.md).
