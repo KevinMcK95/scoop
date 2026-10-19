@@ -114,7 +114,10 @@ coordinates and a radius), SCOOP:
    falls inside gravitational-wave, neutrino, GRB or FRB localization regions,
    and which transient alerts have been reported nearby.
 5. **Gathers the literature** – papers that mention objects in the region, or
-   that address the requested topic, via ADS and arXiv.
+   that address the requested topic, via ADS and arXiv. "Literature" here also
+   covers **observing proposals** (HST, JWST, Chandra, ALMA and other
+   facilities), whether or not the observations have happened yet, and
+   **Astronomer's Telegrams (ATels)** and GCN Circulars for transients.
 6. **Summarizes** – an LLM-written digest of the region or topic: what's there,
    what has observed it, what's been published, and what's notable or open.
 7. **Downloads** – fetches the selected images, spectra and tables to disk,
@@ -136,7 +139,7 @@ coordinates and a radius), SCOOP:
 | Time domain | ZTF, ATLAS, Gaia alerts, TNS transient reports |
 | Multi-messenger | LIGO/Virgo/KAGRA GW sky maps (GraceDB), IceCube neutrinos, GCN GRB localizations, CHIME FRBs |
 | Object databases | SIMBAD, NED (merged into one profile per object) |
-| Literature | NASA ADS, arXiv |
+| Literature | NASA ADS, arXiv, observing proposals (HST, JWST, Chandra, ALMA, …), Astronomer's Telegrams, GCN Circulars |
 
 Coverage will grow incrementally; each source is implemented as a pluggable
 module so new archives can be added without touching the core.
@@ -165,6 +168,8 @@ result.spectra        # spectra with download links
 result.images         # image cutouts / previews
 result.localizations  # GW / neutrino / GRB / FRB regions containing the position
 result.papers         # ADS/arXiv records, ranked by relevance
+result.proposals      # observing programs targeting the region, incl. not-yet-executed ones
+result.telegrams      # ATels / GCN Circulars about transients in the region
 print(result.summary) # natural-language digest
 
 result.download("m87_data/", kinds=["spectra", "images"])  # fetch the files
@@ -218,7 +223,7 @@ flowchart TD
 | **Resolver agent** | Turns names, groups and object classes into concrete targets: "Sculptor Group" into member galaxies, "QSOs near M31" into a catalog selection, and so on (Sesame, SIMBAD, NED, VizieR). |
 | **Object-database agent** | Pulls everything SIMBAD and NED hold on each object and merges it into one profile: all identifiers and aliases, object types, positions, redshifts and velocities, distances (including NED's redshift-independent distances), photometry and SEDs, sizes and morphology, and notes. SIMBAD is strongest for stars and Galactic objects and NED for extragalactic ones, so between them they cover most targets. Every value keeps its source, and where the two databases disagree both values are kept and the difference flagged. Each database's bibliography for the object is passed to the literature agent. |
 | **Data agents** | One agent per kind of data, each knowing the archives and protocols for its area: **imaging**, **spectroscopy**, **catalogs & astrometry**, **time domain & transients**, and **multi-messenger** (GW sky maps, neutrinos, GRBs, FRBs). Within these, agents can be split further by wavelength regime: radio/(sub)mm, IR, optical, UV, X-ray and gamma-ray. |
-| **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. |
+| **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. Also finds **observing proposals** that target the objects or region (HST, JWST, Chandra, ALMA and others), including approved programs whose observations haven't been taken yet, and **Astronomer's Telegrams** and GCN Circulars for transient sources. |
 | **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists (see [Duo's plan](#duos-plan)). |
 | **Summary agent** | Writes the plain-language digest of the data and the literature, with every claim cited to a paper or dataset. |
 | **Download agent** | Fetches the images, spectra and tables the user selects, with caching and a manifest of where each file came from. |
@@ -249,6 +254,13 @@ Splitting the work this way means:
   objects found, then an LLM agent reads abstracts (and observation metadata)
   to write a cited summary. Every claim in the summary links back to a paper or
   dataset.
+- **Proposals count as literature.** A proposal abstract says what a team
+  thinks is interesting about a source and what they plan to do, which is
+  valuable even before any data exist. Approved but unexecuted programs also
+  show what data is coming, and who to talk to about it.
+- **Telegrams for transients.** ATels and GCN Circulars are often the first,
+  and sometimes only, report on a transient. They are collected alongside the
+  papers and time-domain data for any transient in the region.
 - **Natural-language front end.** An LLM turns the user's request into a
   structured query plan and calls the source modules as tools. It never
   invents data: every object, dataset and paper in a result comes from an
@@ -271,6 +283,8 @@ Splitting the work this way means:
 - [ ] ADS / arXiv literature retrieval
 - [ ] LLM-generated, citation-backed summaries
 - [ ] Topic-based literature search and summaries
+- [ ] Observing proposals (HST, JWST, Chandra, ALMA, …), including not-yet-executed programs
+- [ ] Astronomer's Telegrams and GCN Circulars for transients
 - [ ] Direct download of images, spectra and tables
 - [ ] Chat interface with follow-up refinement
 - [ ] Aladin Lite sky view in the HTML report
