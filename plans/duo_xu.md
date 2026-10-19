@@ -2,7 +2,8 @@
 
 **Owner:** Duo Xu ([@xuduo117](https://github.com/xuduo117))
 **Started:** 2026-10-19
-**Status:** planning
+**Status:** prototype on branch `duo/evaluation-prototype`, see
+[evaluation/README.md](../evaluation/README.md)
 
 > **Change of scope (2026-10-19):** I was originally going to work on data
 > reduction and cross-matching across data sets. After discussing it as a
@@ -49,21 +50,21 @@ If you're writing an agent, the one thing I need from you is under
 
 ## 1. Is it real? (catching made-up results)
 
-- [ ] **Provenance required** – every record must carry its archive, native ID,
+- [x] **Provenance required** – every record must carry its archive, native ID,
       the query that produced it, an access URL and a retrieval time. A record
       without provenance fails.
-- [ ] **Look each ID up again** – look up MAST `obs_id`, Gaia `source_id`,
+- [x] **Look each ID up again** – look up MAST `obs_id`, Gaia `source_id`,
       SIMBAD identifiers, ADS bibcodes and arXiv IDs directly, and confirm they
       exist and that RA/Dec, instrument, date, title and authors match what
       SCOOP reported.
-- [ ] **Downloaded files** – each file opens as valid FITS (not an HTML error
+- [x] **Downloaded files** – each file opens as valid FITS (not an HTML error
       page saved as `.fits`), its size or checksum matches the archive's
       listing, and header keywords (`TELESCOP`, `INSTRUME`, `DATE-OBS`, WCS)
       match the reported metadata.
-- [ ] **Papers** – the bibcode resolves, and the paper is actually linked to
+- [x] **Papers** – the bibcode resolves, and the paper is actually linked to
       the object (it appears in the object's SIMBAD bibliography or an ADS
       `object:` search).
-- [ ] **Sanity rules** – cheap checks that are good at catching inventions:
+- [x] **Sanity rules** – cheap checks that are good at catching inventions:
       JWST data before 2022 or HST before 1990, a filter that doesn't exist on
       that instrument, exposure time ≤ 0, a spectrum's wavelength range
       outside what its instrument covers.
@@ -73,16 +74,19 @@ If you're writing an agent, the one thing I need from you is under
 
 ## 2. Is it in the right place? (field of view)
 
-- [ ] **Name resolution** – SCOOP's coordinates for a named target agree with
+- [x] **Name resolution** – SCOOP's coordinates for a named target agree with
       Sesame/SIMBAD/NED queried directly, within a tolerance.
-- [ ] **Catalog sources** – the distance from the center is at most the radius
+- [x] **Catalog sources** – the distance from the center is at most the radius
       (plus a small tolerance for positional errors).
-- [ ] **Images and observations** – the actual footprint (`s_region`, via
+- [x] **Images and observations** – the actual footprint (`s_region`, via
       `mocpy`/`regions`) overlaps the cone, not just the pointing center.
       Report what fraction of the cone each image covers.
-- [ ] **Downloaded images** – using the file's WCS, the target falls inside
+- [x] **Downloaded images** – using the file's WCS, the target falls inside
       the image and not on a blank or NaN region.
-- [ ] **Spectra** – the fiber or slit position is inside the cone.
+- [x] **Spectra** – the fiber or slit position is inside the cone.
+- [x] **GW localizations** – re-download the sky map, confirm it is for the
+      claimed event, and recompute the target's credible level (tested on
+      NGC 4993 / GW170817).
 - [ ] **Plain-language queries** – "within 1 degree of M31" becomes a 1° radius
       in the query plan, not 1 arcmin.
 - [ ] **Known coordinate bugs** – RA in hours mistaken for degrees, wrap-around
@@ -97,16 +101,16 @@ If you're writing an agent, the one thing I need from you is under
       - **recall**: how much of what the archive has SCOOP found;
       - **precision**: how much of what SCOOP returned is genuinely in the
         archive's answer.
-- [ ] **Truncated results** – a row count of exactly 50 or 2000 usually means a
+- [x] **Truncated results** – a row count of exactly 50 or 2000 usually means a
       default row limit was hit (e.g. VizieR's 50-row default in
       `astroquery`). Compare against a `COUNT(*)` query to the archive.
-- [ ] **Archive status table** – archive × query: returned / empty / failed /
+- [x] **Archive status table** – archive × query: returned / empty / failed /
       timed out. "The archive has nothing here" must be distinguishable from
       "the agent failed"; the README promises failures are reported, not
       hidden.
-- [ ] **Must-include lists** – for a few famous targets, a hand-written list of
+- [x] **Must-include lists** – for a few famous targets, a hand-written list of
       what has to appear (e.g. the 2019 EHT papers for M87).
-- [ ] **Downloads** – every entry in the download manifest has a non-empty file
+- [x] **Downloads** – every entry in the download manifest has a non-empty file
       on disk.
 
 ## 4. Is it correct? (values)
