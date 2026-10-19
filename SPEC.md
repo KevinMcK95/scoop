@@ -1,5 +1,5 @@
 # SCOOP (Sky Cone of Observations and Papers), Team 1
-Members: Radha Mastandrea, Kevin McKinnon, Duo Xu, Xuan Ji
+Members: Radha Mastandrea, Kevin McKinnon, Duo Xu, Xuan Ji, Yilun Guan
 Repo: https://github.com/KevinMcK95/scoop.git
 
 ## 1. Task
