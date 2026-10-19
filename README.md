@@ -25,8 +25,12 @@ literature-and-summary half of the tool.
 > working on a source (through papers, proposals and telegrams) is meant to
 > help people find related work and collaborators, and to credit that work.
 
-> **Status:** early development. This README describes the project's goals and
-> planned design; interfaces below are provisional.
+> **Status:** early development. Core data models and an optional LangGraph
+> chat/tool-loop scaffold are implemented, alongside a fixture-backed SvelteKit
+> workspace sketch. Live archive tools and the end-user Python/CLI examples below
+> remain planned. Start with the [web workspace](plans/web_workspace.md),
+> [LangGraph chat layout](plans/langgraph_chat.md), and
+> [core data model](plans/core_data_model.md).
 
 SCOOP is being built as part of the
 [Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
@@ -153,14 +157,42 @@ module so new archives can be added without touching the core.
 
 ## Installation
 
-SCOOP is developed against Python 3.11. `requirements.txt` pins every package
-to the exact versions in the development environment:
+SCOOP targets Python 3.11+. The core has no runtime dependencies. Install the
+optional LangGraph chat layer from the repository root with:
+
+```bash
+pip install -e '.[chat]'
+```
+
+Supply a tool-calling model and application tools; no provider or live archive
+connection is configured by this extra. See the
+[chat layout and invocation example](plans/langgraph_chat.md).
+
+For the broader astronomy workshop environment, `requirements.txt` pins the
+packages from the original development environment:
 
 ```bash
 conda create -n scoop python=3.11
 conda activate scoop
 pip install -r requirements.txt
 ```
+
+## Web workspace sketch
+
+The SvelteKit frontend lives in [`web/`](web/README.md). It combines chat, an
+Aladin Lite sky view, and a literature panel with shared selection context.
+It currently uses clearly labeled fixtures, not live archive or ADS results.
+
+```bash
+cd web
+npm ci
+npm run dev -- --host 127.0.0.1
+```
+
+See the [workspace architecture](plans/web_workspace.md). The separate
+[shared ADS service](plans/ads_service.md) supports structured metadata searches
+and optional LangGraph tools; HTTP routes and a live frontend connection remain
+future work. Install its Python dependencies with `pip install -e '.[chat,literature]'`.
 
 ## Planned usage
 
@@ -195,9 +227,15 @@ scoop chat   # interactive session
 
 ## Agent architecture
 
-SCOOP splits the work across many specialized agents rather than one large
-one. An orchestrator hands out tasks, the data agents search archives in
-parallel, and a compiler agent assembles their results into one answer.
+The initial implementation is a **LangGraph chat agent with typed tools**:
+`START → agent → tools → agent → END`, or a direct answer/clarification when no
+tool call is needed. Conversation messages and tool-published result snapshots
+are checkpointed separately; archive access stays in deterministic handlers and
+adapters. See the [implemented layout](plans/langgraph_chat.md).
+
+The specialized-agent diagram below is a longer-term sketch, not the current
+runtime. We will add separate agent roles only when a concrete workflow needs
+them, rather than requiring a planner/compiler pipeline for every chat turn.
 
 ```mermaid
 flowchart TD
@@ -277,7 +315,7 @@ Splitting the work this way means:
 
 ## Roadmap
 
-- [ ] Core query object and result schema
+- [x] Initial query and result models ([scope and limitations](plans/core_data_model.md))
 - [ ] Orchestrator and a shared message format for passing tasks and results between agents
 - [ ] Natural-language query parsing into structured query plans
 - [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)

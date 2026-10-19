@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scoop-sky"
+version = "0.1.0"
+description = "Provenance-bearing astronomical inventories and tool-driven chat"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+literature = ["httpx>=0.28,<1"]
+chat = [
+    "langgraph>=1.2.16,<2",
+    "langchain-core>=1.6.12,<2",
+]
+server = [
+    "scoop-sky[chat,literature]",
+    "starlette>=0.46,<2",
+    "uvicorn>=0.34,<1",
+    "langchain-openai>=1,<2",
+]
+
+[tool.setuptools.packages.find]
+include = ["scoop", "scoop.*"]
