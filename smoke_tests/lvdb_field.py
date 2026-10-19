@@ -15,7 +15,7 @@ Outputs in --out:
     cache/                    raw query results (re-used on later runs)
 
 Usage:
-    python smoke_tests/draco_hst_jwst_gaia.py --out <dir> [--lvdb-key draco_1] [--n-rhalf 2]
+    python smoke_tests/lvdb_field.py --out <dir> [--lvdb-key draco_1] [--n-rhalf 2]
         [--show-qso-candidates] [--serve]
 """
 
@@ -35,6 +35,8 @@ from astropy.coordinates import Angle, SkyCoord
 from astropy.table import Table, join
 from astropy.time import Time
 
+from ids import check_id_columns, to_int_id
+
 LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
             "v1.1.1/comb_all.ecsv")
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
@@ -47,6 +49,7 @@ COLOR = {
     "HST": "#2a78d6",          # categorical slot 1
     "JWST": "#eb6834",         # slot 2
     "extragalactic": "#1baf7a",  # slot 3
+    "simbad": "#eda100",       # slot 4 (distinct marker shape too)
     "star": "#a3a29b",         # neutral context
     "ink": "#0b0b0b",
     "ink2": "#52514e",
@@ -338,6 +341,214 @@ def query_qso_catalogs(tgt, radius_deg: float, cache: Path):
     return out["milliquas"], out["quaia"]
 
 
+SKYSERVER_SQL = "https://skyserver.sdss.org/dr20/SkyServerWS/SearchTools/SqlSearch"
+DATALAB_TAP = "https://datalab.noirlab.edu/tap"
+SYSTEM_CA = "/etc/ssl/cert.pem"   # certifi lacks SkyServer's root; never disable verification
+
+
+def sdss_sql(sql: str) -> Table:
+    import requests
+    params = {"cmd": sql, "format": "csv"}
+    try:
+        r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
+    except requests.exceptions.SSLError:
+        r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=SYSTEM_CA)
+    r.raise_for_status()
+    text = r.text.split("\n", 1)[1] if r.text.startswith("#Table") else r.text
+    return Table.read(text, format="ascii.csv")
+
+
+def query_spectra(tgt, radius_deg: float, cache: Path):
+    """Index rows (not the spectra themselves) for SDSS DR20 and DESI DR1 in the region.
+
+    SDSS: allspec (SDSS-I to V, incl. APOGEE and MaNGA), plus the Gaia IDs SDSS-V
+    records in spAll. DESI: zpix, plus Milky Way Survey parameters and Gaia IDs.
+    Spectrum files are only fetched when a user follows a link.
+    """
+    p_sdss, p_desi = cache / "sdss_allspec.ecsv", cache / "desi_dr1.ecsv"
+    if p_sdss.exists() and p_desi.exists():
+        return Table.read(p_sdss), Table.read(p_desi)
+    r_arcmin = radius_deg * 60
+    cone = f"dbo.fGetNearbyAllspecEq({tgt['ra']}, {tgt['dec']}, {r_arcmin}) AS n"
+    n = int(sdss_sql(f"SELECT COUNT(*) AS n FROM {cone}")["n"][0])
+    if n >= 500_000:
+        raise RuntimeError(f"{n} SDSS spectra: above the SkyServer row limit; split the region")
+    sdss = sdss_sql(
+        "SELECT n.distance, a.allspec_id, a.sdss_phase, a.observatory, a.instrument, a.survey, "
+        "a.programname, a.ra, a.dec, a.mjd, a.sas_url, a.cas_url, a.apogee_id, a.sdss_id "
+        f"FROM {cone} JOIN allspec AS a ON a.allspec_id = n.allspec_id")
+    if len(sdss) and float(np.max(sdss["distance"])) > 1.01 * r_arcmin:
+        note("Warning: SDSS cone distances exceed the requested radius; the radius units "
+             "of fGetNearbyAllspecEq may not be arcminutes.")
+    # SDSS-V records a Gaia ID per object (sdss_id); attach it to every spectrum of that object.
+    spall = sdss_sql(
+        "SELECT s.sdss_id, s.gaia_id FROM "
+        f"dbo.fGetNearbySpAllEq({tgt['ra']}, {tgt['dec']}, {r_arcmin}) AS n "
+        "JOIN spAll AS s ON s.specobjid = n.specobjid WHERE s.gaia_id > 0")
+    gmap = {_int(a): _int(b) for a, b in zip(spall["sdss_id"], spall["gaia_id"])} if len(spall) else {}
+    sdss["survey_gaia_id"] = [gmap.get(_int(x), 0) for x in sdss["sdss_id"]]
+    sdss["survey_gaia_release"] = "unknown"   # not documented in the pages we checked
+
+    import pyvo
+    tap = pyvo.dal.TAPService(DATALAB_TAP)
+    # Data Lab's TAP has no ADQL geometry; it takes the Q3C function in this form.
+    desi = tap.search(
+        "SELECT targetid, mean_fiber_ra, mean_fiber_dec, z, zerr, zwarn, spectype, subtype, "
+        "survey, program, healpix, zcat_primary, mean_mjd FROM desi_dr1.zpix WHERE "
+        f"'t' = q3c_radial_query(mean_fiber_ra, mean_fiber_dec, {tgt['ra']}, {tgt['dec']}, "
+        f"{radius_deg})").to_table()
+    stars = np.unique(np.asarray(desi["targetid"])[np.asarray(desi["spectype"], str) == "STAR"])
+    mws_rows = []
+    for k in range(0, len(stars), 500):
+        ids = ",".join(str(int(i)) for i in stars[k:k + 500])
+        mws_rows.append(tap.search(
+            "SELECT targetid, rv_adop, rv_err, feh, feh_err, teff, logg, source_id, ref_cat "
+            f"FROM desi_dr1.mws WHERE targetid IN ({ids})").to_table())
+    if mws_rows:
+        from astropy.table import vstack, unique
+        mws = unique(vstack(mws_rows), keys="targetid")
+        desi = join(desi, mws, keys="targetid", join_type="left")
+    # DESI's ref_cat 'G2' means the ID is a Gaia DR2 source_id.
+    desi["survey_gaia_release"] = "DR2"
+    desi["survey_gaia_id"] = [
+        _int(sid) if "ref_cat" in desi.colnames and str(rc) == "G2" else 0
+        for sid, rc in zip(desi["source_id"] if "source_id" in desi.colnames else [0] * len(desi),
+                           desi["ref_cat"] if "ref_cat" in desi.colnames else [""] * len(desi))]
+    for t, p in ((sdss, p_sdss), (desi, p_desi)):
+        for c in t.colnames:
+            if t[c].dtype == object:
+                t[c] = t[c].astype(str)
+        t.write(p, overwrite=True)
+    return sdss, desi
+
+
+def _int(x) -> int:
+    """Exact integer ID (see ids.py); 0 if missing."""
+    return to_int_id(x)
+
+
+def match_spectra_to_gaia(gaia: Table, sdss: Table, desi: Table, cache: Path,
+                          radius_arcsec: float = 1.0):
+    """Gaia DR3 source_id for each spectrum, by ID where possible, else by position.
+
+    Order: a Gaia ID the survey recorded (as DR3, or mapped from DR2 through
+    gaiadr3.dr2_neighbourhood); for APOGEE, its 2MASS ID through
+    gaiadr3.tmass_psc_xsc_best_neighbour; otherwise the nearest Gaia source
+    within radius_arcsec, flagged if two are that close.
+    """
+    ids = np.asarray(gaia["source_id"])
+    in_field = set(ids.tolist())
+
+    # 2MASS designations of the field's Gaia sources.
+    p_tm = cache / "gaia_tmass.ecsv"
+    if p_tm.exists():
+        tm = Table.read(p_tm)
+    else:
+        parts = []
+        for k in range(0, len(ids), 1000):
+            res, _ = run_tap("SELECT source_id, original_ext_source_id FROM "
+                             "gaiadr3.tmass_psc_xsc_best_neighbour WHERE source_id IN ("
+                             + ",".join(str(i) for i in ids[k:k + 1000]) + ")", "2MASS neighbours")
+            parts.append(res)
+        from astropy.table import vstack
+        tm = vstack(parts) if parts else Table(names=("source_id", "original_ext_source_id"))
+        tm.write(p_tm, overwrite=True)
+    tmass_to_gaia = {str(d): int(g) for g, d in zip(tm["source_id"], tm["original_ext_source_id"])}
+
+    # Survey Gaia IDs that aren't DR3 IDs in this field: try them as DR2 IDs.
+    # DESI IDs are DR2 (always map them); SDSS-V's release is unknown (try DR3 first).
+    dr2_ids = sorted(({_int(i) for i in desi["survey_gaia_id"]}
+                      | ({_int(i) for i in sdss["survey_gaia_id"]} - in_field)) - {0})
+    dr2_to_dr3 = {}
+    for k in range(0, len(dr2_ids), 1000):
+        res, _ = run_tap("SELECT dr2_source_id, dr3_source_id, angular_distance FROM "
+                         "gaiadr3.dr2_neighbourhood WHERE dr2_source_id IN ("
+                         + ",".join(str(i) for i in dr2_ids[k:k + 1000]) + ")", "DR2 neighbourhood")
+        best = {}
+        for d2, d3, ang in zip(res["dr2_source_id"], res["dr3_source_id"], res["angular_distance"]):
+            if int(d3) in in_field and (int(d2) not in best or ang < best[int(d2)][1]):
+                best[int(d2)] = (int(d3), float(ang))
+        dr2_to_dr3.update({k2: v[0] for k2, v in best.items()})
+
+    gc = SkyCoord(gaia["ra"], gaia["dec"], unit="deg")
+    for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
+        gid = np.zeros(len(t), np.int64)
+        method = np.full(len(t), "", dtype="U32")
+        sep_out = np.full(len(t), np.nan)
+        if len(t) and len(gaia):
+            sc = SkyCoord(t[ra], t[dec], unit="deg")
+            i1, s1, _ = sc.match_to_catalog_sky(gc)
+            _, s2, _ = sc.match_to_catalog_sky(gc, nthneighbor=2)
+            apogee = (np.asarray(t["apogee_id"], str) if "apogee_id" in t.colnames
+                      else np.full(len(t), ""))
+            release = str(t["survey_gaia_release"][0]) if len(t) else ""
+            for k in range(len(t)):
+                sid = _int(t["survey_gaia_id"][k])
+                tmass = apogee[k][2:] if apogee[k].startswith("2M") else ""
+                if sid and release != "DR2" and sid in in_field:
+                    gid[k], method[k] = sid, "Gaia DR3 ID"
+                elif sid and sid in dr2_to_dr3:
+                    gid[k], method[k] = dr2_to_dr3[sid], "Gaia DR2 ID"
+                elif tmass and tmass in tmass_to_gaia:
+                    gid[k], method[k] = tmass_to_gaia[tmass], "2MASS ID"
+                elif s1[k] < radius_arcsec * u.arcsec:
+                    gid[k] = ids[i1[k]]
+                    method[k] = ("position (ambiguous)" if s2[k] < radius_arcsec * u.arcsec
+                                 else "position")
+                if gid[k]:
+                    j = np.flatnonzero(ids == gid[k])[0]
+                    sep_out[k] = sc[k].separation(gc[j]).arcsec
+                    # An ID match should agree with position, allowing for proper
+                    # motion over up to ~25 yr between the survey epoch and Gaia's.
+                    pm = np.hypot(float(np.ma.filled(gaia["pmra"][j], 0)),
+                                  float(np.ma.filled(gaia["pmdec"][j], 0)))
+                    if "ID" in method[k] and sep_out[k] > 2 + 0.025 * pm:
+                        method[k] += " (position offset: check)"
+        t["gaia_source_id"], t["match_method"], t["match_sep_arcsec"] = gid, method, sep_out
+    gaia["has_sdss"] = np.isin(ids, np.asarray(sdss["gaia_source_id"]))
+    gaia["has_desi"] = np.isin(ids, np.asarray(desi["gaia_source_id"]))
+
+
+def query_simbad_galaxies(tgt, radius_deg: float, cache: Path) -> Table:
+    """SIMBAD galaxies (object type G and descendants, minus the AGN family)."""
+    path = cache / "simbad_galaxies.ecsv"
+    if path.exists():
+        return Table.read(path)
+    from astroquery.simbad import Simbad
+    circle = (f"CONTAINS(POINT('ICRS', ra, dec), "
+              f"CIRCLE('ICRS', {tgt['ra']}, {tgt['dec']}, {radius_deg})) = 1")
+    cols = "main_id, ra, dec, otype, galdim_majaxis, galdim_minaxis, galdim_angle"
+    gal = with_retries(lambda: Simbad.query_tap(
+        f"SELECT {cols} FROM basic WHERE {circle} AND otype = 'G..'"), "SIMBAD galaxies")
+    agn = with_retries(lambda: Simbad.query_tap(
+        f"SELECT main_id FROM basic WHERE {circle} AND otype = 'AGN..'"), "SIMBAD AGN")
+    gal = gal[~np.isin(np.asarray(gal["main_id"], str), np.asarray(agn["main_id"], str))]
+    for c in gal.colnames:
+        if gal[c].dtype == object:
+            gal[c] = gal[c].astype(str)
+    gal.write(path, overwrite=True)
+    return gal
+
+
+def match_gaia_to_galaxies(sg: Table, gaia: Table, radius_arcsec: float = 2.0) -> Table:
+    """For each SIMBAD galaxy, the nearest Gaia source and how Gaia classified it."""
+    sg["gaia_source_id"] = np.zeros(len(sg), np.int64)
+    for c in ("gaia_match", "gaia_gal_cand", "gaia_qso_cand", "gaia_2p"):
+        sg[c] = np.zeros(len(sg), bool)
+    if not len(sg) or not len(gaia):
+        return sg
+    idx, sep, _ = SkyCoord(sg["ra"], sg["dec"], unit="deg").match_to_catalog_sky(
+        SkyCoord(gaia["ra"], gaia["dec"], unit="deg"))
+    ok = sep < radius_arcsec * u.arcsec
+    j = idx[ok]
+    sg["gaia_match"][ok] = True
+    sg["gaia_source_id"][ok] = np.asarray(gaia["source_id"])[j]
+    sg["gaia_gal_cand"][ok] = np.asarray(gaia["is_gal_cand"])[j]
+    sg["gaia_qso_cand"][ok] = np.asarray(gaia["is_qso_cand"])[j]
+    sg["gaia_2p"][ok] = np.ma.filled(gaia["astrometric_params_solved"], 0)[j] == 3
+    return sg
+
+
 def as_bool(col) -> np.ndarray:
     """Booleans arrive as bool (ESA) or 0/1 ints (Heidelberg), possibly masked."""
     arr = np.ma.filled(np.ma.asarray(col), 0)
@@ -348,7 +559,7 @@ def as_bool(col) -> np.ndarray:
 
 # ── Plot ─────────────────────────────────────────────────────────────────────
 
-def make_plot(tgt, sel, shapes_list, planned, gaia, mq, out_png: Path,
+def make_plot(tgt, sel, shapes_list, planned, gaia, mq, sg, out_png: Path,
               show_qso_candidates: bool = False):
     import matplotlib
     matplotlib.use("Agg")
@@ -403,11 +614,13 @@ def make_plot(tgt, sel, shapes_list, planned, gaia, mq, out_png: Path,
                edgecolor=COLOR["surface"], lw=0.8, alpha=0.85, zorder=6)
     ax.scatter(xi[crf], eta[crf], s=150, marker="*", facecolor=COLOR["extragalactic"],
                edgecolor=COLOR["surface"], lw=0.8, zorder=7)
+    ax.scatter(sg["xi"], sg["eta"], s=150, marker="o", facecolor="none",
+               edgecolor=COLOR["simbad"], lw=1.4, zorder=4)
     bad = gaia["trusted_qso"] & ~gaia["qso_astrometry_ok"]
     ax.scatter(xi[bad], eta[bad], s=260, marker="o", facecolor="none",
                edgecolor=COLOR["ink"], lw=1.2, zorder=8)
 
-    # Draco
+    # Target
     for n_r, ls in ((1, "-"), (N_RHALF, (0, (6, 3)))):
         ex, ey = ellipse_outline(tgt, n_r)
         ax.plot(ex, ey, color=COLOR["ink"], lw=2 if n_r == 1 else 1.4, ls=ls, zorder=6)
@@ -454,6 +667,8 @@ def make_plot(tgt, sel, shapes_list, planned, gaia, mq, out_png: Path,
                    label=f"QSO candidates that are Gaia RR Lyrae ({int(rrl.sum())})"),
         ]
     handles += [
+        Line2D([], [], ls="", marker="o", mfc="none", mec=COLOR["simbad"], ms=11, mew=1.4,
+               label=f"SIMBAD galaxies ({len(sg)}; {int(sg['gaia_gal_cand'].sum())} flagged by Gaia)"),
         Line2D([], [], color=COLOR["ink"], lw=2, label="r_half ellipse"),
         Line2D([], [], color=COLOR["ink"], lw=1.4, ls=(0, (6, 3)),
                label=f"{N_RHALF:g} r_half (query region)"),
@@ -495,7 +710,7 @@ def pct(f: float) -> str:
     return "<1%" if 0 < f < 0.005 else f"{f:.0%}"
 
 
-def write_summary(tgt, sel, planned, gaia, mq, best, region_cov, out_md: Path):
+def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov, out_md: Path):
     lines = [f"# {tgt['name']}: HST/JWST imaging and Gaia within "
              f"{N_RHALF:g} half-light radii", ""]
     lines += [f"- Center (LVDB): RA {tgt['ra']:.4f}, Dec {tgt['dec']:+.4f}; "
@@ -535,11 +750,40 @@ def write_summary(tgt, sel, planned, gaia, mq, best, region_cov, out_md: Path):
     rrl = qso & gaia["is_rrlyrae"]
     inside = gaia["r_ell"] <= 1
     frac_in = (lambda m: f"{inside[m].mean():.0%}" if m.any() else "n/a")
+    # Background objects are spread evenly, so ~1/N^2 of them fall inside 1 r_half.
+    rest = qso & ~crf & ~gaia["in_quaia"] & ~rrl
+    expected = 1 / N_RHALF**2
+    cand_txt = (f"- Not shown: the Gaia QSO candidate table ({int(qso.sum())} sources here"
+                + (f", {int(rrl.sum())} of them known Gaia RR Lyrae, i.e. member stars of "
+                   f"{tgt['name']}" if rrl.any() else "") + "). ")
+    if rest.any():
+        f_rest = inside[rest].mean()
+        verdict = ("so most are probably member stars too" if f_rest > 2 * expected
+                   else "consistent with background objects")
+        cand_txt += (f"Background objects should put ~{expected:.0%} inside 1 r_half; "
+                     f"{f_rest:.0%} of the {int(rest.sum())} remaining candidates are there, "
+                     f"{verdict}. Gaia-CRF3: {frac_in(crf)}.")
     lines += ["", "## Gaia DR3", "",
               f"- {len(gaia)} sources inside the region; {int(gaia['clean'].sum())} pass the "
               "standard astrometric quality flags (RUWE ≤ 1.4, ipd_gof_harmonic_amplitude ≤ 0.2, "
               "visibility_periods_used ≥ 9, astrometric_excess_noise_sig ≤ 2).",
               f"- Galaxy candidates: {int(gal.sum())}.", "",
+              "## Spectra", "",
+              "- SDSS (DR20 index): " + (", ".join(f"{k} {v}" for k, v in sorted(Counter(np.asarray(sdss["instrument"], str)).items())) or "none")
+              + f" spectra; {int(gaia['has_sdss'].sum())} Gaia sources have one (matched by ID, or within 1″).",
+              "- DESI DR1: " + (", ".join(f"{k} {v}" for k, v in sorted(Counter(np.asarray(desi["spectype"], str)).items())) or "none")
+              + f"; {int(gaia['has_desi'].sum())} Gaia sources have one"
+              + (f"; {int(np.isfinite(np.ma.filled(desi['rv_adop'], np.nan).astype(float)).sum())} DESI stars have Milky Way Survey velocities." if "rv_adop" in desi.colnames else "."),
+              "",
+              "## Galaxies: does Gaia flag them?", "",
+              f"- SIMBAD lists {len(sg)} galaxies (not AGN) in the region; "
+              f"{int(sg['gaia_match'].sum())} have a Gaia source within 2″.",
+              f"- Of those, Gaia flagged {int(sg['gaia_gal_cand'].sum())} as galaxy candidates "
+              f"and {int(sg['gaia_qso_cand'].sum())} as QSO candidates; "
+              f"{int((sg['gaia_match'] & ~sg['gaia_gal_cand'] & ~sg['gaia_qso_cand']).sum())} "
+              "are unflagged and would pass as stars.",
+              f"- {int(sg['gaia_2p'].sum())} of the matched Gaia sources have only a 2-parameter "
+              "solution (no parallax or proper motion), typical of extended sources.", "",
               "## QSOs", "",
               f"- Gaia-CRF3: {int(crf.sum())}; Quaia (G < 20.0): {int(gaia['in_quaia'].sum())}; "
               f"MILLIQUAS v8: {len(mq)}, {int(mq['confirmed'].sum())} confirmed (types: "
@@ -548,11 +792,7 @@ def write_summary(tgt, sel, planned, gaia, mq, best, region_cov, out_md: Path):
               f"- Astrometry: {int((gaia['trusted_qso'] & ~gaia['qso_astrometry_ok']).sum())} of "
               "these have parallax or proper motion inconsistent with zero at 3σ (circled on the "
               "map); don't use them as reference sources without a closer look.",
-              f"- Not shown: the Gaia QSO candidate table ({int(qso.sum())} sources here, "
-              f"{int(rrl.sum())} of them known Gaia RR Lyrae, i.e. Draco member stars). "
-              f"Background objects should be spread evenly, putting ~{1 / N_RHALF**2:.0%} inside "
-              f"1 r_half; {frac_in(qso & ~crf & ~gaia['in_quaia'] & ~rrl)} of the remaining "
-              f"candidates are, so most are also members. Gaia-CRF3: {frac_in(crf)}.",
+              cand_txt,
               "", "## Decisions", ""]
     lines += [f"- {d}" for d in DECISIONS]
     out_md.write_text("\n".join(lines) + "\n")
@@ -605,6 +845,7 @@ def main():
 
     gaia = query_gaia(tgt, query_radius, cache)
     center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
+    check_id_columns(gaia, "Gaia")
     gaia["xi"], gaia["eta"] = tangent_offsets(center, gaia["ra"], gaia["dec"])
     gaia["r_ell"] = elliptical_radius(gaia["xi"], gaia["eta"], tgt)
     gaia = gaia[gaia["r_ell"] <= N_RHALF]
@@ -640,6 +881,32 @@ def main():
     note(f"Showing trusted QSOs only: Gaia-CRF3 ({int(gaia['is_crf'].sum())}), Quaia "
          f"({int(gaia['in_quaia'].sum())}) and MILLIQUAS ({len(mq)}). Quaia comes from "
          f"VizieR, which has only its cleaner G < 20.0 sample.")
+    sg = query_simbad_galaxies(tgt, query_radius, cache)
+    sg["xi"], sg["eta"] = tangent_offsets(center, sg["ra"], sg["dec"])
+    sg = sg[elliptical_radius(sg["xi"], sg["eta"], tgt) <= N_RHALF]
+    sg = match_gaia_to_galaxies(sg, gaia)
+    note(f"Added {len(sg)} SIMBAD galaxies (not AGN) as an independent check on Gaia's "
+         f"galaxy flag: {int(sg['gaia_match'].sum())} have a Gaia source within 2″, and Gaia "
+         f"flagged {int(sg['gaia_gal_cand'].sum())} of those as galaxy candidates.")
+    sdss, desi = query_spectra(tgt, query_radius, cache)
+    for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
+        xi_, eta_ = tangent_offsets(center, t[ra], t[dec])
+        t.remove_rows(np.flatnonzero(elliptical_radius(xi_, eta_, tgt) > N_RHALF))
+    check_id_columns(sdss, "SDSS spectra")
+    check_id_columns(desi, "DESI spectra")
+    check_id_columns(quaia, "Quaia")
+    match_spectra_to_gaia(gaia, sdss, desi, cache)
+    check_id_columns(sdss, "SDSS spectra (matched)")
+    check_id_columns(desi, "DESI spectra (matched)")
+    for name, t in (("SDSS", sdss), ("DESI", desi)):
+        how = Counter(m for m in np.asarray(t["match_method"], str) if m)
+        note(f"Matched {name} spectra to Gaia by " + (", ".join(f"{k} ({v})" for k, v in
+             how.most_common()) or "nothing") + f"; {int((np.asarray(t['gaia_source_id']) == 0).sum())} "
+             "have no Gaia match (often galaxies, or stars too faint for Gaia).")
+    note(f"Looked up spectra in the region: {len(sdss)} SDSS spectra (DR20 index, SDSS-I to V "
+         f"incl. APOGEE and MaNGA) and {len(desi)} DESI DR1 spectra; "
+         f"{int(gaia['has_sdss'].sum())} and {int(gaia['has_desi'].sum())} Gaia sources have "
+         f"a match. Click a source in the viewer to see its spectra.")
     note(f"Hid the Gaia QSO candidate table ({int(gaia['is_qso_cand'].sum())} sources here, "
          f"{int((gaia['is_qso_cand'] & gaia['is_rrlyrae']).sum())} of them known Gaia RR "
          f"Lyrae): it's too impure, especially in a dwarf galaxy. Use "
@@ -653,11 +920,16 @@ def main():
     sel[keep_cols].write(f"{stem}_images.csv", overwrite=True)
     gaia.write(f"{stem}_gaia.csv", overwrite=True)
     mq.write(f"{stem}_milliquas.csv", overwrite=True)
-    make_plot(tgt, sel, shapes, planned, gaia, mq, Path(f"{stem}_map.png"),
+    sg.write(f"{stem}_simbad_galaxies.csv", overwrite=True)
+    make_plot(tgt, sel, shapes, planned, gaia, mq, sg, Path(f"{stem}_map.png"),
               show_qso_candidates=args.show_qso_candidates)
-    write_summary(tgt, sel, planned, gaia, mq, best, region_cov, Path(f"{stem}_summary.md"))
+    sdss.write(f"{stem}_sdss_spectra.csv", overwrite=True)
+    desi.write(f"{stem}_desi_spectra.csv", overwrite=True)
+    write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
+                  Path(f"{stem}_summary.md"))
     from sky_viewer import write_viewer
-    write_viewer(Path(f"{stem}_viewer.html"), tgt, N_RHALF, sel, planned, gaia, mq, best,
+    write_viewer(Path(f"{stem}_viewer.html"), tgt, N_RHALF, sel, planned, gaia, mq, sg,
+                 sdss, desi, best,
                  region_cov, DECISIONS, ellipse_outline)
     print(f"Wrote {stem}_viewer.html, _map.png, _images.csv, _gaia.csv, _summary.md")
     if args.serve:

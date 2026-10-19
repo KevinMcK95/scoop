@@ -120,6 +120,38 @@ download from `sas_url`.
 - **SDSS-V Black Hole Mapper redshifts:** SDSS recommends the visually
   inspected / machine-learning redshifts in DR20 VAC #37 over raw `spAll` values.
 
+## Matching spectra to Gaia (checked 2026-10-19)
+
+- **APOGEE:** `apogee_id` is the 2MASS designation with a `2M` prefix; match
+  through Gaia DR3's `tmass_psc_xsc_best_neighbour` (`original_ext_source_id`).
+  All 3,091 APOGEE spectra in Draco matched this way.
+- **SDSS-V optical:** `spAll` has `gaia_id` (and `mwm_boss_allstar` has
+  `gaia_dr3_source_id`); `allspec` has neither, so join through `sdss_id`.
+  In Leo I the `gaia_id` values matched Gaia DR3 directly; the release isn't
+  stated in the pages we checked, so also try them as DR2 IDs.
+- **SDSS-I to IV optical:** no Gaia ID; match by position (~1″).
+- `fGetNearbySpAllEq` cone + `JOIN spAll ON specobjid` works for SDSS-V rows.
+
+## Linking users to spectra (checked 2026-10-19)
+
+Link to **viewer pages, never data files** unless the user asks to download
+(MaNGA cubes are ~150 MB). Checked by fetching the pages' HTML or headers only:
+
+- `allspec.cas_url` (SkyServer explore by ID) works for APOGEE (`apid=`),
+  MaNGA (`mangaid=`) and SDSS-V spectra with an `sId`, but **returns HTTP 500
+  for some plate-era spectra** that are in the DR20 index (also on DR17), and
+  is useless when it ends in `sId=None`.
+- For plate-era (SDSS-I–IV) spectra use the plot service
+  `https://skyserver.sdss.org/dr20/en/get/SpecById.ashx?id=<specobjid>`
+  (a 15–50 kB JPEG of the spectrum; worked for every ID tried), plus the
+  explore page by position
+  (`.../dr20/VisualTools/explore/summary?ra=<ra>&dec=<dec>`), which lists all
+  spectra at that spot but can itself occasionally return 500.
+- Some SDSS-V spectra have neither a SkyServer ID nor an `sdss_id` (21 in
+  Leo I); say there's no viewer link rather than giving a broken one.
+- Zora (https://dr20.sdss.org/zora/) is a JavaScript app; deep links to a
+  target couldn't be checked from a script.
+
 ## Gotchas
 
 - **Duplicates:** all tables include repeat observations; `allspec` also lists

@@ -10,6 +10,34 @@ used_by: [astrometry, photometry, spectra]
 
 # Gaia
 
+## THE MOST IMPORTANT RULE: Gaia IDs are exact 64-bit integers
+
+**Always keep Gaia `source_id`s as full integers (int64) or strings. Never let
+them pass through a float, anywhere.** A Gaia ID has 19 digits; a float64 holds
+only ~15–16, so a float silently turns one star's ID into **another star's**
+ID, with no error. Example from our own code (2026-10-19):
+`1433143832631934848` → `float` → `1433143832631934976`, which attached a DESI
+spectrum to a different star 19″ away.
+
+Where this bites:
+- reading IDs from CSV/JSON with a parser that infers floats, or from columns
+  with missing values (pandas turns an int column with NaNs into float);
+- `int(float(x))`, `np.asarray(..., float)`, arithmetic, or averaging on IDs;
+- JavaScript/JSON: numbers above 2^53 lose digits, so write IDs to JSON and
+  web pages **as strings**;
+- spreadsheets (Excel rounds them too).
+
+Do this:
+- parse IDs with an integer parser (`smoke_tests/ids.py: to_int_id`), which
+  refuses floats;
+- check that every ID column is an integer dtype before using it
+  (`check_id_columns`), and fail loudly if not;
+- after writing IDs anywhere (CSV, JSON, HTML), check they round-trip exactly
+  against the source table.
+
+The same applies to other 64-bit IDs: Gaia DR2 IDs, DESI `targetid`, SDSS
+`specobjid`.
+
 ## What's here (DR3, current default)
 
 - Full astrometry (position, parallax, proper motion) for ~1.47 billion sources
@@ -182,6 +210,22 @@ centrally concentrated as Draco's stars (61% inside 1 r_half, vs ~25% expected
 for background objects), so most are members too. None of the 13 Gaia-CRF3
 sources was an RR Lyrae. If the candidate table is shown, at least flag
 `gaiadr3.vari_rrlyrae` matches.
+
+The contamination isn't only RR Lyrae. In Leo I (258 kpc, where RR Lyrae are
+too faint for Gaia), none of the 154 candidates within 3 r_half were RR Lyrae,
+yet 61% of them sat inside 1 r_half (vs ~11% expected for background objects).
+They are red (median BP−RP 1.16, G ≈ 20.2), consistent with Leo I's bright
+giants. The concentration test is the general check; the RR Lyrae match is
+one explanation.
+
+**The galaxy candidate flag is incomplete.** Matching SIMBAD galaxies (object
+type `G..` minus `AGN..`) to Gaia within 2″: in Draco (2 r_half) Gaia flagged
+10 of 17 matched galaxies as galaxy candidates; in Leo I (3 r_half), 4 of 11.
+The rest look like ordinary Gaia sources. Most matched galaxies had only a
+2-parameter solution (`astrometric_params_solved = 3`: no parallax or proper
+motion), which is a useful extra hint that a source may be extended. Use
+SIMBAD/NED galaxies alongside the Gaia flag, and don't treat an unflagged Gaia
+source as a confirmed star.
 
 **Look up secondary tables by `source_id IN (...)`**, not by a spatial join:
 a cone-joined `vari_rrlyrae` query ran for minutes on Heidelberg; the same

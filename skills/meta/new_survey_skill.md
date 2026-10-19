@@ -100,6 +100,20 @@ sources_checked: <date> (<urls or domains>)
 - **Look up secondary tables by ID** (`source_id IN (...)`), not by spatial
   joins: seconds instead of minutes.
 - **Use real footprints** (polygons/MOCs), never pointing centers, for coverage.
+- **Cross-match by ID first, position second.** Record which IDs the survey
+  carries (Gaia DR2 or DR3 source_id, 2MASS designation, its own IDs) and the
+  release they refer to. Map Gaia DR2 IDs to DR3 through
+  `gaiadr3.dr2_neighbourhood`, and 2MASS IDs through
+  `gaiadr3.tmass_psc_xsc_best_neighbour`; fall back to a small radius (~1″),
+  flagging pairs with two candidates. Check every ID match against position,
+  allowing for proper motion between epochs: in Draco an APOGEE star matched
+  by 2MASS ID was 6.3″ from Gaia because it moves 0.4″/yr, so a position match
+  would have missed it.
+- **Never pass 19-digit IDs through floats** (Gaia source_id, DESI targetid):
+  a float can't hold them exactly and silently turns one star's ID into
+  another's. Parse them as integers or strings.
+- **Fetch index rows, not data products,** when building a result; download
+  files only when a user asks for them.
 - **Flag, don't drop**: add quality columns; report how many fail each cut.
 - **Separate trusted from candidate samples** and show only the trusted ones
   by default (the Gaia QSO candidate table in Draco was mostly RR Lyrae).
