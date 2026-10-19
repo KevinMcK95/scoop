@@ -61,6 +61,17 @@ Given a sky position (coordinates or a resolvable name) and a radius, SCOOP:
 Coverage will grow incrementally; each source is implemented as a pluggable
 module so new archives can be added without touching the core.
 
+## Installation
+
+SCOOP is developed against Python 3.11. `requirements.txt` pins every package
+to the exact versions in the development environment:
+
+```bash
+conda create -n scoop python=3.11
+conda activate scoop
+pip install -r requirements.txt
+```
+
 ## Planned usage
 
 ```python
