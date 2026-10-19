@@ -117,3 +117,9 @@ scoop "187.7059 +12.3911" --radius 2arcmin --out m87_scoop/
 
 Ideas, issues and new source modules are welcome. If there's an archive you'd
 want SCOOP to cover, open an issue.
+
+
+## Radha's ideas
+
+- [ ] Something related to RL? Just to get practice
+- [ ] Rememeber to pull from MMU
