@@ -322,10 +322,17 @@ Ideas, issues and new source modules are welcome. If there's an archive you'd
 want SCOOP to cover, open an issue.
 
 
-## Radha's ideas
+## Team and workstreams
 
-- [ ] Something related to RL? Just to get practice
-- [ ] Rememeber to pull from MMU
+- **Radha Mastandrea** — agent orchestration, safety/budget controls, and evaluation metrics.
+- **Kevin McKinnon** — astrometry, Local Volume structures, and imaging inventory.
+- **Duo Xu** — deterministic evaluation and benchmarking.
+- **Xuan Ji** — exoplanet-host agent.
+
+Detailed work plans:
+- [plans/kevin_mckinnon.md](plans/kevin_mckinnon.md)
+- [plans/duo_xu.md](plans/duo_xu.md)
+- [plans/xuanji.md](plans/xuanji.md)
 
 ## Duo's plan
 
