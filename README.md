@@ -123,3 +123,16 @@ want SCOOP to cover, open an issue.
 
 - [ ] Something related to RL? Just to get practice
 - [ ] Rememeber to pull from MMU
+
+## Auto-calibrated cost checking (default command path)
+
+Use the runner below to execute commands through budget checking and automatic
+estimate calibration every run.
+
+```bash
+python3 scripts/auto_calibrated_runner.py "Summarize this abstract" --model gpt-4 --budget-usd 0.05 --output-tokens 300
+```
+
+The runner returns both:
+- budget decision details
+- calibration feedback (estimate vs derived actual)
