@@ -104,18 +104,22 @@ coordinates and a radius), SCOOP:
    collects known objects inside the cone with their identifiers and types.
    Group or class queries ("Sculptor Group", "QSOs") become lists of member
    objects.
-2. **Queries the archives** – observations, images, spectra and catalog
+2. **Merges what SIMBAD and NED know** – for each object, combines the two
+   databases into a single object profile: identifiers, classifications,
+   positions, redshifts and velocities, distances, photometry and their
+   bibliographies, with any disagreements between them flagged.
+3. **Queries the archives** – observations, images, spectra and catalog
    entries overlapping the cone, from as many facilities as possible.
-3. **Checks multi-messenger and transient coverage** – whether the position
+4. **Checks multi-messenger and transient coverage** – whether the position
    falls inside gravitational-wave, neutrino, GRB or FRB localization regions,
    and which transient alerts have been reported nearby.
-4. **Gathers the literature** – papers that mention objects in the region, or
+5. **Gathers the literature** – papers that mention objects in the region, or
    that address the requested topic, via ADS and arXiv.
-5. **Summarizes** – an LLM-written digest of the region or topic: what's there,
+6. **Summarizes** – an LLM-written digest of the region or topic: what's there,
    what has observed it, what's been published, and what's notable or open.
-6. **Downloads** – fetches the selected images, spectra and tables to disk,
+7. **Downloads** – fetches the selected images, spectra and tables to disk,
    with a manifest recording where each file came from.
-7. **Chats** – follow-up questions ("only JWST", "which of these have
+8. **Chats** – follow-up questions ("only JWST", "which of these have
    spectra?", "what do the papers say about the distance?") refine the result
    instead of starting over.
 
@@ -131,7 +135,7 @@ coordinates and a radius), SCOOP:
 | Radio & (sub)mm | VLASS, FIRST, NVSS, LOFAR, ALMA, Planck |
 | Time domain | ZTF, ATLAS, Gaia alerts, TNS transient reports |
 | Multi-messenger | LIGO/Virgo/KAGRA GW sky maps (GraceDB), IceCube neutrinos, GCN GRB localizations, CHIME FRBs |
-| Object databases | SIMBAD, NED |
+| Object databases | SIMBAD, NED (merged into one profile per object) |
 | Literature | NASA ADS, arXiv |
 
 Coverage will grow incrementally; each source is implemented as a pluggable
@@ -155,7 +159,7 @@ from scoop import scoop
 
 result = scoop("M87", radius="2 arcmin")
 
-result.objects        # known sources in the cone (SIMBAD/NED)
+result.objects        # known sources, with merged SIMBAD + NED profiles
 result.observations   # observation records, grouped by facility
 result.spectra        # spectra with download links
 result.images         # image cutouts / previews
@@ -188,6 +192,7 @@ flowchart TD
     U([User]) <--> C[Chat agent]
     C --> O[Orchestrator / planner]
     O --> R[Resolver agent<br/>names, groups, object classes]
+    R --> B[Object-database agent<br/>SIMBAD + NED]
     R --> O
     O --> D{{Data agents, in parallel}}
     O --> L[Literature agent]
@@ -197,6 +202,8 @@ flowchart TD
     D --> T[Time domain & transients]
     D --> M[Multi-messenger<br/>GW, neutrinos, GRBs, FRBs]
     I & S & K & T & M --> X[Compiler agent]
+    B --> X
+    B --> L
     L --> X
     X --> Y[Summary agent]
     X --> DL[Download agent]
@@ -209,6 +216,7 @@ flowchart TD
 | **Chat agent** | Talks with the user, shows the query plan for approval, and handles follow-ups ("only JWST", "which have spectra?") by updating the plan instead of starting over. |
 | **Orchestrator / planner** | Turns the request into a structured plan (targets, regions, object classes, constraints, literature topics), sends tasks to the other agents, and tracks what has come back. |
 | **Resolver agent** | Turns names, groups and object classes into concrete targets: "Sculptor Group" into member galaxies, "QSOs near M31" into a catalog selection, and so on (Sesame, SIMBAD, NED, VizieR). |
+| **Object-database agent** | Pulls everything SIMBAD and NED hold on each object and merges it into one profile: all identifiers and aliases, object types, positions, redshifts and velocities, distances (including NED's redshift-independent distances), photometry and SEDs, sizes and morphology, and notes. SIMBAD is strongest for stars and Galactic objects and NED for extragalactic ones, so between them they cover most targets. Every value keeps its source, and where the two databases disagree both values are kept and the difference flagged. Each database's bibliography for the object is passed to the literature agent. |
 | **Data agents** | One agent per kind of data, each knowing the archives and protocols for its area: **imaging**, **spectroscopy**, **catalogs & astrometry**, **time domain & transients**, and **multi-messenger** (GW sky maps, neutrinos, GRBs, FRBs). Within these, agents can be split further by wavelength regime: radio/(sub)mm, IR, optical, UV, X-ray and gamma-ray. |
 | **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. |
 | **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists (see [Duo's plan](#duos-plan)). |
@@ -255,6 +263,7 @@ Splitting the work this way means:
 - [ ] Natural-language query parsing into structured query plans
 - [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
 - [ ] Name resolution and SIMBAD/NED object lists
+- [ ] Merged SIMBAD + NED object profiles, with provenance and conflict flags
 - [ ] MAST (HST, JWST, TESS, GALEX) observations and spectra
 - [ ] IRSA, HEASARC and ESA archive modules
 - [ ] SDSS / DESI / LAMOST spectra
