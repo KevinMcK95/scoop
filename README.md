@@ -19,6 +19,12 @@ radius), which is what SCOOP does at its core, just across every archive at
 once. And "scoop" also means *the news on something*, which is the
 literature-and-summary half of the tool.
 
+> **A note on the name:** SCOOP is *not* about "scooping" other people's
+> research. It's about getting the latest scoop: staying up to date on what is
+> known and what is being done in a patch of sky. Showing who is already
+> working on a source (through papers, proposals and telegrams) is meant to
+> help people find related work and collaborators, and to credit that work.
+
 > **Status:** early development. This README describes the project's goals and
 > planned design; interfaces below are provisional.
 
