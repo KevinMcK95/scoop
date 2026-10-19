@@ -177,22 +177,28 @@ conda activate scoop
 pip install -r requirements.txt
 ```
 
-## Web workspace sketch
-
-The SvelteKit frontend lives in [`web/`](web/README.md). It combines chat, an
-Aladin Lite sky view, and a literature panel with shared selection context.
-It currently uses clearly labeled fixtures, not live archive or ADS results.
+To try the data side, run a smoke test: it queries HST/JWST imaging, Gaia,
+QSOs and spectra around a nearby galaxy. See
+[smoke_tests/README.md](smoke_tests/README.md):
 
 ```bash
-cd web
-npm ci
-npm run dev -- --host 127.0.0.1
+python smoke_tests/lvdb_field.py --out out/draco --serve
 ```
 
-See the [workspace architecture](plans/web_workspace.md). The separate
-[shared ADS service](plans/ads_service.md) supports structured metadata searches
-and optional LangGraph tools; HTTP routes and a live frontend connection remain
-future work. Install its Python dependencies with `pip install -e '.[chat,literature]'`.
+## Web workspace
+
+The SvelteKit frontend lives in [`web/`](web/README.md): an Aladin Lite sky map
+with layer, chat and results panels sharing one selection context. The Python
+API server streams agent turns to it and serves ADS searches:
+
+```bash
+pip install -e '.[server]'
+python -m scoop.server          # 127.0.0.1:8787; set SCOOP_MODEL and ADS_API_TOKEN
+cd web && npm ci && npm run dev -- --host 127.0.0.1
+```
+
+See the [workspace architecture](plans/web_workspace.md) and the
+[shared ADS service](plans/ads_service.md).
 
 ## Planned usage
 
@@ -246,6 +252,8 @@ flowchart TD
     R --> O
     O --> D{{Data agents, in parallel}}
     O --> L[Literature agent]
+    D --> P[Proposal agent<br/>HST & JWST programs]
+    P --> L
     D --> I[Imaging]
     D --> S[Spectroscopy]
     D --> K[Catalogs & astrometry]
@@ -268,10 +276,18 @@ flowchart TD
 | **Resolver agent** | Turns names, groups and object classes into concrete targets: "Sculptor Group" into member galaxies, "QSOs near M31" into a catalog selection, and so on (Sesame, SIMBAD, NED, VizieR). |
 | **Object-database agent** | Pulls everything SIMBAD and NED hold on each object and merges it into one profile: all identifiers and aliases, object types, positions, redshifts and velocities, distances (including NED's redshift-independent distances), photometry and SEDs, sizes and morphology, and notes. SIMBAD is strongest for stars and Galactic objects and NED for extragalactic ones, so between them they cover most targets. Every value keeps its source, and where the two databases disagree both values are kept and the difference flagged. Each database's bibliography for the object is passed to the literature agent. |
 | **Data agents** | One agent per kind of data, each knowing the archives and protocols for its area: **imaging**, **spectroscopy**, **catalogs & astrometry**, **time domain & transients**, and **multi-messenger** (GW sky maps, neutrinos, GRBs, FRBs). Within these, agents can be split further by wavelength regime: radio/(sub)mm, IR, optical, UV, X-ray and gamma-ray. |
+| **Proposal agent** | Takes the HST and JWST programs behind the observations found (including planned, not-yet-executed JWST observations), fetches their public program pages and proposal abstracts, and summarizes the science that motivated each program, its status, and what came of it. Groups programs by science theme and flags what is still to come. |
 | **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. Also finds **observing proposals** that target the objects or region (HST, JWST, Chandra, ALMA and others), including approved programs whose observations haven't been taken yet, and **Astronomer's Telegrams** and GCN Circulars for transient sources. |
 | **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists. |
 | **Summary agent** | Writes the plain-language digest of the data and the literature, with every claim cited to a paper or dataset. |
 | **Download agent** | Fetches the images, spectra and tables the user selects, with caching and a manifest of where each file came from. |
+
+Each agent works from **skills**: short guides to what each archive holds,
+how to check coverage and cost before downloading, how to query it, its
+gotchas, the default decisions the agent makes, and how it explains them to
+the user (e.g. "Skipping Gaia RVS spectra: they only exist for bright stars,
+and the members of this galaxy are much fainter. Say 'include Gaia RVS' to
+override."). See [skills/index.md](skills/index.md).
 
 Splitting the work this way means:
 
@@ -342,10 +358,17 @@ Ideas, issues and new source modules are welcome. If there's an archive you'd
 want SCOOP to cover, open an issue.
 
 
-## Radha's ideas
+## Team and workstreams
 
-- [ ] Something related to RL? Just to get practice
-- [ ] Rememeber to pull from MMU
+- **Radha Mastandrea** — agent orchestration, safety/budget controls, and evaluation metrics.
+- **Kevin McKinnon** — astrometry, Local Volume structures, and imaging inventory.
+- **Duo Xu** — deterministic evaluation and benchmarking.
+- **Xuan Ji** — exoplanet-host agent.
+
+Detailed work plans:
+- [plans/kevin_mckinnon.md](plans/kevin_mckinnon.md)
+- [plans/duo_xu.md](plans/duo_xu.md)
+- [plans/xuanji.md](plans/xuanji.md)
 
 ## Duo's plan
 

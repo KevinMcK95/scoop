@@ -1,0 +1,13 @@
+{
+ "M87": {
+  "radius_arcmin": 2,
+  "tests": "rich data in many archives, plus well-known papers",
+  "must_include_papers": ["2019ApJ...875L...1E"]
+ },
+ "NGC 4993": {
+  "radius_arcmin": 2,
+  "tests": "GW localization (GW170817), transient literature",
+  "must_include_papers": ["2017ApJ...848L..12A", "2017PhRvL.119p1101A"],
+  "must_include_gw": ["GW170817"]
+ }
+}

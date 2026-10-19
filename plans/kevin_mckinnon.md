@@ -38,8 +38,8 @@ report, the things I need from you are under
 
 - Querying the archives in general (data agents); I'll build on the imaging
   agent's results rather than re-query MAST
-- General cross-matching and epoch propagation across surveys
-  ([Duo's plan](duo_xu.md)); I'll use it rather than write a second matcher
+- General cross-matching and epoch propagation across surveys (dropped from
+  the workshop scope); I only do the targeted matches my products need (below)
 - Literature retrieval and summaries in general; I supply LVDB references as
   extra inputs
 
@@ -151,8 +151,9 @@ which catalogs each QSO appears in rather than merging them into one list.
       inventory (section 5), list the clean QSOs it contains, since they are
       what anchors an absolute proper-motion measurement.
 
-Cross-matching between these catalogs uses the common matcher in
-[Duo's plan](duo_xu.md).
+General cross-matching was dropped from the workshop scope, so these matches
+stay simple and targeted: Quaia and Gaia-CRF3 by Gaia
+`source_id`, MILLIQUAS and SDSS DR16Q by position (e.g. 1.5″).
 
 ## 5. Image inventory: what exists, how deep, how precise, and when
 
@@ -215,8 +216,10 @@ the HTML report) and in static plots.
 - **Literature agent** – accepts a list of references (ADS bibcodes, or
   whatever form the LVDB provides) tagged with the object and property they
   support.
-- **Compiler / cross-matching ([Duo's plan](duo_xu.md))** – Gaia as the
-  astrometric anchor and epoch propagation to a common epoch; I'll reuse these.
+- **Evaluation ([Duo's plan](duo_xu.md))** – every record I return carries
+  the provenance fields Duo's verifier needs (archive, native ID, position,
+  footprint, query, access URL), so my outputs can be checked against the
+  archives.
 - **HTML report** – an Aladin Lite view that accepts extra catalog and
   footprint layers with on/off toggles.
 
