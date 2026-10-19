@@ -1,0 +1,59 @@
+{
+ "_about": "Expected answers for the exoplanet-host agent. Taken from the NASA Exoplanet Archive (pscomppars) and Sesame on 2026-10-19; re-check when the archive adds planets. 'hosts' maps each expected archive hostname to its number of confirmed planets.",
+ "cases": [
+  {
+   "target": "TRAPPIST-1",
+   "tests": "high proper motion: the host is 16 arcsec from its J2000 position, so a small cone misses it",
+   "expect": "hosts",
+   "hosts": {"TRAPPIST-1": 7},
+   "discovery_bibcodes": ["2016Natur.533..221G", "2017Natur.542..456G"]
+  },
+  {
+   "target": "Proxima Centauri",
+   "tests": "very high proper motion: 60 arcsec offset, a 1 arcmin cone only just finds it; archive hostname is 'Proxima Cen'",
+   "expect": "hosts",
+   "hosts": {"Proxima Cen": 2},
+   "discovery_bibcodes": ["2016Natur.536..437A", "2025A&A...700A..11M"]
+  },
+  {
+   "target": "Kepler-90",
+   "tests": "alias: the archive lists this system under hostname 'KOI-351', so get_planets('Kepler-90') fails",
+   "expect": "hosts",
+   "hosts": {"KOI-351": 8},
+   "discovery_bibcodes": ["2014ApJ...781...18C", "2018AJ....155...94S"]
+  },
+  {
+   "target": "HD 209458",
+   "tests": "simple case: one host, one planet",
+   "expect": "hosts",
+   "hosts": {"HD 209458": 1},
+   "discovery_bibcodes": ["2000ApJ...529L..41H"]
+  },
+  {
+   "target": "51 Peg",
+   "tests": "simple case; Sesame's main ID has extra spaces ('*  51 Peg')",
+   "expect": "hosts",
+   "hosts": {"51 Peg": 1},
+   "discovery_bibcodes": ["1995Natur.378..355M"]
+  },
+  {
+   "target": "Kepler-186",
+   "tests": "multi-planet system, two discovery papers",
+   "expect": "hosts",
+   "hosts": {"Kepler-186": 5},
+   "discovery_bibcodes": ["2014ApJ...784...45R", "2014Sci...344..277Q"]
+  },
+  {
+   "target": "M87",
+   "tests": "negative control: no confirmed hosts within 2 arcmin; the agent must say so, not invent any",
+   "expect": "none",
+   "hosts": {}
+  },
+  {
+   "target": "NotARealStar123",
+   "tests": "unresolvable name: the agent must report it, not guess coordinates",
+   "expect": "unresolved",
+   "hosts": {}
+  }
+ ]
+}
