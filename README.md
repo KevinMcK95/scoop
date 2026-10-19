@@ -22,6 +22,12 @@ literature-and-summary half of the tool.
 > **Status:** early development. This README describes the project's goals and
 > planned design; interfaces below are provisional.
 
+SCOOP is being built as part of the
+[Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
+the University of Toronto. In keeping with the workshop's theme, SCOOP is
+designed as a team of cooperating AI agents, each responsible for one part of
+the job (see [Agent architecture](#agent-architecture)).
+
 ---
 
 ## Why
@@ -53,8 +59,21 @@ SCOOP aims to go further in a few directions:
 - **Literature and summaries.** Relevant papers come back with the data, along
   with a cited summary of what they say.
 
-If you use Aladin, please cite Bonnarel et al. 2000, A&AS, 143, 33 (Aladin
-Desktop) and Boch & Fernique 2014, ASPC, 485, 277 (Aladin Lite).
+If you use Aladin, CDS asks for the acknowledgement *"This research has made
+use of 'Aladin sky atlas' developed at CDS, Strasbourg Observatory, France"*
+and the references below, as listed on the
+[Aladin site](https://aladin.cds.unistra.fr/aladin.gml):
+
+- Aladin Desktop: Bonnarel, F., Fernique, P., Bienaymé, O., et al. 2000,
+  "The ALADIN interactive sky atlas", A&AS, 143, 33
+  ([2000A&AS..143...33B](https://ui.adsabs.harvard.edu/abs/2000A%26AS..143...33B))
+- Aladin Lite (v2): Boch, T. & Fernique, P. 2014, "Aladin Lite: Embed your
+  Sky in the Browser", ASP Conf. Ser. 485, ADASS XXIII, 277
+  ([2014ASPC..485..277B](https://ui.adsabs.harvard.edu/abs/2014ASPC..485..277B))
+- Aladin Lite (v3): Baumann, M., Boch, T., Pineau, F.-X., et al. 2022,
+  "Aladin Lite v3: Behind the Scenes of a Major Overhaul", ASP Conf. Ser. 532,
+  ADASS XXX, 7
+  ([2022ASPC..532....7B](https://ui.adsabs.harvard.edu/abs/2022ASPC..532....7B))
 
 ## Example queries
 
@@ -158,6 +177,54 @@ scoop "187.7059 +12.3911" --radius 2arcmin --out m87_scoop/ --download
 scoop chat   # interactive session
 ```
 
+## Agent architecture
+
+SCOOP splits the work across many specialized agents rather than one large
+one. An orchestrator hands out tasks, the data agents search archives in
+parallel, and a compiler agent assembles their results into one answer.
+
+```mermaid
+flowchart TD
+    U([User]) <--> C[Chat agent]
+    C --> O[Orchestrator / planner]
+    O --> R[Resolver agent<br/>names, groups, object classes]
+    R --> O
+    O --> D{{Data agents, in parallel}}
+    O --> L[Literature agent]
+    D --> I[Imaging]
+    D --> S[Spectroscopy]
+    D --> K[Catalogs & astrometry]
+    D --> T[Time domain & transients]
+    D --> M[Multi-messenger<br/>GW, neutrinos, GRBs, FRBs]
+    I & S & K & T & M --> X[Compiler agent]
+    L --> X
+    X --> Y[Summary agent]
+    X --> DL[Download agent]
+    Y --> C
+    DL --> C
+```
+
+| Agent | Job |
+| --- | --- |
+| **Chat agent** | Talks with the user, shows the query plan for approval, and handles follow-ups ("only JWST", "which have spectra?") by updating the plan instead of starting over. |
+| **Orchestrator / planner** | Turns the request into a structured plan (targets, regions, object classes, constraints, literature topics), sends tasks to the other agents, and tracks what has come back. |
+| **Resolver agent** | Turns names, groups and object classes into concrete targets: "Sculptor Group" into member galaxies, "QSOs near M31" into a catalog selection, and so on (Sesame, SIMBAD, NED, VizieR). |
+| **Data agents** | One agent per kind of data, each knowing the archives and protocols for its area: **imaging**, **spectroscopy**, **catalogs & astrometry**, **time domain & transients**, and **multi-messenger** (GW sky maps, neutrinos, GRBs, FRBs). Within these, agents can be split further by wavelength regime: radio/(sub)mm, IR, optical, UV, X-ray and gamma-ray. |
+| **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. |
+| **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists (see [Duo's plan](#duos-plan)). |
+| **Summary agent** | Writes the plain-language digest of the data and the literature, with every claim cited to a paper or dataset. |
+| **Download agent** | Fetches the images, spectra and tables the user selects, with caching and a manifest of where each file came from. |
+
+Splitting the work this way means:
+
+- **Agents run in parallel**, so a slow archive doesn't hold up the others.
+- **Each agent stays focused.** It needs only the instructions and tools for
+  its own area, which keeps prompts short and behavior predictable.
+- **New sources are easy to add.** Covering a new archive or regime means
+  adding or extending one data agent.
+- **Failures stay contained.** If one agent fails, the result reports that
+  gap and still includes everything else.
+
 ## Design sketch
 
 - **Cone in, everything out.** A single query object (center + radius, or an
@@ -184,6 +251,7 @@ scoop chat   # interactive session
 ## Roadmap
 
 - [ ] Core query object and result schema
+- [ ] Orchestrator and a shared message format for passing tasks and results between agents
 - [ ] Natural-language query parsing into structured query plans
 - [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
 - [ ] Name resolution and SIMBAD/NED object lists
