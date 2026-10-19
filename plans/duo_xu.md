@@ -1,16 +1,35 @@
-# Plan: Data reduction & cross-matching
+# Plan: Evaluation & benchmarking
 
 **Owner:** Duo Xu ([@xuduo117](https://github.com/xuduo117))
 **Started:** 2026-10-19
 **Status:** planning
 
-I'm taking on the layer that sits between the archive source modules and the
-final result: taking the heterogeneous tables that each archive returns,
-cleaning them into one common form, and cross-matching them so that every
-physical source in the cone shows up once, with all of its data attached.
+> **Change of scope (2026-10-19):** I was originally going to work on data
+> reduction and cross-matching across data sets. After discussing it as a
+> team, we decided that's too much for a two-day workshop, so SCOOP will stick
+> to literature search and data gathering/downloading. I'm now working on
+> **evaluating** what SCOOP returns instead.
 
-If you're writing a source module, the main thing I need from you is listed
-under [Interfaces](#interfaces-what-i-need-from-other-modules) below.
+The README promises that SCOOP *"never invents data: every object, dataset and
+paper in a result comes from an archive query."* My job is to check that
+promise, and more generally to answer four questions about every result:
+
+1. **Is it real?** Every object, observation, file and paper actually exists
+   in the archive it supposedly came from.
+2. **Is it in the right place?** Everything returned actually lies in or
+   overlaps the region that was asked for.
+3. **Is it complete?** Nothing the archives hold for that region is silently
+   missing.
+4. **Is it correct?** Values (positions, dates, instruments, redshifts,
+   citations) match what the archives say.
+
+The main idea: **the checks are deterministic code that goes back to the
+archives itself**, not an LLM grading another LLM. An agent can easily produce
+a plausible-looking obs ID, bibcode or URL; only re-querying the archive
+catches that.
+
+If you're writing an agent, the one thing I need from you is under
+[Interfaces](#interfaces-what-i-need-from-other-modules) below.
 
 ---
 
@@ -18,119 +37,180 @@ under [Interfaces](#interfaces-what-i-need-from-other-modules) below.
 
 **In scope**
 
-- Reducing raw query results from every source module into a common schema
-- Positional cross-matching of catalog sources across all surveys
-- Associating observations, images and spectra with the matched sources
-- A unified, per-source output table (plus provenance back to each archive)
+- Checks that run on any SCOOP result (a verifier)
+- A fixed benchmark set of queries, with expected answers
+- Scores per query and per archive, collected into a scorecard
 
 **Out of scope (owned elsewhere)**
 
-- Querying the archives themselves (source modules)
-- Literature retrieval and LLM summaries
-- Multi-messenger localization containment checks
+- Querying the archives, literature search, summaries and downloads
+  (the agents being evaluated)
+- Data reduction and cross-matching (dropped from the workshop scope)
 
-## 1. Data reduction / standardization
+## 1. Is it real? (catching made-up results)
 
-Turn every archive's output into rows that can be compared directly.
+- [ ] **Provenance required** – every record must carry its archive, native ID,
+      the query that produced it, an access URL and a retrieval time. A record
+      without provenance fails.
+- [ ] **Look each ID up again** – look up MAST `obs_id`, Gaia `source_id`,
+      SIMBAD identifiers, ADS bibcodes and arXiv IDs directly, and confirm they
+      exist and that RA/Dec, instrument, date, title and authors match what
+      SCOOP reported.
+- [ ] **Downloaded files** – each file opens as valid FITS (not an HTML error
+      page saved as `.fits`), its size or checksum matches the archive's
+      listing, and header keywords (`TELESCOP`, `INSTRUME`, `DATE-OBS`, WCS)
+      match the reported metadata.
+- [ ] **Papers** – the bibcode resolves, and the paper is actually linked to
+      the object (it appears in the object's SIMBAD bibliography or an ADS
+      `object:` search).
+- [ ] **Sanity rules** – cheap checks that are good at catching inventions:
+      JWST data before 2022 or HST before 1990, a filter that doesn't exist on
+      that instrument, exposure time ≤ 0, a spectrum's wavelength range
+      outside what its instrument covers.
+- [ ] **Trick queries** – a nonexistent object (e.g. `NGC 99999`) or an empty
+      patch of sky should come back empty or "not resolved", with nothing
+      invented.
 
-- [ ] **Coordinates** – convert everything to ICRS degrees; record the epoch of
-      each position.
-- [ ] **Epoch propagation** – use Gaia proper motions/parallaxes to move
-      positions to a common epoch before matching (matters for high-PM stars
-      and for old surveys like 2MASS, FIRST, NVSS).
-- [ ] **Positional uncertainties** – extract or estimate a per-source error
-      ellipse (or circular σ) for each survey; fall back to documented survey
-      astrometric precision when a catalog doesn't provide one.
-- [ ] **Photometry** – standardize to a single flux unit (e.g. µJy) alongside
-      magnitudes, convert Vega ↔ AB where needed, and keep filter/band
-      metadata (effective wavelength, bandpass ID from SVO Filter Service).
-- [ ] **Quality flags** – map each survey's flag conventions to a small shared
-      set (good / blended / saturated / artifact / unknown) while keeping the
-      original flags.
-- [ ] **Duplicates within a survey** – collapse repeated detections of the same
-      source (multiple visits, overlapping tiles).
-- [ ] **Units & metadata** – carry everything as `astropy` units/`Table`
-      columns with consistent names.
+## 2. Is it in the right place? (field of view)
 
-## 2. Cross-matching across data sets
+- [ ] **Name resolution** – SCOOP's coordinates for a named target agree with
+      Sesame/SIMBAD/NED queried directly, within a tolerance.
+- [ ] **Catalog sources** – the distance from the center is at most the radius
+      (plus a small tolerance for positional errors).
+- [ ] **Images and observations** – the actual footprint (`s_region`, via
+      `mocpy`/`regions`) overlaps the cone, not just the pointing center.
+      Report what fraction of the cone each image covers.
+- [ ] **Downloaded images** – using the file's WCS, the target falls inside
+      the image and not on a blank or NaN region.
+- [ ] **Spectra** – the fiber or slit position is inside the cone.
+- [ ] **Plain-language queries** – "within 1 degree of M31" becomes a 1° radius
+      in the query plan, not 1 arcmin.
+- [ ] **Known coordinate bugs** – RA in hours mistaken for degrees, wrap-around
+      at RA = 0/360, targets near the poles, Galactic vs. ICRS, mistakes
+      reading sexagesimal coordinates.
 
-- [ ] **Baseline matcher** – `astropy` `search_around_sky` within a radius set
-      by the combined positional uncertainty of the two catalogs.
-- [ ] **Resolution-aware matching** – handle very different beam/PSF sizes
-      (Gaia ~mas vs. radio/X-ray arcsec–arcmin), where one coarse source can
-      correspond to several sharp ones. Report one-to-many candidates rather
-      than forcing a single match.
-- [ ] **Probabilistic matching** – Bayesian cross-match probabilities
-      (Budavári & Szalay 2008 style) using positional errors and local source
-      density, so each association comes with a match probability.
-- [ ] **Multi-catalog matching** – extend pairwise matches to N catalogs
-      (anchor on Gaia where available, then build match groups).
-- [ ] **External services as a check** – compare against CDS XMatch and
-      existing published cross-matches (e.g. Gaia's precomputed neighbour
-      tables) for validation.
-- [ ] **Object-database link** – tie matched sources to SIMBAD/NED identifiers
-      and object types.
+## 3. Is it complete? (nothing missing)
 
-## 3. Associating observations, images and spectra
+- [ ] **Independent "truth" queries** – for each benchmark field, script direct
+      `astroquery`/`pyvo` calls to each archive (MAST, Gaia, SIMBAD, NED,
+      IRSA, HEASARC, ADS) and compare with SCOOP's result:
+      - **recall**: how much of what the archive has SCOOP found;
+      - **precision**: how much of what SCOOP returned is genuinely in the
+        archive's answer.
+- [ ] **Truncated results** – a row count of exactly 50 or 2000 usually means a
+      default row limit was hit (e.g. VizieR's 50-row default in
+      `astroquery`). Compare against a `COUNT(*)` query to the archive.
+- [ ] **Archive status table** – archive × query: returned / empty / failed /
+      timed out. "The archive has nothing here" must be distinguishable from
+      "the agent failed"; the README promises failures are reported, not
+      hidden.
+- [ ] **Must-include lists** – for a few famous targets, a hand-written list of
+      what has to appear (e.g. the 2019 EHT papers for M87).
+- [ ] **Downloads** – every entry in the download manifest has a non-empty file
+      on disk.
 
-- [ ] Link spectra (SDSS/DESI/LAMOST/HST/JWST) to matched sources via fiber or
-      slit position.
-- [ ] Use footprints/MOCs (`mocpy`) to decide which observations and images
-      actually cover each source, not just the cone.
-- [ ] Attach time-domain light curves (ZTF, ATLAS, TESS, Gaia) to sources.
+## 4. Is it correct? (values)
 
-## 4. Outputs
+- [ ] **SIMBAD vs. NED** – where both give a value (position, redshift, type),
+      they agree, or the conflict is flagged as the README promises.
+- [ ] **Summary vs. data** – every number in the summary matches the data table
+      it came from.
+- [ ] **Citations** – every claim in the summary has a real, resolvable
+      citation.
+- [ ] **(Stretch) Claim support** – an LLM judge checks whether the cited
+      abstract actually supports the claim. Reported as a separate, weaker
+      score, since it is an LLM grading an LLM.
 
-- [ ] A unified source table: one row per physical source, with per-survey IDs,
-      standardized photometry (→ SED), match probabilities and flags.
-- [ ] Provenance on every value (which archive, which original column/row).
-- [ ] Export to the formats the core result object supports (Astropy table,
-      JSON, VOTable, FITS).
-- [ ] Quick-look diagnostics: match separation histograms, SED plots per source.
+## 5. Benchmark set
 
-## 5. Validation
+About ten queries, each chosen to test something different:
 
-- [ ] Test fields with well-known answers (e.g. M87, a dense Galactic field,
-      a sparse high-latitude field) to check false-match rates.
-- [ ] Unit tests for unit/magnitude conversions and epoch propagation.
-- [ ] Benchmark speed on large cones.
+| Query | What it tests |
+| --- | --- |
+| M87, 2 arcmin | Rich data in many archives, plus well-known papers |
+| NGC 4993 / GW170817 | GW localization, ATels and GCN Circulars, transients |
+| Crowded Galactic-plane field | Truncation, large numbers of sources |
+| Empty high-latitude field | Should come back nearly empty with nothing made up |
+| Target near RA = 0 or near a pole | Coordinate edge cases |
+| `NGC 99999` | Made-up object should be refused, not answered |
+| Sculptor Group | Group → member list |
+| QSOs within 1° of M31 | Selecting a class of objects, units in the plan (overlaps with [Kevin's plan](kevin_mckinnon.md)) |
+| A topic-only literature question | Citation validity |
+| The same query run 3 times | Whether results are stable from run to run |
+
+## 6. Scorecard
+
+For each query, and summed over the benchmark:
+
+- **Fabrication rate** – records that fail the ID re-check
+- **Out-of-field rate** – records outside the requested region
+- **Recall and precision** – per archive
+- **Citation validity** – citations that resolve and are linked to the object
+- **Failure reporting** – archive failures that were reported rather than hidden
+- **Stability** – overlap between repeated runs of the same query
+- **Cost** – wall-clock time and tokens per query
 
 ## Interfaces (what I need from other modules)
 
-To make reduction and matching work, each source module should ideally return:
+**Every record an agent returns should carry its provenance.** Without it,
+almost none of the checks above can be run. A minimal set of fields:
 
-- RA/Dec (and their units/frame), plus the epoch of the position
-- Positional uncertainties, if the archive provides them
-- Photometry with band names and the magnitude system (AB/Vega) or flux units
-- The archive's native source ID and quality flags
-- For observations/spectra: footprint or aperture/fiber position
+```python
+{
+    "kind": "image",          # object | observation | image | spectrum | catalog_row | paper | proposal | telegram
+    "archive": "MAST",        # where it came from
+    "native_id": "<obs_id>",  # the archive's own ID (obs_id, source_id, bibcode, ...)
+    "ra": 187.7059,           # deg, ICRS (for sky records)
+    "dec": 12.3911,
+    "s_region": "<polygon>",  # footprint, for images and observations
+    "query": "<the call or ADQL that produced it>",
+    "access_url": "<download / landing URL>",
+    "retrieved_at": "2026-10-19T15:00:00Z",
+}
+```
 
-I'll propose a concrete common-schema draft as a PR once the core query/result
-objects exist, so we can agree on column names before too much code is written.
+Also:
+
+- **Archive status** – each data agent reports, per archive, whether the query
+  returned results, came back empty, failed or timed out.
+- **Query plan** – the orchestrator's structured plan (targets, radius with
+  units, constraints), so I can check it against the original request.
+- **Download manifest** – file path, source URL and expected size/checksum.
 
 ## Proposed code layout (provisional)
 
 ```
 scoop/
-  reduce/      # per-survey standardization (coords, units, photometry, flags)
-  match/       # pairwise + multi-catalog cross-matching, match probabilities
-  associate/   # linking observations / spectra / light curves to sources
+  evaluation/
+    checks/      # real / in-field / complete / correct checks on one result
+    truth/       # direct archive queries that build expected answers
+    benchmark/   # benchmark queries and must-include lists
+    scorecard.py # runs the benchmark and writes the scorecard
 ```
+
+The checks could also run as a **verifier agent** after the compiler agent in
+the [agent architecture](../README.md#agent-architecture), flagging bad records
+before the summary is written.
 
 ## Milestones
 
-1. Draft common schema + reducers for a first few surveys (Gaia, 2MASS, WISE, SDSS)
-2. Baseline positional cross-match across those surveys
-3. Probabilistic + resolution-aware matching; add X-ray/radio catalogs
-4. Spectra/observation association and unified output table
-5. Validation on test fields; extend reducers to remaining surveys
+Two-day workshop, so in priority order:
+
+1. **Day 1:** agree on the provenance fields with the team; write the core
+   checks (ID re-check, in-field test, FITS checks, bibcode check); fix the
+   benchmark list
+2. **Day 2:** write the truth queries for 3–5 benchmark targets; run the checks
+   on teammates' outputs; produce the first scorecard
+3. **Stretch:** LLM judging of summary claims; stability runs; verifier agent
+   in the pipeline
 
 ## Open questions
 
-- Which survey should be the default astrometric anchor when Gaia has no
-  counterpart (e.g. extended sources, very faint objects)?
-- How should extended sources (galaxies) be matched vs. point sources?
-- Should matching be done client-side only, or should we lean on CDS XMatch
-  for large cones?
+- What tolerance should count as "in the field" for sources with large
+  positional errors (radio, X-ray)?
+- For completeness, which archives do we expect SCOOP to cover by the end of
+  the workshop? Recall should only be scored against those.
+- Should a record that fails a check be dropped from the result, or kept and
+  flagged?
 
 Comments and suggestions welcome — open an issue or ping me.

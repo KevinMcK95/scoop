@@ -231,7 +231,7 @@ flowchart TD
 | **Object-database agent** | Pulls everything SIMBAD and NED hold on each object and merges it into one profile: all identifiers and aliases, object types, positions, redshifts and velocities, distances (including NED's redshift-independent distances), photometry and SEDs, sizes and morphology, and notes. SIMBAD is strongest for stars and Galactic objects and NED for extragalactic ones, so between them they cover most targets. Every value keeps its source, and where the two databases disagree both values are kept and the difference flagged. Each database's bibliography for the object is passed to the literature agent. |
 | **Data agents** | One agent per kind of data, each knowing the archives and protocols for its area: **imaging**, **spectroscopy**, **catalogs & astrometry**, **time domain & transients**, and **multi-messenger** (GW sky maps, neutrinos, GRBs, FRBs). Within these, agents can be split further by wavelength regime: radio/(sub)mm, IR, optical, UV, X-ray and gamma-ray. |
 | **Literature agent** | Finds papers on the targets or the requested topic in ADS and arXiv, ranks them by relevance, and pulls out the key results. Also finds **observing proposals** that target the objects or region (HST, JWST, Chandra, ALMA and others), including approved programs whose observations haven't been taken yet, and **Astronomer's Telegrams** and GCN Circulars for transient sources. |
-| **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists (see [Duo's plan](#duos-plan)). |
+| **Compiler agent** | Collects everything the data agents found, puts it into a common schema, cross-matches sources between surveys, removes duplicates, and builds the final inventory of what exists. |
 | **Summary agent** | Writes the plain-language digest of the data and the literature, with every claim cited to a paper or dataset. |
 | **Download agent** | Fetches the images, spectra and tables the user selects, with caching and a manifest of where each file came from. |
 
@@ -311,9 +311,16 @@ want SCOOP to cover, open an issue.
 
 ## Duo's plan
 
-Duo Xu is working on **data reduction and cross-matching across all data sets**
-(standardizing every archive's output into a common schema, then matching
-sources across surveys). Full plan: [plans/duo_xu.md](plans/duo_xu.md).
+Duo Xu is working on **evaluation and benchmarking**: checking that every
+object, dataset, file and paper SCOOP returns is real (it exists in the archive
+it came from), lies in the requested field of view, is complete (nothing the
+archives hold is silently missing) and has correct values. This includes a
+benchmark set of test queries and a scorecard. Agents need to attach
+provenance (archive, native ID, query, access URL) to every record for these
+checks to work. Full plan: [plans/duo_xu.md](plans/duo_xu.md).
+
+(Data reduction and cross-matching, the original plan, were dropped to keep
+the two-day workshop focused on data gathering.)
 
 ## Kevin's plan
 
