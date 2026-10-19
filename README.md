@@ -140,6 +140,7 @@ coordinates and a radius), SCOOP:
 | Ground-based imaging surveys | SDSS, Pan-STARRS, DES/DECaLS (Legacy Surveys), 2MASS, UKIDSS, VISTA |
 | Spectroscopy | SDSS/BOSS/APOGEE, DESI, LAMOST, Gaia RVS/XP, archival HST/JWST spectra |
 | Astrometry & catalogs | Gaia, WISE/unWISE, VizieR catalogs |
+| QSO catalogs | Gaia DR3 QSO candidates, Gaia-CRF3, Quaia, MILLIQUAS (with its per-object references), SDSS DR16Q |
 | X-ray & gamma-ray | Chandra, XMM-Newton, Swift, eROSITA, Fermi (HEASARC, ESA) |
 | Radio & (sub)mm | VLASS, FIRST, NVSS, LOFAR, ALMA, Planck |
 | Time domain | ZTF, ATLAS, Gaia alerts, TNS transient reports |
@@ -318,9 +319,10 @@ sources across surveys). Full plan: [plans/duo_xu.md](plans/duo_xu.md).
 
 Kevin McKinnon is working on **astrometry and Local Volume structures**: Gaia
 sources and proper motions, proper motions of dwarf galaxies, globular
-clusters and streams, checking the Local Volume Database on every query, an
-inventory of HST/JWST imaging (depth, estimated precision, epochs and time
-baselines), and toggleable sky overlays of nearby structures. Full plan:
+clusters and streams, checking the Local Volume Database on every query, QSO
+catalogs and their references, an inventory of HST/JWST imaging (depth,
+estimated precision, epochs and time baselines), and toggleable sky overlays
+of nearby structures. Full plan:
 [plans/kevin_mckinnon.md](plans/kevin_mckinnon.md).
 
 ## Yilun's idea
