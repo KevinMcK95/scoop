@@ -162,6 +162,14 @@ conda activate scoop
 pip install -r requirements.txt
 ```
 
+To try what exists so far, run a smoke test: it builds an interactive sky view
+of HST/JWST imaging, Gaia, QSOs and spectra around a nearby galaxy. See
+[smoke_tests/README.md](smoke_tests/README.md):
+
+```bash
+python smoke_tests/lvdb_field.py --out out/draco --serve
+```
+
 ## Planned usage
 
 ```python

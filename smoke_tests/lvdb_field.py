@@ -343,7 +343,24 @@ def query_qso_catalogs(tgt, radius_deg: float, cache: Path):
 
 SKYSERVER_SQL = "https://skyserver.sdss.org/dr20/SkyServerWS/SearchTools/SqlSearch"
 DATALAB_TAP = "https://datalab.noirlab.edu/tap"
-SYSTEM_CA = "/etc/ssl/cert.pem"   # certifi lacks SkyServer's root; never disable verification
+# The certifi bundle that requests uses lacks the root certificate of SkyServer's
+# chain (seen 2026-10-19), but operating-system stores have it. Never disable
+# verification; fall back to the OS store instead.
+SYSTEM_CA_CANDIDATES = (
+    "/etc/ssl/cert.pem",                    # macOS, Alpine
+    "/etc/ssl/certs/ca-certificates.crt",   # Debian, Ubuntu
+    "/etc/pki/tls/certs/ca-bundle.crt",     # RHEL, Fedora, CentOS
+    "/etc/ssl/ca-bundle.pem",               # openSUSE
+)
+
+
+def system_ca_bundle() -> str | None:
+    """Path to the OS certificate bundle ($SCOOP_CA_BUNDLE overrides), or None."""
+    import os
+    override = os.environ.get("SCOOP_CA_BUNDLE")
+    if override:
+        return override
+    return next((c for c in SYSTEM_CA_CANDIDATES if os.path.exists(c)), None)
 
 
 def sdss_sql(sql: str) -> Table:
@@ -352,7 +369,11 @@ def sdss_sql(sql: str) -> Table:
     try:
         r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
     except requests.exceptions.SSLError:
-        r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=SYSTEM_CA)
+        ca = system_ca_bundle()
+        if ca is None:
+            raise RuntimeError("SkyServer's certificate failed verification and no system "
+                               "certificate bundle was found; set SCOOP_CA_BUNDLE to one")
+        r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=ca)
     r.raise_for_status()
     text = r.text.split("\n", 1)[1] if r.text.startswith("#Table") else r.text
     return Table.read(text, format="ascii.csv")
