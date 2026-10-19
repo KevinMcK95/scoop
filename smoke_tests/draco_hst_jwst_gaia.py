@@ -1,0 +1,689 @@
+"""Smoke test: HST/JWST imaging and Gaia sources within 2 half-light radii of a
+Local Volume Database (LVDB) object (default: the Draco dSph).
+
+Follows the SCOOP skills (skills/surveys/gaia.md, skills/surveys/mast_hst_jwst.md):
+structure from the LVDB, MAST footprints (s_region) intersected with the
+half-light ellipse, Gaia from the Heidelberg mirror with an ESA fallback and a
+row-limit truncation check, and a log of every default decision.
+
+Outputs in --out:
+    <key>_viewer.html         interactive Aladin Lite sky view (open in a browser)
+    <key>_map.png             static version of the map, plus an epoch timeline
+    <key>_images.csv          one row per HST/JWST observation overlapping the region
+    <key>_gaia.csv            Gaia sources inside the region, with candidate flags
+    <key>_summary.md          text summary and decision log
+    cache/                    raw query results (re-used on later runs)
+
+Usage:
+    python smoke_tests/draco_hst_jwst_gaia.py --out <dir> [--lvdb-key draco_1] [--n-rhalf 2]
+        [--show-qso-candidates] [--serve]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import time
+from collections import Counter
+from itertools import combinations
+from pathlib import Path
+
+import numpy as np
+import astropy.units as u
+from astropy.coordinates import Angle, SkyCoord
+from astropy.table import Table, join
+from astropy.time import Time
+
+LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
+            "v1.1.1/comb_all.ecsv")
+HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
+TAP_ROW_LIMITS = (2_000, 100_000, 3_000_000, 10_000_000)  # a result this long is truncated
+GAIA_DR3_EPOCH = 2016.0
+MOC_DEPTH = 16  # ~3" HEALPix cells; footprints are arcmin-scale
+
+# Reference palette (dataviz skill), light mode.
+COLOR = {
+    "HST": "#2a78d6",          # categorical slot 1
+    "JWST": "#eb6834",         # slot 2
+    "extragalactic": "#1baf7a",  # slot 3
+    "star": "#a3a29b",         # neutral context
+    "ink": "#0b0b0b",
+    "ink2": "#52514e",
+    "surface": "#fcfcfb",
+}
+
+DECISIONS: list[str] = []
+
+
+def note(msg: str) -> None:
+    """Record a decision the agent would report to the user."""
+    DECISIONS.append(msg)
+    print(f"  [decision] {msg}")
+
+
+# ── Target and region ────────────────────────────────────────────────────────
+
+def load_lvdb_target(key: str, cache: Path) -> dict:
+    path = cache / "lvdb_comb_all_v1.1.1.ecsv"
+    if not path.exists():
+        import urllib.request
+        urllib.request.urlretrieve(LVDB_URL, path)
+    lvdb = Table.read(path)
+    row = lvdb[lvdb["key"] == key]
+    if len(row) != 1:
+        raise ValueError(f"LVDB key {key!r} not found")
+    row = row[0]
+    return {
+        "key": key, "name": str(row["name"]),
+        "ra": float(row["ra"]), "dec": float(row["dec"]),
+        "rhalf_arcmin": float(row["rhalf"]),            # semi-major axis
+        "ellipticity": float(row["ellipticity"]),
+        "pa_deg": float(row["position_angle"]),         # east of north
+        "ref_structure": str(row["ref_structure"]),
+        "distance_kpc": float(row["distance"]),
+        "pmra": float(row["pmra"]), "pmdec": float(row["pmdec"]),
+        "ref_proper_motion": str(row["ref_proper_motion"]),
+    }
+
+
+def tangent_offsets(center: SkyCoord, ra, dec):
+    """(xi, eta) in arcmin: xi toward east, eta toward north."""
+    off = SkyCoord(ra, dec, unit="deg").transform_to(center.skyoffset_frame())
+    return off.lon.to_value(u.arcmin), off.lat.to_value(u.arcmin)
+
+
+def elliptical_radius(xi, eta, tgt) -> np.ndarray:
+    """Elliptical radius in units of the half-light radius."""
+    pa = np.deg2rad(tgt["pa_deg"])
+    major = xi * np.sin(pa) + eta * np.cos(pa)
+    minor = xi * np.cos(pa) - eta * np.sin(pa)
+    return np.hypot(major, minor / (1 - tgt["ellipticity"])) / tgt["rhalf_arcmin"]
+
+
+def ellipse_outline(tgt, n_rhalf: float, n: int = 361):
+    a = n_rhalf * tgt["rhalf_arcmin"]
+    b = a * (1 - tgt["ellipticity"])
+    pa = np.deg2rad(tgt["pa_deg"])
+    t = np.linspace(0, 2 * np.pi, n)
+    major, minor = a * np.cos(t), b * np.sin(t)
+    return major * np.sin(pa) + minor * np.cos(pa), major * np.cos(pa) - minor * np.sin(pa)
+
+
+def ellipse_moc(tgt, n_rhalf: float):
+    from mocpy import MOC
+    a = n_rhalf * tgt["rhalf_arcmin"] * u.arcmin
+    return MOC.from_elliptical_cone(
+        lon=tgt["ra"] * u.deg, lat=tgt["dec"] * u.deg, a=Angle(a),
+        b=Angle(a * (1 - tgt["ellipticity"])), pa=Angle(tgt["pa_deg"] * u.deg),
+        max_depth=MOC_DEPTH)
+
+
+# ── MAST ─────────────────────────────────────────────────────────────────────
+
+def parse_s_region(s: str) -> list[np.ndarray]:
+    """STC-S POLYGON/CIRCLE string -> list of (N, 2) arrays of (ra, dec) deg."""
+    shapes, tokens = [], str(s).replace(",", " ").split()
+    i = 0
+    while i < len(tokens):
+        kind = tokens[i].upper()
+        if kind not in ("POLYGON", "CIRCLE"):
+            i += 1
+            continue
+        i += 1
+        nums = []
+        while i < len(tokens) and tokens[i].upper() not in ("POLYGON", "CIRCLE"):
+            try:
+                nums.append(float(tokens[i]))
+            except ValueError:
+                pass                       # frame names such as ICRS
+            i += 1
+        if kind == "POLYGON" and len(nums) >= 6:
+            shapes.append(np.array(nums[: len(nums) // 2 * 2]).reshape(-1, 2))
+        elif kind == "CIRCLE" and len(nums) == 3:
+            ra0, dec0, r = nums
+            t = np.linspace(0, 2 * np.pi, 73)[:-1]
+            shapes.append(np.column_stack([
+                ra0 + r * np.cos(t) / np.cos(np.deg2rad(dec0)), dec0 + r * np.sin(t)]))
+    return shapes
+
+
+def footprint_moc(shapes):
+    from mocpy import MOC
+    moc = None
+    for poly in shapes:
+        ra = np.unwrap(np.deg2rad(poly[:, 0]))
+        m = MOC.from_polygon_skycoord(
+            SkyCoord(np.rad2deg(ra) % 360, poly[:, 1], unit="deg"), max_depth=MOC_DEPTH)
+        moc = m if moc is None else moc.union(m)
+    return moc
+
+
+def with_retries(fn, what: str, tries: int = 5, delay: float = 10.0):
+    for attempt in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # MAST and TAP servers fail transiently
+            if attempt == tries - 1:
+                raise
+            print(f"  {what} failed ({e}); retrying in {delay:.0f} s")
+            time.sleep(delay)
+            delay *= 2
+
+
+def query_mast(tgt, radius_deg: float, cache: Path):
+    """HST/JWST image observations (executed) and planned JWST observations."""
+    from astroquery.mast import Observations
+    center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
+    path, path_planned = cache / "mast_images.ecsv", cache / "mast_planned.ecsv"
+    if path.exists() and path_planned.exists():
+        return Table.read(path), Table.read(path_planned)
+    kw = dict(coordinates=center, radius=radius_deg * u.deg, dataproduct_type=["image"])
+    n = with_retries(lambda: Observations.query_criteria_count(
+        obs_collection=["HST", "JWST"], **kw), "MAST count")
+    print(f"  MAST: {n} HST/JWST image records within {radius_deg:.3f} deg")
+    obs = with_retries(lambda: Observations.query_criteria(
+        obs_collection=["HST", "JWST"], **kw), "MAST query")
+    planned = with_retries(lambda: Observations.query_criteria(
+        obs_collection=["JWST"], calib_level=[-1], **kw), "MAST planned query")
+    for t, p in ((obs, path), (planned, path_planned)):
+        for c in t.colnames:              # masked/object columns don't round-trip
+            if t[c].dtype == object:
+                t[c] = t[c].astype(str)
+        t.write(p, overwrite=True)
+    return obs, planned
+
+
+def select_observations(obs: Table, region_moc, tgt):
+    """Science observations whose footprint overlaps the region; one row per dataset."""
+    keep = np.ones(len(obs), bool)
+    intent = np.char.lower(np.asarray(obs["intentType"], str))
+    n_cal = int((intent != "science").sum())
+    if n_cal:
+        note(f"Skipped {n_cal} non-science records (target acquisitions and "
+             f"calibration exposures); say 'include calibration' to keep them.")
+    keep &= intent == "science"
+    is_hap = np.asarray(obs["project"], str) == "HAP"
+    n_hap = int((keep & is_hap).sum())
+    if n_hap:
+        note(f"{n_hap} Hubble Advanced Products (HAP) mosaics also cover this area; "
+             f"they duplicate the standard HST products, so they're counted once "
+             f"(standard products) and not drawn.")
+    keep &= ~is_hap
+    low = keep & (np.asarray(obs["calib_level"]) < 2)
+    if low.any():
+        note(f"Skipped {int(low.sum())} records with only raw/uncalibrated data "
+             f"(calib_level < 2).")
+    keep &= ~low
+    obs = obs[keep]
+
+    region_area = region_moc.sky_fraction
+    rows, mocs = [], []
+    for r in obs:
+        shapes = parse_s_region(r["s_region"])
+        if not shapes:
+            continue
+        fm = footprint_moc(shapes)
+        inter = fm.intersection(region_moc)
+        if inter.sky_fraction == 0:
+            continue
+        rows.append(r)
+        mocs.append((fm, shapes, inter.sky_fraction / fm.sky_fraction))
+    sel = Table(rows=rows, names=obs.colnames) if rows else obs[:0]
+    sel["frac_in_region"] = [m[2] for m in mocs]
+    note(f"Kept {len(sel)} HST/JWST observations whose footprints overlap the "
+         f"{N_RHALF:g} r_half ellipse (footprint polygons, not pointing centers).")
+    return sel, [m[0] for m in mocs], [m[1] for m in mocs]
+
+
+def baselines(sel: Table, mocs) -> dict:
+    """Longest time baseline between overlapping footprints, per telescope pair."""
+    mid = 0.5 * (np.asarray(sel["t_min"], float) + np.asarray(sel["t_max"], float))
+    tel = np.asarray(sel["obs_collection"], str)
+    best: dict[str, tuple] = {}
+    for i, j in combinations(range(len(sel)), 2):
+        key = "–".join(sorted((tel[i], tel[j])))
+        dt = abs(mid[i] - mid[j]) / 365.25
+        if dt <= best.get(key, (0,))[0]:
+            continue
+        if mocs[i].intersection(mocs[j]).sky_fraction > 0:
+            best[key] = (dt, sel["obs_id"][i], sel["obs_id"][j])
+    return best
+
+
+# ── Gaia ─────────────────────────────────────────────────────────────────────
+
+GAIA_COLS = ("g.source_id, g.ra, g.dec, g.phot_g_mean_mag, g.bp_rp, g.parallax, "
+             "g.parallax_error, g.pmra, g.pmra_error, g.pmdec, g.pmdec_error, g.ruwe, "
+             "g.astrometric_params_solved, g.ipd_gof_harmonic_amplitude, "
+             "g.visibility_periods_used, g.astrometric_excess_noise_sig, "
+             "g.in_qso_candidates, g.in_galaxy_candidates, "
+             "g.classprob_dsc_combmod_quasar, g.classprob_dsc_combmod_galaxy")
+
+
+def run_tap(adql: str, what: str) -> Table:
+    """Heidelberg first (faster), ESA on failure; refuse truncated results."""
+    from astroquery.utils.tap.core import TapPlus
+    try:
+        tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
+        res = with_retries(lambda: tap.launch_job_async(adql, maxrec=10_000_000)
+                           .get_results(), f"Heidelberg {what}", tries=3)
+        server = "Heidelberg ARI mirror"
+    except Exception as e:
+        from astroquery.gaia import Gaia
+        print(f"  Heidelberg failed ({e}); falling back to ESA")
+        Gaia.ROW_LIMIT = -1
+        res = with_retries(lambda: Gaia.launch_job_async(adql).get_results(),
+                           f"ESA {what}", tries=3)
+        server = "ESA Gaia archive"
+    if len(res) in TAP_ROW_LIMITS:
+        raise RuntimeError(f"{what}: {len(res)} rows is a TAP output limit -- "
+                           f"truncated; split the query")
+    return res, server
+
+
+def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
+    path = cache / "gaia.ecsv"
+    if path.exists():
+        return Table.read(path)
+    circle = (f"1=CONTAINS(POINT('ICRS', g.ra, g.dec), "
+              f"CIRCLE('ICRS', {tgt['ra']}, {tgt['dec']}, {radius_deg}))")
+    src, server = run_tap(f"SELECT {GAIA_COLS} FROM gaiadr3.gaia_source AS g WHERE {circle}",
+                          "gaia_source")
+    note(f"Queried Gaia DR3 from the {server}; results are identical to ESA's DR3.")
+    qso, _ = run_tap("SELECT q.source_id, q.gaia_crf_source, q.classlabel_dsc_joint "
+                     "AS qso_classlabel_dsc_joint, q.redshift_qsoc FROM gaiadr3.qso_candidates "
+                     f"AS q JOIN gaiadr3.gaia_source AS g ON g.source_id = q.source_id "
+                     f"WHERE {circle}", "qso_candidates")
+    gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
+                     "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
+                     f"ON g.source_id = q.source_id WHERE {circle}", "galaxy_candidates")
+    out = join(src, qso, keys="source_id", join_type="left")
+    out = join(out, gal, keys="source_id", join_type="left")
+    # Known variables masquerading as QSO candidates (RR Lyrae in dSphs). Look up
+    # by source_id: a spatial join against vari_rrlyrae took minutes, this < 1 s.
+    cand = np.asarray(out["source_id"])[as_bool(out["in_qso_candidates"])]
+    rr_ids = []
+    for k in range(0, len(cand), 1000):
+        ids = ",".join(str(i) for i in cand[k:k + 1000])
+        res, _ = run_tap(f"SELECT source_id FROM gaiadr3.vari_rrlyrae WHERE source_id IN ({ids})",
+                         "vari_rrlyrae")
+        rr_ids += list(res["source_id"])
+    out["is_rrlyrae"] = np.isin(np.asarray(out["source_id"]), rr_ids)
+    for c in out.colnames:
+        if out[c].dtype == object:
+            out[c] = out[c].astype(str)
+    out.write(path, overwrite=True)
+    return out
+
+
+def query_qso_catalogs(tgt, radius_deg: float, cache: Path):
+    """MILLIQUAS v8 (VII/294) and Quaia G<20.0 (J/ApJ/964/69) cone searches on VizieR."""
+    from astroquery.vizier import Vizier
+    out = {}
+    center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
+    for name, cat in (("milliquas", "VII/294"), ("quaia", "J/ApJ/964/69")):
+        path = cache / f"{name}.ecsv"
+        if path.exists():
+            out[name] = Table.read(path)
+            continue
+        res = with_retries(lambda: Vizier(columns=["**"], row_limit=-1).query_region(
+            center, radius=radius_deg * u.deg, catalog=cat), f"VizieR {cat}")
+        t = res[0] if len(res) else Table()
+        for c in t.colnames:
+            if t[c].dtype == object:
+                t[c] = t[c].astype(str)
+        t.write(path, overwrite=True)
+        out[name] = t
+    return out["milliquas"], out["quaia"]
+
+
+def as_bool(col) -> np.ndarray:
+    """Booleans arrive as bool (ESA) or 0/1 ints (Heidelberg), possibly masked."""
+    arr = np.ma.filled(np.ma.asarray(col), 0)
+    if arr.dtype.kind in "US":
+        return np.isin(np.char.lower(arr.astype(str)), ["true", "1", "t"])
+    return arr.astype(bool)
+
+
+# ── Plot ─────────────────────────────────────────────────────────────────────
+
+def make_plot(tgt, sel, shapes_list, planned, gaia, mq, out_png: Path,
+              show_qso_candidates: bool = False):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
+    plt.rcParams.update({"font.size": 10, "axes.edgecolor": COLOR["ink2"],
+                         "axes.labelcolor": COLOR["ink"], "xtick.color": COLOR["ink2"],
+                         "ytick.color": COLOR["ink2"]})
+    fig, (ax, axt) = plt.subplots(
+        1, 2, figsize=(14, 7.2), gridspec_kw={"width_ratios": [1.15, 1]},
+        facecolor=COLOR["surface"])
+
+    # Footprints
+    tel = np.asarray(sel["obs_collection"], str)
+    for shapes, t in zip(shapes_list, tel):
+        for poly in shapes:
+            x, y = tangent_offsets(center, poly[:, 0], poly[:, 1])
+            ax.fill(x, y, facecolor=COLOR[t], alpha=0.06, edgecolor="none", zorder=1)
+            ax.plot(np.append(x, x[0]), np.append(y, y[0]), color=COLOR[t],
+                    lw=0.8, alpha=0.75, zorder=2)
+    for r in planned:
+        for poly in parse_s_region(r["s_region"]):
+            x, y = tangent_offsets(center, poly[:, 0], poly[:, 1])
+            ax.plot(np.append(x, x[0]), np.append(y, y[0]), color=COLOR["JWST"],
+                    lw=1.2, ls=(0, (4, 3)), zorder=2)
+
+    # Gaia
+    xi, eta = gaia["xi"], gaia["eta"]
+    qso, gal, crf = gaia["is_qso_cand"], gaia["is_gal_cand"], gaia["is_crf"]
+    quaia = gaia["in_quaia"]
+    rrl = qso & gaia["is_rrlyrae"]
+    other_qso = qso & ~crf & ~quaia & ~rrl
+    star = ~(gal | crf | quaia) & (~qso if show_qso_candidates else True)
+    ax.scatter(xi[star], eta[star], s=3, color=COLOR["star"], lw=0, zorder=3)
+    if show_qso_candidates:
+        ax.scatter(xi[rrl], eta[rrl], s=16, marker="x", color=COLOR["ink2"], lw=0.8,
+                   alpha=0.7, zorder=3)
+        ax.scatter(xi[other_qso], eta[other_qso], s=34, marker="o", facecolor="none",
+                   edgecolor=COLOR["extragalactic"], lw=1.0, zorder=4)
+    ax.scatter(xi[gal], eta[gal], s=30, marker="s", facecolor="none",
+               edgecolor=COLOR["extragalactic"], lw=1.0, zorder=4)
+    # Trusted QSOs; a source in several catalogs shows stacked markers.
+    conf = mq["confirmed"]
+    ax.scatter(mq["xi"][conf], mq["eta"][conf], s=70, marker="^",
+               facecolor=COLOR["extragalactic"], edgecolor=COLOR["surface"], lw=0.8, zorder=5)
+    ax.scatter(mq["xi"][~conf], mq["eta"][~conf], s=70, marker="^", facecolor="none",
+               edgecolor=COLOR["extragalactic"], lw=1.4, zorder=5)
+    ax.scatter(xi[quaia], eta[quaia], s=55, marker="D", facecolor=COLOR["extragalactic"],
+               edgecolor=COLOR["surface"], lw=0.8, alpha=0.85, zorder=6)
+    ax.scatter(xi[crf], eta[crf], s=150, marker="*", facecolor=COLOR["extragalactic"],
+               edgecolor=COLOR["surface"], lw=0.8, zorder=7)
+    bad = gaia["trusted_qso"] & ~gaia["qso_astrometry_ok"]
+    ax.scatter(xi[bad], eta[bad], s=260, marker="o", facecolor="none",
+               edgecolor=COLOR["ink"], lw=1.2, zorder=8)
+
+    # Draco
+    for n_r, ls in ((1, "-"), (N_RHALF, (0, (6, 3)))):
+        ex, ey = ellipse_outline(tgt, n_r)
+        ax.plot(ex, ey, color=COLOR["ink"], lw=2 if n_r == 1 else 1.4, ls=ls, zorder=6)
+    ax.plot(0, 0, marker="+", ms=14, mew=2.2, color=COLOR["ink"], zorder=7)
+
+    lim = 1.08 * N_RHALF * tgt["rhalf_arcmin"]
+    ax.set_xlim(lim, -lim)                       # east to the left
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect("equal")
+    ax.set_xlabel("Δα cos δ (arcmin; east ←)")
+    ax.set_ylabel("Δδ (arcmin; north ↑)")
+    ax.set_title(f"{tgt['name']}: HST/JWST footprints and Gaia DR3 sources",
+                 loc="left", color=COLOR["ink"])
+    ax.grid(color="#e6e5e0", lw=0.6, zorder=0)
+    ax.set_facecolor(COLOR["surface"])
+    n_planned = len(planned)
+    handles = [
+        Patch(facecolor=COLOR["HST"], alpha=0.25, edgecolor=COLOR["HST"],
+              label=f"HST footprints ({(tel == 'HST').sum()})"),
+        Patch(facecolor=COLOR["JWST"], alpha=0.25, edgecolor=COLOR["JWST"],
+              label=f"JWST footprints ({(tel == 'JWST').sum()})"),
+        Line2D([], [], color=COLOR["JWST"], ls=(0, (4, 3)),
+               label=f"JWST planned ({n_planned})"),
+        Line2D([], [], ls="", marker=".", color=COLOR["star"], ms=6,
+               label=f"Gaia sources ({int(np.sum(star))})"),
+        Line2D([], [], ls="", marker="s", mfc="none", mec=COLOR["extragalactic"], ms=7,
+               label=f"Gaia galaxy candidates ({int(gal.sum())})"),
+        Line2D([], [], ls="", marker="*", color=COLOR["extragalactic"], ms=12,
+               label=f"Gaia-CRF3 QSOs ({int(crf.sum())})"),
+        Line2D([], [], ls="", marker="D", color=COLOR["extragalactic"], ms=7,
+               label=f"Quaia QSOs, G<20 ({int(quaia.sum())})"),
+        Line2D([], [], ls="", marker="^", color=COLOR["extragalactic"], ms=8,
+               label=f"MILLIQUAS confirmed ({int(conf.sum())})"),
+        Line2D([], [], ls="", marker="^", mfc="none", mec=COLOR["extragalactic"], ms=8,
+               mew=1.4, label=f"MILLIQUAS radio/X-ray candidates ({int((~conf).sum())})"),
+        Line2D([], [], ls="", marker="o", mfc="none", mec=COLOR["ink"], ms=11,
+               label=f"QSO with non-zero PM/parallax ({int(bad.sum())})"),
+    ]
+    if show_qso_candidates:
+        handles += [
+            Line2D([], [], ls="", marker="o", mfc="none", mec=COLOR["extragalactic"], ms=7,
+                   label=f"Other Gaia QSO candidates, unvetted ({int(other_qso.sum())})"),
+            Line2D([], [], ls="", marker="x", color=COLOR["ink2"], ms=6,
+                   label=f"QSO candidates that are Gaia RR Lyrae ({int(rrl.sum())})"),
+        ]
+    handles += [
+        Line2D([], [], color=COLOR["ink"], lw=2, label="r_half ellipse"),
+        Line2D([], [], color=COLOR["ink"], lw=1.4, ls=(0, (6, 3)),
+               label=f"{N_RHALF:g} r_half (query region)"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=5, frameon=False,
+               fontsize=8.5, labelcolor=COLOR["ink"])
+
+    # Epoch timeline: one row per instrument
+    inst = np.asarray(sel["instrument_name"], str)
+    labels = sorted(set(zip(tel, inst)), key=lambda k: (k[0], k[1]))
+    years = Time(0.5 * (np.asarray(sel["t_min"], float) + np.asarray(sel["t_max"], float)),
+                 format="mjd").decimalyear
+    for k, (t, i) in enumerate(labels):
+        m = (tel == t) & (inst == i)
+        axt.scatter(years[m], np.full(m.sum(), k), s=40, color=COLOR[t],
+                    edgecolor=COLOR["surface"], lw=1.0, zorder=3)
+    axt.axvline(GAIA_DR3_EPOCH, color=COLOR["ink2"], lw=1, ls=(0, (2, 2)), zorder=1)
+    axt.text(GAIA_DR3_EPOCH, len(labels) - 0.4, " Gaia DR3 epoch", color=COLOR["ink2"],
+             fontsize=8.5, va="bottom")
+    axt.set_yticks(range(len(labels)), [f"{t} {i}" for t, i in labels])
+    axt.set_ylim(-0.6, len(labels) - 0.1)
+    axt.set_xlabel("Observation date (year)")
+    axt.set_title("When each instrument observed the region", loc="left",
+                  color=COLOR["ink"])
+    axt.grid(axis="x", color="#e6e5e0", lw=0.6, zorder=0)
+    axt.set_facecolor(COLOR["surface"])
+    for s in ("top", "right"):
+        axt.spines[s].set_visible(False)
+        ax.spines[s].set_visible(False)
+
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    fig.savefig(out_png, dpi=150, facecolor=COLOR["surface"])
+    plt.close(fig)
+
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+def pct(f: float) -> str:
+    return "<1%" if 0 < f < 0.005 else f"{f:.0%}"
+
+
+def write_summary(tgt, sel, planned, gaia, mq, best, region_cov, out_md: Path):
+    lines = [f"# {tgt['name']}: HST/JWST imaging and Gaia within "
+             f"{N_RHALF:g} half-light radii", ""]
+    lines += [f"- Center (LVDB): RA {tgt['ra']:.4f}, Dec {tgt['dec']:+.4f}; "
+              f"r_half = {tgt['rhalf_arcmin']:.2f}′ (semi-major), e = {tgt['ellipticity']:.2f}, "
+              f"PA = {tgt['pa_deg']:.0f}° (ref: {tgt['ref_structure']})",
+              f"- Region: ellipse with semi-major axis {N_RHALF * tgt['rhalf_arcmin']:.2f}′",
+              ""]
+    tel = np.asarray(sel["obs_collection"], str)
+    lines += ["## Imaging", "",
+              "| Telescope | Instrument | Obs. | Filters | Dates | Programs (PI) | Region covered |",
+              "|---|---|---|---|---|---|---|"]
+    for (t, i), n in sorted(Counter(zip(tel, np.asarray(sel["instrument_name"], str))).items()):
+        m = (tel == t) & (np.asarray(sel["instrument_name"], str) == i)
+        s = sel[m]
+        filt = sorted(set(";".join(np.asarray(s["filters"], str)).split(";")) - {""})
+        d0 = Time(np.min(s["t_min"]), format="mjd").iso[:10]
+        d1 = Time(np.max(s["t_max"]), format="mjd").iso[:10]
+        progs = sorted({(str(p), str(pi)) for p, pi in zip(s["proposal_id"], s["proposal_pi"])},
+                       key=lambda x: x[0])
+        prog_txt = ", ".join(f"{p} ({pi.split(',')[0]})" for p, pi in progs[:6])
+        if len(progs) > 6:
+            prog_txt += f", +{len(progs) - 6} more"
+        lines.append(f"| {t} | {i} | {n} | {', '.join(filt[:8])}{' …' if len(filt) > 8 else ''} "
+                     f"| {d0} – {d1} | {prog_txt} | {pct(region_cov.get((t, i), 0))} |")
+    lines += ["", "Region covered = fraction of the ellipse inside the union of that "
+              "instrument's footprints.", ""]
+    lines += ["### Longest baselines between overlapping images", ""]
+    for k, (dt, a, b) in sorted(best.items()):
+        lines.append(f"- {k}: {dt:.1f} yr ({a} ↔ {b})")
+    if not best:
+        lines.append("- none (no overlapping pairs)")
+    lines += ["", f"### Planned JWST observations: {len(planned)}", ""]
+    for r in planned:
+        lines.append(f"- program {r['proposal_id']} ({r['proposal_pi']}): "
+                     f"{r['instrument_name']} {r['filters']}")
+    qso, gal, crf = gaia["is_qso_cand"], gaia["is_gal_cand"], gaia["is_crf"]
+    rrl = qso & gaia["is_rrlyrae"]
+    inside = gaia["r_ell"] <= 1
+    frac_in = (lambda m: f"{inside[m].mean():.0%}" if m.any() else "n/a")
+    lines += ["", "## Gaia DR3", "",
+              f"- {len(gaia)} sources inside the region; {int(gaia['clean'].sum())} pass the "
+              "standard astrometric quality flags (RUWE ≤ 1.4, ipd_gof_harmonic_amplitude ≤ 0.2, "
+              "visibility_periods_used ≥ 9, astrometric_excess_noise_sig ≤ 2).",
+              f"- Galaxy candidates: {int(gal.sum())}.", "",
+              "## QSOs", "",
+              f"- Gaia-CRF3: {int(crf.sum())}; Quaia (G < 20.0): {int(gaia['in_quaia'].sum())}; "
+              f"MILLIQUAS v8: {len(mq)}, {int(mq['confirmed'].sum())} confirmed (types: "
+              f"{', '.join(f'{k} {v}' for k, v in sorted(Counter(np.asarray(mq['Type'], str)).items()))}"
+              f"); {int(gaia['trusted_qso'].sum())} distinct Gaia sources in at least one.",
+              f"- Astrometry: {int((gaia['trusted_qso'] & ~gaia['qso_astrometry_ok']).sum())} of "
+              "these have parallax or proper motion inconsistent with zero at 3σ (circled on the "
+              "map); don't use them as reference sources without a closer look.",
+              f"- Not shown: the Gaia QSO candidate table ({int(qso.sum())} sources here, "
+              f"{int(rrl.sum())} of them known Gaia RR Lyrae, i.e. Draco member stars). "
+              f"Background objects should be spread evenly, putting ~{1 / N_RHALF**2:.0%} inside "
+              f"1 r_half; {frac_in(qso & ~crf & ~gaia['in_quaia'] & ~rrl)} of the remaining "
+              f"candidates are, so most are also members. Gaia-CRF3: {frac_in(crf)}.",
+              "", "## Decisions", ""]
+    lines += [f"- {d}" for d in DECISIONS]
+    out_md.write_text("\n".join(lines) + "\n")
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    global N_RHALF
+    p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--lvdb-key", default="draco_1")
+    p.add_argument("--n-rhalf", type=float, default=2.0)
+    p.add_argument("--show-qso-candidates", action="store_true",
+                   help="also plot the (impure) Gaia DR3 QSO candidate table")
+    p.add_argument("--serve", action="store_true",
+                   help="serve the output folder locally and open the viewer in a browser")
+    p.add_argument("--port", type=int, default=8765)
+    args = p.parse_args()
+    N_RHALF = args.n_rhalf
+    cache = args.out / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+
+    tgt = load_lvdb_target(args.lvdb_key, cache)
+    print(f"{tgt['name']}: {json.dumps(tgt)}")
+    note(f"Took {tgt['name']}'s center and structure from the Local Volume Database "
+         f"(v1.1.1; structure ref {tgt['ref_structure']}); r_half is the semi-major axis.")
+    a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
+    query_radius = 1.02 * a_deg            # circle enclosing the ellipse
+
+    region = ellipse_moc(tgt, N_RHALF)
+    obs, planned = query_mast(tgt, query_radius, cache)
+    sel, mocs, shapes = select_observations(obs, region, tgt)
+    if len(planned):
+        pm = [footprint_moc(parse_s_region(r["s_region"])) for r in planned]
+        planned = planned[[m is not None and m.intersection(region).sky_fraction > 0
+                           for m in pm]]
+    note(f"Checked for planned (not yet executed) JWST observations: {len(planned)} "
+         f"overlap the region.")
+
+    region_cov = {}
+    tel, inst = np.asarray(sel["obs_collection"], str), np.asarray(sel["instrument_name"], str)
+    for key in set(zip(tel, inst)):
+        idx = np.flatnonzero((tel == key[0]) & (inst == key[1]))
+        union = mocs[idx[0]]
+        for k in idx[1:]:
+            union = union.union(mocs[k])
+        region_cov[key] = union.intersection(region).sky_fraction / region.sky_fraction
+    best = baselines(sel, mocs)
+
+    gaia = query_gaia(tgt, query_radius, cache)
+    center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
+    gaia["xi"], gaia["eta"] = tangent_offsets(center, gaia["ra"], gaia["dec"])
+    gaia["r_ell"] = elliptical_radius(gaia["xi"], gaia["eta"], tgt)
+    gaia = gaia[gaia["r_ell"] <= N_RHALF]
+    gaia["is_qso_cand"] = as_bool(gaia["in_qso_candidates"])
+    gaia["is_gal_cand"] = as_bool(gaia["in_galaxy_candidates"])
+    gaia["is_crf"] = as_bool(gaia["gaia_crf_source"]) & gaia["is_qso_cand"]
+    gaia["clean"] = ((np.ma.filled(gaia["ruwe"], 99) <= 1.4)
+                     & (np.ma.filled(gaia["ipd_gof_harmonic_amplitude"], 99) <= 0.2)
+                     & (np.ma.filled(gaia["visibility_periods_used"], 0) >= 9)
+                     & (np.ma.filled(gaia["astrometric_excess_noise_sig"], 99) <= 2))
+    note("Flagged (did not drop) Gaia sources failing the standard quality cuts.")
+    gaia["is_rrlyrae"] = as_bool(gaia["is_rrlyrae"])
+
+    # Trusted QSOs: Gaia-CRF3, Quaia (by source_id), MILLIQUAS (by position).
+    mq, quaia = query_qso_catalogs(tgt, query_radius, cache)
+    mq["xi"], mq["eta"] = tangent_offsets(center, mq["RAJ2000"], mq["DEJ2000"])
+    mq = mq[elliptical_radius(mq["xi"], mq["eta"], tgt) <= N_RHALF]
+    # Class letters Q/A/B/K/N require a spectroscopic redshift; a bare R/X/2 (or S)
+    # type is a radio/X-ray-associated candidate (ReadMe note 3).
+    mq["confirmed"] = np.array([str(t)[:1] in "QABKN" and str(t)[:1] != ""
+                                for t in mq["Type"]], bool)
+    gaia["in_quaia"] = np.isin(np.asarray(gaia["source_id"]), np.asarray(quaia["GaiaDR3"]))
+    gaia["in_milliquas"] = np.zeros(len(gaia), bool)
+    if len(mq):
+        idx, sep, _ = SkyCoord(mq["RAJ2000"], mq["DEJ2000"], unit="deg").match_to_catalog_sky(
+            SkyCoord(gaia["ra"], gaia["dec"], unit="deg"))
+        gaia["in_milliquas"][idx[sep < 1.5 * u.arcsec]] = True
+    gaia["trusted_qso"] = gaia["is_crf"] | gaia["in_quaia"] | gaia["in_milliquas"]
+    chi2 = sum((np.ma.filled(gaia[c], 0.0) / np.ma.filled(gaia[e], np.inf)) ** 2
+               for c, e in (("parallax", "parallax_error"), ("pmra", "pmra_error"),
+                            ("pmdec", "pmdec_error")))
+    gaia["qso_astrometry_ok"] = chi2 < 14.16  # 3σ for 3 degrees of freedom
+    note(f"Showing trusted QSOs only: Gaia-CRF3 ({int(gaia['is_crf'].sum())}), Quaia "
+         f"({int(gaia['in_quaia'].sum())}) and MILLIQUAS ({len(mq)}). Quaia comes from "
+         f"VizieR, which has only its cleaner G < 20.0 sample.")
+    note(f"Hid the Gaia QSO candidate table ({int(gaia['is_qso_cand'].sum())} sources here, "
+         f"{int((gaia['is_qso_cand'] & gaia['is_rrlyrae']).sum())} of them known Gaia RR "
+         f"Lyrae): it's too impure, especially in a dwarf galaxy. Use "
+         f"--show-qso-candidates to show it.")
+
+    stem = args.out / tgt["key"]
+    keep_cols = [c for c in sel.colnames if c in (
+        "obs_collection", "instrument_name", "filters", "obs_id", "target_name", "t_min",
+        "t_max", "t_exptime", "proposal_id", "proposal_pi", "dataRights", "calib_level",
+        "s_region", "frac_in_region", "obsid")]
+    sel[keep_cols].write(f"{stem}_images.csv", overwrite=True)
+    gaia.write(f"{stem}_gaia.csv", overwrite=True)
+    mq.write(f"{stem}_milliquas.csv", overwrite=True)
+    make_plot(tgt, sel, shapes, planned, gaia, mq, Path(f"{stem}_map.png"),
+              show_qso_candidates=args.show_qso_candidates)
+    write_summary(tgt, sel, planned, gaia, mq, best, region_cov, Path(f"{stem}_summary.md"))
+    from sky_viewer import write_viewer
+    write_viewer(Path(f"{stem}_viewer.html"), tgt, N_RHALF, sel, planned, gaia, mq, best,
+                 region_cov, DECISIONS, ellipse_outline)
+    print(f"Wrote {stem}_viewer.html, _map.png, _images.csv, _gaia.csv, _summary.md")
+    if args.serve:
+        serve(args.out, f"{tgt['key']}_viewer.html", args.port)
+
+
+def serve(directory: Path, page: str, port: int) -> None:
+    """Serve the output directory locally and open the viewer (Ctrl-C to stop).
+
+    The viewer needs an http:// origin: some HiPS image servers reject file:// pages.
+    """
+    import functools
+    import http.server
+    import webbrowser
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
+    with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
+        url = f"http://127.0.0.1:{port}/{page}"
+        print(f"Serving {url}  (Ctrl-C to stop)")
+        webbrowser.open(url)
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+
+N_RHALF = 2.0
+
+if __name__ == "__main__":
+    main()
