@@ -144,7 +144,7 @@ coordinates and a radius), SCOOP:
 | Radio & (sub)mm | VLASS, FIRST, NVSS, LOFAR, ALMA, Planck |
 | Time domain | ZTF, ATLAS, Gaia alerts, TNS transient reports |
 | Multi-messenger | LIGO/Virgo/KAGRA GW sky maps (GraceDB), IceCube neutrinos, GCN GRB localizations, CHIME FRBs |
-| Object databases | SIMBAD, NED (merged into one profile per object) |
+| Object databases | SIMBAD, NED (merged into one profile per object), Local Volume Database (always checked for nearby dwarf galaxies and star clusters) |
 | Literature | NASA ADS, arXiv, observing proposals (HST, JWST, Chandra, ALMA, …), Astronomer's Telegrams, GCN Circulars |
 
 Coverage will grow incrementally; each source is implemented as a pluggable
@@ -313,6 +313,15 @@ want SCOOP to cover, open an issue.
 Duo Xu is working on **data reduction and cross-matching across all data sets**
 (standardizing every archive's output into a common schema, then matching
 sources across surveys). Full plan: [plans/duo_xu.md](plans/duo_xu.md).
+
+## Kevin's plan
+
+Kevin McKinnon is working on **astrometry and Local Volume structures**: Gaia
+sources and proper motions, proper motions of dwarf galaxies, globular
+clusters and streams, checking the Local Volume Database on every query, an
+inventory of HST/JWST imaging (depth, estimated precision, epochs and time
+baselines), and toggleable sky overlays of nearby structures. Full plan:
+[plans/kevin_mckinnon.md](plans/kevin_mckinnon.md).
 
 ## Yilun's idea
 - [ ] orchastration of literature, data agents.
