@@ -1,0 +1,47 @@
+{
+  "description": "Event schema for SCOOP pipeline evaluation metrics",
+  "required_fields": [
+    "request_id",
+    "timestamp",
+    "task_success",
+    "user_accepted",
+    "estimated_cost_usd",
+    "actual_cost_usd",
+    "budget_exceeded",
+    "domain_allowed",
+    "latency_ms",
+    "tool_calls_total",
+    "tool_calls_failed",
+    "escalated"
+  ],
+  "optional_fields": [
+    "citations_total",
+    "citations_valid",
+    "planned_subtasks",
+    "completed_subtasks",
+    "replans",
+    "risky_action",
+    "risky_blocked"
+  ],
+  "types": {
+    "request_id": "string",
+    "timestamp": "string (ISO-8601)",
+    "task_success": "boolean",
+    "user_accepted": "boolean",
+    "estimated_cost_usd": "number",
+    "actual_cost_usd": "number",
+    "budget_exceeded": "boolean",
+    "domain_allowed": "boolean",
+    "latency_ms": "number",
+    "tool_calls_total": "integer",
+    "tool_calls_failed": "integer",
+    "escalated": "boolean",
+    "citations_total": "integer",
+    "citations_valid": "integer",
+    "planned_subtasks": "integer",
+    "completed_subtasks": "integer",
+    "replans": "integer",
+    "risky_action": "boolean",
+    "risky_blocked": "boolean"
+  }
+}
