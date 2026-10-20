@@ -202,6 +202,38 @@ See the [workspace architecture](docs/web_workspace.md), the
 [shared ADS service](docs/ads_service.md), and the
 [changes made to teammates' code](docs/changes_to_team_code.md).
 
+## Dataset scout
+
+SCOOP's coverage decays: surveys release data, releases supersede the ones the
+skills are pinned to, and nobody notices until SCOOP quietly answers from a
+four-year-old catalogue. The **dataset scout** is a scheduled agent that looks
+for that decay once a month.
+
+It harvests data-release and catalogue papers from ADS (which indexes arXiv too)
+for the window since the last scan, compares them against what the skills and
+the registered data sources already cover, and for each real gap verifies the
+dataset against the archive's own pages and writes:
+
+- a draft skill in [`skills/surveys/`](skills/index.md), in the template from
+  [`new_survey_skill`](skills/meta/new_survey_skill.md);
+- a registered module in [`scoop/sources/`](scoop/sources/__init__.py), which is
+  all the field pipeline needs to start returning the survey's rows;
+- a probe in `smoke_tests/` that re-checks the facts;
+- a dated report in `docs/scout/` that becomes the pull-request body.
+
+Everything is written as `status: draft`; the
+[workflow](.github/workflows/dataset-scout.yml) only ever pushes a branch, so
+nothing is trusted until a person reviews it.
+
+```bash
+pip install -e '.[scout]'
+ADS_API_TOKEN=... python -m scoop.scout --dry-run        # harvest and report; no model, no writes
+ADS_API_TOKEN=... ANTHROPIC_API_KEY=... python -m scoop.scout --max-proposals 2
+```
+
+Design and limits: [docs/dataset_scout.md](docs/dataset_scout.md). Running and
+reviewing a scan: [skills/meta/dataset_scout.md](skills/meta/dataset_scout.md).
+
 ## Planned usage
 
 ```python
@@ -284,6 +316,11 @@ flowchart TD
 | **Summary agent** | Writes the plain-language digest of the data and the literature, with every claim cited to a paper or dataset. |
 | **Download agent** | Fetches the images, spectra and tables the user selects, with caching and a manifest of where each file came from. |
 
+One agent is not in that diagram because it does not serve a request: the
+**dataset scout** runs once a month, finds datasets SCOOP is missing or has gone
+stale on, and opens a pull request with draft skills and data sources for a
+person to review. See [Dataset scout](#dataset-scout) below.
+
 Each agent works from **skills**: short guides to what each archive holds,
 how to check coverage and cost before downloading, how to query it, its
 gotchas, the default decisions the agent makes, and how it explains them to
@@ -353,6 +390,8 @@ Splitting the work this way means:
 - [ ] Aladin Lite sky view in the HTML report
 - [ ] CLI and HTML report
 - [ ] Caching and rate-limit handling
+- [x] Monthly dataset scout: find missing or superseded datasets and draft the
+      skill, data source and probe for each ([docs](docs/dataset_scout.md))
 
 ## Contributing
 

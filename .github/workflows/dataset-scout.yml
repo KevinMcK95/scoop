@@ -1,0 +1,111 @@
+name: Dataset scout
+
+# Once a month, look for datasets SCOOP is missing and open a pull request with
+# the draft skills it wrote. Nothing reaches main without a human reviewing it:
+# the job only ever pushes to a branch.
+on:
+  schedule:
+    - cron: "0 6 1 * *"  # 06:00 UTC on the first of the month
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Harvest and report only; do not call the model or write skills"
+        type: boolean
+        default: false
+      max_proposals:
+        description: "Draft skills this scan may write"
+        type: string
+        default: "3"
+      since:
+        description: "Start of the ADS entry-date window (YYYY-MM-DD; default: last scan)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dataset-scout
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e '.[scout]'
+
+      - name: Scan
+        id: scan
+        env:
+          ADS_API_TOKEN: ${{ secrets.ADS_API_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python -m scoop.scout --json \
+            --max-proposals "${{ inputs.max_proposals || '3' }}" \
+            ${{ inputs.since && format('--since {0}', inputs.since) || '' }} \
+            ${{ inputs.dry_run == true && '--dry-run' || '' }} \
+            | tee scan.json
+          echo "report=$(python -c 'import json;print(json.load(open("scan.json"))["report"] or "")')" >> "$GITHUB_OUTPUT"
+
+      - name: Open a pull request
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ steps.scan.outputs.report }}
+        run: |
+          set -euo pipefail
+          git config user.name "scoop-dataset-scout"
+          git config user.email "noreply@github.com"
+          # out/ is gitignored, so the audit line stays out of the branch on purpose.
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing new this month; no pull request."
+            exit 0
+          fi
+          branch="scout/$(date -u +%Y-%m)"
+          git checkout -b "$branch"
+          git add -A
+          git commit -F - <<'MESSAGE'
+          Dataset scout: monthly scan
+
+          Draft skills, data sources and probes written by the monthly dataset
+          scout, plus its scan report. Every skill is status: draft and must be
+          reviewed before an agent should rely on it.
+
+          Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+          MESSAGE
+          git push -u origin "$branch" --force
+          body=$(mktemp)
+          {
+            echo "Monthly dataset scan. **Review before merging:** every skill here is \`status: draft\`,"
+            echo "written from pages the scout fetched, and no person has checked it."
+            echo
+            echo "Reviewer checklist:"
+            echo "- [ ] Run each new \`smoke_tests/*_probe.py\` and compare the counts with the skill."
+            echo "- [ ] Spot-check the table and column names against the archive's schema."
+            echo "- [ ] Check the citations resolve, and move anything unconfirmed to *Not yet verified*."
+            echo "- [ ] Set \`status: reviewed\` on what you accept; delete what you do not."
+            echo
+            if [ -n "${REPORT:-}" ] && [ -f "$REPORT" ]; then cat "$REPORT"; fi
+            echo
+            echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+          } > "$body"
+          gh pr create --title "Dataset scout: $(date -u +%B' '%Y) scan" \
+            --body-file "$body" --base "${{ github.ref_name }}" --head "$branch"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scout-scan
+          path: |
+            scan.json
+            out/scout_events.jsonl
+          if-no-files-found: ignore
