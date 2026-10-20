@@ -441,10 +441,11 @@ of nearby structures. Full plan:
 
 ## Natural-language layer (shared)
 
-Several team members are working on the **natural-language layer**: an LLM
-(on the `agentbook` harness) that turns requests like "display data within 2
-degrees of the GD-1 spur feature" into a query plan for the user to approve,
-then runs the data tools. It includes a proper-motion agent. Shared plan:
+Several team members are working on the **natural-language layer**: the
+LangGraph chat agent (the default framework; see [Agent architecture](#agent-architecture))
+answering requests like "display data within 2 degrees of the GD-1 spur
+feature" by calling the data tools, and asking the user when a request is
+ambiguous or expensive. It includes a proper-motion agent. Shared plan:
 [plans/natural_language_queries.md](plans/natural_language_queries.md).
 
 ## Auto-calibrated cost checking (default command path)

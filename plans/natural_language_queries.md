@@ -19,25 +19,39 @@ plan or an answer has to come from a tool result.
 
 ## Architecture
 
+**LangGraph is the default framework** (as suggested by the workshop), using
+the chat agent already in [`scoop/chat/`](../scoop/chat/) and described in
+[docs/langgraph_chat.md](../docs/langgraph_chat.md):
+
 ```
 User: "display data within 2 degrees of the GD-1 spur feature"
   │
-  ▼  LLM (agentbook run_with_plan): interpret, resolve, plan
-Query plan (structured): target, region, layers, cuts, budget  ──► shown to the user to approve or edit
+  ▼  chat agent (model bound to typed tools)  ⇄  ToolNode: deterministic tools
+  │     resolve → region → count → query MAST / Gaia / QSOs / spectra / SIMBAD → build field
+  │     (full results stored as artifacts; the model sees short summaries and result IDs)
   │
-  ▼  deterministic tools (today's smoke-test code, refactored)
-resolve → region → count → query MAST / Gaia / QSOs / spectra / SIMBAD → build viewer
-  │
+  ├─► clarification or confirmation when the request is ambiguous or expensive
+  │     ("I'll treat 'GD-1 spur' as …; ~N Gaia rows. Proceed?") — the user replies in the same thread
   ▼
-Viewer + summary + decision log + the model's explanation
+Field in the web workspace (web/) or the standalone viewer + summary + decision log + the model's explanation
 ```
 
-Built on [`agentbook/`](../agentbook/) (already in the repo, from the
-workshop's Tutorial 1): agent loop, Anthropic/OpenAI models, `Tool` and
-`ToolRegistry`, the `update_plan` tool and `run_with_plan`, `Budget`,
-`LoopGuard`, the citation and number-provenance checks, and tracing.
-[Xuan's exoplanet agent](xuanji.md) uses the same pattern, so tools from both
-can live in one registry.
+Points from the existing design that this plan follows:
+- **Typed, action-specific tools**, executed by LangGraph's `ToolNode`. Tools
+  publish their full results as immutable **artifacts** (`publish_result` in
+  `scoop/chat/tools.py`) and return only a short summary and result ID to the
+  model.
+- **No mandatory plan gate.** A query plan can describe proposed work, but
+  isn't required before every tool call. Asking the user is an ordinary
+  assistant turn (a clarification), used for ambiguous or expensive requests.
+- **Archive clients and credentials stay outside conversation state**; they're
+  injected when the graph is built.
+
+The [`agentbook/`](../agentbook/) harness (from the workshop's Tutorial 1) is
+not the runtime. Some of its pieces are still useful as plain functions, such
+as the number-provenance and citation checks (reuse or port them), and
+[Xuan's exoplanet functions](xuanji.md) are already split out of their
+agentbook wrappers (`exoplanets/archive.py`) so they can become LangGraph tools.
 
 ## The worked example: "the GD-1 spur"
 
@@ -54,67 +68,75 @@ A useful test because it needs real reasoning and honesty:
    thousands, which is fine).
 
 The failure we must prevent: the model supplying the spur's coordinates from
-memory. The number-provenance check rejects any plan whose coordinates don't
-appear in a tool result.
+memory. A number-provenance check rejects any proposed region whose
+coordinates don't appear in a tool result.
 
 ## Steps
 
-### 1. Turn the smoke test into a library of tools
+### 1. Turn the smoke-test pipeline into tools
 
-`smoke_tests/lvdb_field.py` is one script built around LVDB ellipses. Split it
-into a package (e.g. `scoop/`) of functions with clear inputs and outputs:
+Much of this exists: [`scoop/sources/`](../scoop/sources/) has one plug-in per
+data source (Gaia, MAST, MILLIQUAS, SIMBAD, spectra, exoplanets) that reads the
+pipeline's output, and `scoop/fields.py` builds fields. What's missing is
+mostly what natural-language requests need:
 
 - [ ] **`Region`**: one type for every region shape: cone, ellipse, polygon,
       MOC, and a buffer around a stream track ("along GD-1"). Methods for
-      "contains", a bounding cone (for queries) and a MOC (for footprint overlap).
-- [ ] **Resolvers**: `resolve_object` (SIMBAD/NED, plus the LVDB for nearby
-      galaxies and clusters), `resolve_stream` (galstreams), and a literature
-      lookup for named features that aren't in catalogs.
-- [ ] **Counts** for every source (`count_gaia`, `count_mast`, …), so plans
-      can be budgeted before anything is fetched.
-- [ ] **Queries**: `query_mast_images`, `query_gaia`, `query_trusted_qsos`,
-      `query_spectra`, `query_simbad_galaxies`; the existing code, unchanged in
-      behavior.
-- [ ] **`build_viewer`** and **`write_summary`** from the current code.
+      "contains", a bounding cone (for queries) and a MOC (for footprint
+      overlap). `scoop/spatial.py` is the natural home; check what it covers.
+- [ ] **Resolvers**: `resolve_target` (SIMBAD/NED, plus the LVDB for nearby
+      galaxies and clusters; see the proposed tool in docs/langgraph_chat.md),
+      `resolve_stream` (galstreams), and a literature lookup for named features
+      that aren't in catalogs (the ADS tools in `scoop/literature/`).
+- [ ] **Counts** for every source, so expensive requests can be confirmed with
+      real numbers before anything is fetched.
+- [ ] **Queries** that run the existing pipeline functions for an arbitrary
+      region (cone mode already exists: `lvdb_field.py --ra --dec
+      --radius-arcmin`), unchanged in behavior.
 - [ ] Every record keeps the provenance [Duo's evaluation](duo_xu.md) needs
       (archive, native ID, position, footprint, query, access URL), and IDs
       stay exact integers (`smoke_tests/ids.py`).
-- [ ] The smoke tests become thin scripts calling the library, and must give
-      the same results as today (a regression check).
+- [ ] Regression checks: both smoke tests give the same results as today.
 
-### 2. Wrap the functions as agentbook tools
+### 2. Register them as LangGraph tools
 
-- [ ] One `Tool` per function. Descriptions come from the skills: what it
-      returns, what it **doesn't** cover, typical cost, and what to do when it
-      fails (e.g. "Gaia QSO candidates are impure; use `query_trusted_qsos`").
-- [ ] Tools return compact summaries to the model (counts, a few example rows,
-      file paths), not whole tables; the full results go to disk for the viewer.
-- [ ] Load the relevant skills into the system prompt per request, from
-      `skills/index.md`.
+- [ ] One typed tool per action, following the proposed set in
+      docs/langgraph_chat.md (`resolve_target`, `search_observations`,
+      `search_publications`, `inspect_result`, …) plus the ones these requests
+      need (`count_sources`, `build_field`).
+- [ ] Tool descriptions come from the skills: what it returns, what it
+      **doesn't** cover, typical cost, and what to do when it fails (e.g. "Gaia
+      QSO candidates are impure; use the trusted QSO catalogs").
+- [ ] Full results go into artifacts and to disk for the viewer and workspace;
+      the model gets counts, a few example rows and result IDs.
+- [ ] Load the relevant skills into the system prompt per request
+      (`scoop/chat/prompt.py`), from `skills/index.md`.
 
-### 3. Plan, approve, execute
+### 3. Confirm, execute, explain
 
-- [ ] A structured **query plan** the model fills in, e.g.
-      `{target, how_resolved, region, layers, cuts, estimated_rows, open_questions}`.
-- [ ] Show it to the user before running anything heavy, in plain language:
-      *"I'll treat 'GD-1 spur' as the feature reported in <paper>, at φ1 ≈ …,
-      φ2 ≈ … (RA, Dec = …); 2° cone; Gaia + HST/JWST + spectra; ~N Gaia rows.
-      Proceed?"*
-- [ ] Execution only after approval; edits ("make it 1 degree", "skip
-      JWST") update the plan instead of starting over.
-- [ ] Guardrails: `Budget` (tokens and cost), `LoopGuard` (no repeated calls),
-      number provenance on the plan and the final answer.
-- [ ] Every run's trace is saved, so decisions can be reviewed afterwards.
+- [ ] For ambiguous or expensive requests, the agent describes what it will do
+      and asks, in plain language: *"I'll treat 'GD-1 spur' as the feature
+      reported in <paper>, at φ1 ≈ …, φ2 ≈ … (RA, Dec = …); 2° cone; Gaia +
+      HST/JWST + spectra; ~N Gaia rows. Proceed?"* The user's reply continues
+      the same thread; edits ("make it 1 degree", "skip JWST") change the
+      request instead of starting over.
+- [ ] Guardrails: a recursion/step limit, cost limits (see Radha's
+      `cost_checker.py`), and number provenance on proposed regions and the
+      final answer.
+- [ ] Conversations and artifacts are checkpointed, so decisions can be
+      reviewed afterwards.
 
 ### 4. Interfaces
 
-- [ ] Command line first: `scoop ask "…" --out DIR [--yes]`.
-- [ ] Then a chat box in the viewer, using the local server `--serve` already
-      runs: a request goes to the agent, and the answer regenerates the page.
+- [ ] The web workspace's chat panel (`web/`, served by `python -m
+      scoop.server`), which already streams agent turns and shows fields.
+- [ ] A command line for scripted runs and benchmarks: `scoop ask "…" --out DIR`.
 
 ### 5. A proper-motion agent
 
-A specialist agent that answers two questions for a field:
+A specialist that answers two questions for a field. In LangGraph it starts
+as a set of tools the chat agent calls (with its own skill in the prompt), and
+becomes a separate subgraph only if a workflow needs one:
 
 1. **Could we measure proper motions here that are as good as, or better
    than, Gaia's**, with the HST, JWST and Gaia data (or other telescopes) that
@@ -210,8 +232,9 @@ building the benchmark, checked against ADS, not taken from memory.
 
 ### 6. Evaluation
 
-- [ ] **Deterministic tests** with `FakeModel`: scripted model responses
-      exercise the plan → tools path without API calls.
+- [ ] **Deterministic tests** with a scripted model (like `ScriptedModel` in
+      `tests/test_chat_graph.py`): scripted responses exercise the agent →
+      tools path without API calls.
 - [ ] **A benchmark of natural-language requests** with known answers, e.g.:
       - "Draco to 2 half-light radii" → must reproduce today's Draco smoke test;
       - "Leo I to 3 half-light radii, only HST" → the HST subset of the Leo I test;
@@ -231,8 +254,10 @@ building the benchmark, checked against ADS, not taken from memory.
 
 - **[Duo](duo_xu.md):** provenance fields on every record; the verifier runs on
   every benchmark result.
-- **[Xuan](xuanji.md):** same agentbook harness; exoplanet-host tools join the
-  registry as another layer.
+- **[Xuan](xuanji.md):** the exoplanet functions (`exoplanets/archive.py`)
+  become LangGraph tools; Yilun's workspace already has an exoplanet data source.
+- **Yilun:** the LangGraph chat agent, the `scoop/` package, the server and the
+  web workspace this plan builds on.
 - **Literature agent:** needed for features like the GD-1 spur, for the
   references behind LVDB values and QSO catalogs, and for the proper-motion
   agent's review of previous work.
@@ -260,5 +285,6 @@ building the benchmark, checked against ADS, not taken from memory.
 - How do we show the model's uncertainty about a resolved feature on the map
   (e.g. draw the region it chose, plus alternatives)?
 - Which model and settings by default, and what's the per-request cost budget?
+  (Radha is working on cost checking and the pricing it uses.)
 - What systematic floor to assume per instrument in the precision estimates,
   and how to show that the numbers are estimates?
