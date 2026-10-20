@@ -35,6 +35,7 @@ from ..chat.web_tools import build_web_tools
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
+from .trace import TurnTracer
 
 THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 MAX_MESSAGE_CHARS = 8000
@@ -158,6 +159,7 @@ def create_app(
     web: tuple[Any, Any] | None = None,
     python: Any = None,
     figure_store: Any = None,
+    trace_store: Any = None,
     settings: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
@@ -167,7 +169,8 @@ def create_app(
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
     a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
-    ``figure_store`` keeps tool images so the browser gets URLs instead of the images. With
+    ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
+    ``trace_store`` keeps developer traces of each turn for the Debug tab. With
     ``audit_path``, each turn appends one JSON line (no message text).
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -244,6 +247,19 @@ def create_app(
         if not same_site(request):
             return JSONResponse({"error": "Figures can only be deleted from the workspace."}, status_code=403)
         if figure_store is None or not figure_store.delete(request.path_params["thread"]):
+            return JSONResponse({"error": "No such conversation."}, status_code=404)
+        return JSONResponse({"deleted": True})
+
+    async def get_traces(request: Request) -> JSONResponse:
+        traces = trace_store.load(request.path_params["thread"]) if trace_store else None
+        if traces is None:
+            return JSONResponse({"error": "Traces are not available."}, status_code=404)
+        return JSONResponse({"traces": traces})
+
+    async def delete_traces(request: Request) -> JSONResponse:
+        if not same_site(request):
+            return JSONResponse({"error": "Traces can only be deleted from the workspace."}, status_code=403)
+        if trace_store is None or not trace_store.delete(request.path_params["thread"]):
             return JSONResponse({"error": "No such conversation."}, status_code=404)
         return JSONResponse({"deleted": True})
 
@@ -357,6 +373,8 @@ def create_app(
                 return
             async with lock:
                 request_id, started = uuid.uuid4().hex, time.monotonic()
+                tracer = TurnTracer(request_id, thread_id, text) if trace_store is not None else None
+                turn_config = {**config, "callbacks": [tracer]} if tracer else config
                 seen: set[str] = set()
                 names: dict[str, str] = {}
                 sent: list[dict] = []
@@ -368,7 +386,7 @@ def create_app(
                     # each finished step (complete text, tool calls, artifacts).
                     async for mode, chunk in graph.astream(
                         {"messages": [HumanMessage(content=_with_context(text, context))]},
-                        config=config, stream_mode=["messages", "updates"],
+                        config=turn_config, stream_mode=["messages", "updates"],
                     ):
                         if mode == "messages":
                             token, meta = chunk
@@ -413,6 +431,11 @@ def create_app(
                         record = _audit_record(request_id, thread_id, started, sent, usage, error)
                         with audit_path.open("a", encoding="utf-8") as log:
                             log.write(json.dumps(record) + "\n")
+                    if tracer is not None:
+                        try:
+                            trace_store.save(tracer.result(error))
+                        except OSError:
+                            pass  # a trace is a convenience; never fail the turn over it
                 if error:
                     yield _sse({"type": "error", "message": error})
                 yield _sse({"type": "done", "request_id": request_id})
@@ -434,6 +457,8 @@ def create_app(
         Route("/api/chat", chat, methods=["POST"]),
         Route("/api/figures/{thread}/{name}", get_figure),
         Route("/api/figures/{thread}", delete_figures, methods=["DELETE"]),
+        Route("/api/traces/{thread}", get_traces),
+        Route("/api/traces/{thread}", delete_traces, methods=["DELETE"]),
     ])
 
 

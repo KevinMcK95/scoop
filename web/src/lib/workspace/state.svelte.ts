@@ -4,6 +4,7 @@ import type { ADSPayload, ActionAcknowledgment, Backend, ChatEvent, JobView, Sou
 import { contextSummary } from '../chat/activity';
 import { deleteConversation, loadConversations, saveConversation, titleOf, type Conversation } from '../chat/history';
 import { figuresOf } from '../chat/figures';
+import type { Trace } from '../chat/trace';
 import { DEFAULT_SURVEY, initialViewport } from './contracts';
 import { decodeView, encodeView } from './viewlink';
 import type { ActionRequest, ChatMessage, Publication, Scene, SkyViewport } from './contracts';
@@ -49,6 +50,9 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
   let viewerPhase = $state<'loading' | 'ready' | 'error'>('loading');
   let services = $state({ chat: false, literature: false });
   let busy = $state(false);
+  // Developer mode shows the Debug tab; remembered in this browser only.
+  const DEBUG_KEY = 'scoop.debug';
+  let debug = $state((() => { try { return globalThis.localStorage?.getItem(DEBUG_KEY) === '1'; } catch { return false; } })());
   let papers = $state<Publication[]>([]);
   let publicationId = $state<string | null>(null);
   let literatureNote = $state('Search ADS, or ask the agent to.');
@@ -328,6 +332,16 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     get messages() { return messages; },
     /** Figures and sky images from this conversation's tools, newest first. */
     get figures() { return figuresOf(messages); },
+    get debug() { return debug; },
+    set debug(on: boolean) {
+      debug = on;
+      try { if (on) globalThis.localStorage?.setItem(DEBUG_KEY, '1'); else globalThis.localStorage?.removeItem(DEBUG_KEY); } catch { /* not remembered */ }
+    },
+    /** This conversation's turn traces from the server, newest first (developer mode). */
+    async loadTraces(): Promise<Trace[]> {
+      if (!backend?.getTraces) throw new Error('Traces need the SCOOP server.');
+      return backend.getTraces(threadId);
+    },
     get draft() { return draft; },
     set draft(value: string) { draft = value; },
     get services() { return services; },
@@ -443,6 +457,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     deleteConversation(id: string) {
       conversations = deleteConversation(id);
       void backend?.deleteFigures?.(id);
+      void backend?.deleteTraces?.(id);
       if (id === threadId && !busy) { threadId = globalThis.crypto.randomUUID(); messages = []; }
     },
     selectRow(ref: RowRef | null) {

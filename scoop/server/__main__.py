@@ -55,6 +55,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
+    from .trace import TraceStore
     from .settings import Settings
 
     # Environment variables seed settings; values saved from the Settings tab win.
@@ -68,6 +69,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
         threads_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(threads_path.parent, 0o700)  # settings, conversations, figures and traces: owner only
         checkpointer = await stack.enter_async_context(AsyncSqliteSaver.from_conn_string(str(threads_path)))
         os.chmod(threads_path, 0o600)
         fields = FieldStore(fields_dir)
@@ -85,7 +87,8 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
                          jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
                          web=(web_searcher(web), page_reader(web)), python=python,
-                         figure_store=FigureStore(settings_path.parent / "figures"))
+                         figure_store=FigureStore(settings_path.parent / "figures"),
+                         trace_store=TraceStore(settings_path.parent / "traces"))
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")

@@ -8,6 +8,7 @@
   import TablePanel from '../lib/components/TablePanel.svelte';
   import FieldNotesPanel from '../lib/components/FieldNotesPanel.svelte';
   import PlotPanel from '../lib/components/PlotPanel.svelte';
+  import DebugPanel from '../lib/components/DebugPanel.svelte';
   import Splitter from '../lib/components/Splitter.svelte';
   import { createWorkspace } from '../lib/workspace/state.svelte';
   import { httpBackend } from '../lib/api/client';
@@ -36,8 +37,11 @@
   const browser = typeof window !== 'undefined';
   const chatMax = () => (browser ? Math.min(900, window.innerWidth * 0.7) : 900);
   const resultsMax = () => (workspaceEl?.clientHeight ?? (browser ? window.innerHeight : 1000)) * 0.75;
-  const tabs = ['Selected', 'Plot', 'Tables', 'Summary', 'Literature', 'Decisions', 'Activity'] as const;
-  let activeTab = $state<(typeof tabs)[number]>('Tables');
+  const allTabs = ['Selected', 'Plot', 'Tables', 'Summary', 'Literature', 'Decisions', 'Activity', 'Debug'] as const;
+  // Debug appears in developer mode (⚙ Settings).
+  const tabs = $derived(allTabs.filter((tab) => tab !== 'Debug' || workspace.debug));
+  let activeTab = $state<(typeof allTabs)[number]>('Tables');
+  $effect(() => { if (!tabs.includes(activeTab)) activeTab = 'Tables'; });
   // A new selection (by you or the agent) brings its details forward.
   let lastSelection = '';
   $effect(() => {
@@ -154,6 +158,8 @@
           <div class="results-body">
             {#if activeTab === 'Selected'}
               <SelectedPanel {workspace} onask={ask} onlookup={lookupSelection} />
+            {:else if activeTab === 'Debug'}
+              <DebugPanel {workspace} />
             {:else if activeTab === 'Plot'}
               <PlotPanel {workspace} onreveal={revealStep} />
             {:else if activeTab === 'Tables'}

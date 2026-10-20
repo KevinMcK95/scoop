@@ -100,6 +100,25 @@ shapes to LangGraph with server-supplied allowed layer/source IDs. It publishes
 bridge and acknowledgment feedback to the graph are not connected yet. This
 keeps a future agent from claiming a display update before a renderer confirms it.
 
+## Debug traces (developer mode)
+
+⚙ Settings → *Developer: show the Debug tab* adds a Debug tab to the results
+panel. Each chat turn is recorded on the server by a LangChain callback
+(`scoop/server/trace.py`), like an observability service but kept on this machine:
+
+- every model call: the messages sent (the first call in full, system prompt
+  included; later calls only what was added), the reply and its tool calls,
+  tokens and prompt-cache hits, and duration;
+- every tool call: arguments, result, status and duration;
+- the turn's error, if any, and totals.
+
+The tab shows the turns of the current conversation as a timeline, and each
+step opens to show its details; ⧉ copies a turn as JSON to share a bug.
+Traces are saved per conversation under `~/.config/scoop/traces/` (owner-only,
+newest 50 turns) and deleted with the conversation. Unlike the audit log they
+contain message text; images are replaced by their size. They are served at
+`GET /api/traces/{thread}`.
+
 ## Proposed backend integration (not implemented)
 
 ```text
