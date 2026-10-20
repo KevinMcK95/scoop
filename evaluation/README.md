@@ -4,23 +4,112 @@ Checks that the data SCOOP returns for a patch of sky is **real**, **in the
 requested field**, **complete** and **correct**, by going back to the archives
 themselves. See [plans/duo_xu.md](../plans/duo_xu.md) for the full plan.
 
-> **Status:** local trial on two targets (M87 and NGC 4993). The real data and
-> literature agents don't exist yet, so `gather_example.py` stands in for them.
+> **Status:** verifies the pipeline's real output (fields from
+> `smoke_tests/lvdb_field.py`, as loaded by the workspace server), and any
+> `result.json`. Also available as an **MCP server**, so Claude Code, the
+> LangGraph chat or any MCP client can call the checks as tools.
 
 ## Files
 
 | File | What it does |
 | --- | --- |
-| `gather_example.py` | Stand-in for the agents: resolves a target, gets Gaia DR3 sources, a sample of HST/JWST observations from MAST, one small image and one small spectrum, the most-cited papers from ADS, and GW sky maps for any `--gw-event`. Writes `result.json` in the provenance format. `--inject-fakes` adds deliberately wrong records to test the checks. |
-| `checks.py` | Core checks (provenance, field of view, ID re-checks, sanity, completeness, files) and `run_all`. |
+| `verify.py` | One-call API: `verify_field`, `verify_result_file`, plus quick lookups (`lookup_ids`, `check_papers`, `check_links`, `check_positions`, `check_gw`). Accepts teammates' shapes too (nested `provenance`, ADS payloads from `scoop.literature`). Returns JSON-friendly summaries. |
+| `mcp_server.py` | The same functions as MCP tools. |
+| `field_adapter.py` | Turns a SCOOP field (`<key>_field.json`, via `scoop.fields`) into the result format the checks read: records with their links, the target's reference papers, the ellipse region, the pipeline's MAST selection and tolerances for its rounding. |
+| `links.py` | Link checks: dead links, HTTP errors, "not found" pages and generic "soft 404" pages. |
+| `checks.py` | Core checks (provenance, region, ID re-checks for Gaia/MAST/SIMBAD, sanity, completeness, files), sampling, and `run_all`. Gaia queries go to the Heidelberg ARI mirror, with ESA as the fallback. |
 | `gw.py` | Reads flat and multi-order HEALPix sky maps; credible level and line-of-sight distance at the target; GW checks. |
 | `literature.py` | Paper checks against ADS, SIMBAD and arXiv; must-include lists. |
-| `geometry.py` | Angular separations, parsing of ObsCore `s_region` footprints, footprint–cone overlap. |
-| `timeouts.py` | Time limits, so a slow archive is reported as skipped instead of hanging the run. |
+| `geometry.py` | Angular separations, `s_region` parsing, and `Region` (a cone or a polygon such as an ellipse) with containment and footprint-overlap tests. |
+| `timeouts.py` | Time limits and retries, so a slow or flaky archive is retried and then reported as skipped instead of hanging the run. |
+| `gather_example.py` | Stand-in data agent for testing the checks: gathers real data for one target into `result.json`; `--inject-fakes` adds deliberately wrong records. |
 | `benchmark.json` | Benchmark targets and what each result must include. |
-| `run_checks.py` | Runs every check on a `result.json` and writes `report.md` and `report.json` next to it. |
+| `run_checks.py` | Command line: verify a field or a `result.json` and write a report. |
+| `requirements.txt` | Extra dependency for the MCP server (`mcp`). |
 
-## Run it
+## Verify pipeline output
+
+```bash
+python smoke_tests/lvdb_field.py --out out/draco        # Kevin's pipeline (if not run yet)
+python -m evaluation.run_checks draco_1 --root out       # or: out/draco/draco_1_field.json
+```
+
+This writes `out/draco/draco_1_verify_report.md` (and `.json`, plus the
+converted `draco_1_verify_result.json`). `--only in_field id_recheck` runs a
+subset of checks. From Python: `from evaluation.verify import verify_field`.
+
+## Use it over MCP
+
+The MCP server offers six tools:
+
+| Tool | Use |
+| --- | --- |
+| `verify_field(field, root="out", sample=100, seed=0, only=None)` | Verify a pipeline field by key (`draco_1`) or path |
+| `verify_result(path, target=None, sample=100, seed=0, only=None)` | Verify a `result.json`, or a saved ADS payload (give `target`) |
+| `lookup_ids(archive, ids)` | Do these Gaia `source_id`s / MAST `obs_id`s / SIMBAD identifiers / ADS bibcodes exist? |
+| `check_papers(bibcodes, target=None, titles=None)` | Papers exist in ADS, titles match, and are about the target |
+| `check_links(urls)` | Links work and point at what they claim |
+| `check_positions(ra, dec, radius_arcmin or polygon, positions, s_regions)` | Which positions and footprints fall in a cone or polygon |
+| `check_gw(event, ra, dec, skymap_url=None)` | Credible level and distance of a position in a GW sky map |
+
+Tool errors (e.g. an archive timing out) come back as `{"error": ...}`.
+
+## Sampling: a quick check first, everything on request
+
+Checks that query an archive or a website for each record (ID re-checks,
+files, GW maps, papers, links) run by default on a **reproducible random
+sample**: at most 100 records per archive and 100 distinct links. Local checks
+(region, sanity, provenance) and the single-query completeness checks always
+cover everything. For each sampled group the report says how many were checked
+and gives a 95% upper limit on the failure rate of the whole group, e.g.
+"checked 100 of 3243 at random (seed 0): 0 failed; at 95% confidence at most
+3.0% of all 3243 would fail". For a full check pass `sample=0` (MCP) or
+`--sample 0` (command line); `seed` picks a different sample.
+
+**Claude Code** (from the repository root, with the environment from the
+main README plus `pip install -r evaluation/requirements.txt`):
+
+```bash
+claude mcp add scoop-eval -- "$PWD/.venv/bin/python" "$PWD/evaluation/mcp_server.py"
+```
+
+Then ask, for example, "verify the draco_1 field" or "do these bibcodes
+exist?". Use the path to your own environment's `python` if it isn't `.venv`.
+A full verification can take a few minutes; if your client times out, raise
+its tool timeout (`MCP_TOOL_TIMEOUT` in Claude Code) or pass `only`.
+
+**LangGraph chat** (`scoop/server`), a sketch using
+[langchain-mcp-adapters](https://github.com/langchain-ai/langchain-mcp-adapters)
+(not yet tried here):
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+client = MultiServerMCPClient({"scoop-eval": {
+    "command": ".venv/bin/python", "args": ["evaluation/mcp_server.py"], "transport": "stdio"}})
+eval_tools = asyncio.run(client.get_tools())
+app = create_app(..., extra_tools=lambda: eval_tools)
+```
+
+**agentbook** can skip MCP and wrap the functions directly, e.g.
+`Tool("verify_field", "...", {"type": "object", "properties": {"field": {"type": "string"}},
+"required": ["field"]}, verify.verify_field)`.
+
+## What the pipeline should record
+
+The checks work on today's output, but some can only warn until the pipeline
+records a little more. Per row (or per table, with the query saved):
+
+- `query`: the ADQL / API call that produced the row
+- `retrieved_at`: when it was retrieved (UTC)
+- `access_url`: the service endpoint or download link
+- for MAST observations: `t_min`/`t_max` (MJD) rather than only a date, and
+  `dataURL` where MAST has one
+
+Right now each table has one provenance label (e.g. `Gaia DR3 (ARI Heidelberg
+TAP)`), so the provenance check reports one warning per table.
+
+## Test the checks themselves
 
 From the repository root:
 
@@ -52,24 +141,43 @@ SIMBAD and only warns.
 | `provenance` | Can each record be traced back? | Required fields present: archive, native ID, query, retrieval time, plus access URL for catalog rows, files, papers and sky maps. Missing dates or download links on observations only warn, since MAST leaves them empty for some records. |
 | `archive_status` | Were failures reported? | Every archive has a returned / empty / failed status. |
 | `target` | Is the target in the right place? | Query position vs. Sesame, within 2″. |
-| `in_field` | Is everything inside the cone? | Catalog rows: separation ≤ radius. Observations: footprint (`s_region`) overlaps the cone. |
-| `id_recheck` | Does it exist, with these values? | Look up every Gaia `source_id` and MAST `obs_id` again; compare position, magnitude, instrument, dates and footprint. |
+| `in_field` | Is everything inside the region? | Region is a cone or a polygon (e.g. a field's ellipse). Catalog rows: inside it (1″ tolerance). Observations: footprint (`s_region`) overlaps it. |
+| `id_recheck` | Does it exist, with these values? | Look up Gaia `source_id`s, MAST `obs_id`s and SIMBAD identifiers again; compare position, magnitude, instrument, dates and footprint (within the source's rounding). |
 | `sanity` | Is it physically possible? | Dates inside the mission lifetime (no JWST data before launch), instrument belongs to the telescope, no future dates, no negative exposure times. |
-| `completeness` | Is anything missing? | Independent Gaia cone query (async, no row limit): every source must be in the result. MAST: counts per collection vs. the archive (warning, since the agents may sample on purpose). Flags row counts that look like a row limit. |
+| `completeness` | Is anything missing? | Gaia: an independent query of the region; every source must be in the result. MAST: if the result states its selection (as fields do: HST/JWST science images, `calib_level` ≥ 2, no HAP), every matching observation overlapping the region must be present; otherwise counts per collection, as warnings. Flags row counts that look like a row limit. |
 | `file` | Is the download a real file? | File exists, size matches the archive, starts as FITS, opens and verifies. |
 | `file_matches_record` | Is it the file it claims to be? | `TELESCOP`, `INSTRUME` and `EXPSTART` in the header match the observation record. |
 | `file_content` | Does the content make sense? | Images: the WCS footprint overlaps the cone and the target pixel is finite. Spectra: target position in the cone, wavelengths inside the instrument's range, flux not all zero. |
 | `gw_localization` | Is the target really in this GW event's localization? | Re-download the sky map from its access URL; check its header names the same event, its probabilities sum to 1, and the local copy is identical; recompute the target's credible level and compare with the claim. Reports the line-of-sight distance at the target. |
 | `paper_exists` | Is the paper real? | Bibcode found in ADS, with matching title, first author and year. |
-| `paper_about_target` | Is it about this target? | Linked to the target in SIMBAD's bibliography or ADS's object search, or the title names it. |
+| `paper_about_target` | Is it about this source, not made up or misattributed? | Linked to the target in SIMBAD's bibliography or ADS's object search, or the title or abstract names the target or one of its SIMBAD identifiers. |
 | `arxiv` | Does the arXiv ID match? | arXiv's title for the ID matches the paper's title. |
+| `links` | Do the data links work? | Each distinct URL is fetched once (streamed, so data files aren't downloaded). Fails on dead hosts, HTTP errors, "not found" pages, and STScI program pages that don't name their program; warns on timeouts and pages that never mention the ID in their own URL or look the same as the page for a made-up ID. ADS abstract links are checked through the ADS API. A failing link is fetched once more, 5 s later. |
 | `must_include` | Are the essential items there? | Papers and GW events listed for the target in `benchmark.json`. |
 
 ## Results so far
 
+### Pipeline output: Draco (`smoke_tests/lvdb_field.py`, 2 r_half ellipse)
+
+| Check | Result |
+| --- | --- |
+| Gaia DR3 sources re-checked against the archive | 3243 of 3243 match (full run) |
+| Gaia completeness (independent query of the ellipse) | 3243 of 3243 in the field: nothing missing |
+| MAST observations re-checked | 119 of 119 match |
+| MAST completeness (the pipeline's own selection rules) | every matching observation is present |
+| SIMBAD galaxies re-checked | 35 of 35 match |
+| Records inside the ellipse | 3758 of 3758 |
+| Reference papers (LVDB) real and about Draco | 6 of 6 |
+| Data links (sample of 100 of 451) | 100 of 100 work: at most 3.0% of all 451 would fail (95%) |
+
+Warnings: provenance is recorded per table rather than per row (see "What the
+pipeline should record").
+
+### Planted problems
+
 | Run | Records | Planted problems caught | Real records failing |
 | --- | ---: | --- | ---: |
-| M87, with fakes | 181 | **15 of 15** | 0 |
+| M87, with fakes (incl. 3 bad links) | 184 | **18 of 18** | 0 |
 | NGC 4993, with fakes | 73 | **18 of 18** | 0 |
 | M87, clean | 178 | – | 0 (609 pass, 20 warnings) |
 | NGC 4993, clean | 67 | – | 0 (236 pass, 9 warnings); 1 must-include paper missing |
@@ -131,6 +239,28 @@ NGC 4993's distance of about 40 Mpc.
   are on the LIGO DCC (LIGO-P1800381).
 - A slow archive once hung a run for 18 minutes with no output, hence the
   time limits.
+- The **ESA Gaia archive can't run `CONTAINS` on big polygons** (a
+  181-vertex ellipse gives an HTTP 500, 60 vertices times out). The checks
+  query the enclosing circle and cut to the region themselves, and use the
+  faster **Heidelberg ARI mirror** first, with ESA as the fallback.
+- **SkyServer serves "Error" pages to bursts of requests.** At 8 requests at
+  once, spectrum and explore links came back as error pages; at 2 at a time
+  all of them worked. Users opening many spectrum links from the viewer may
+  hit the same thing.
+- **STScI program pages return status 200 for programs that don't exist**
+  (a generic "JWST Program Information" page), so a link check that only looks
+  at the status would pass a made-up program. A real page names its program in
+  its title.
+- **ADS abstract pages refuse scripted requests** (HTTP 405), so ADS links
+  are checked through the ADS API.
+- SIMBAD doesn't resolve the bare name "Draco" (its main identifier is
+  "Z 300-12"; "Draco dSph" works), although Sesame does.
+- The LVDB's metallicity reference for Draco (an arXiv paper on many dwarfs)
+  names Draco only in its full text, not its title or abstract. Searching ADS
+  full text avoids flagging such papers.
+- On some machines the certificate bundle that `requests` ships with fails
+  for `www.stsci.edu` and SkyServer; the link check falls back to the system
+  bundle (`$SCOOP_CA_BUNDLE` overrides).
 
 ## Next steps
 
@@ -141,6 +271,7 @@ NGC 4993's distance of about 40 Mpc.
 - More archives (IRSA, HEASARC, SDSS spectra) and data products
 - Multi-order GraceDB sky maps from O3/O4 alerts (supported, but so far only
   tested on a GWTC-1 map converted to multi-order form)
-- Agree on the record format with the team, then point the checks at the real
-  agents' output
+- Try the MCP tools from the LangGraph chat (`create_app(extra_tools=...)`)
+- Run on more LVDB fields (`--lvdb-key leo_1`, `sculptor_1`, ...)
+- Ask the pipeline to record per-row provenance (query, retrieval time, URL)
 - Stretch: check that summary claims are supported by their cited papers
