@@ -1,7 +1,7 @@
-"""Default command path: run through budget check + automatic calibration.
+"""Run one command through the budget check and the calibration loop, without a server.
 
-This script demonstrates how every command can be executed through the same wrapper
-so the estimator is updated on each run.
+The workspace does this for every chat turn (scoop/server/app.py); this script is
+the same path for a single simulated command, for trying pricing and budgets out.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, Dict
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from cost_checker import run_with_auto_calibration
+from scoop.cost import run_with_auto_calibration
 
 
 def simulate_provider_call(query: str, output_tokens: int) -> Dict[str, Any]:
@@ -44,6 +44,9 @@ def main() -> int:
         model=args.model,
         budget_usd=args.budget_usd,
         command_fn=lambda: simulate_provider_call(args.query, args.output_tokens),
+        # One plain call: no system prompt or tool schemas ride along, unlike a chat turn.
+        overhead_tokens=0,
+        model_calls=1,
     )
 
     print("budget:", result["budget"])

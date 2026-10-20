@@ -119,6 +119,30 @@ newest 50 turns) and deleted with the conversation. Unlike the audit log they
 contain message text; images are replaced by their size. They are served at
 `GET /api/traces/{thread}`.
 
+## Budgets and what a command costs
+
+A conversation starts by setting a budget: until it has one the composer is
+disabled and the question waits in the box (`ChatPanel.svelte`, the budget
+card). The context strip then shows what is left, and opens the card again to
+change it.
+
+- `GET /api/budget/{thread}` — what this conversation may spend, has spent and
+  has left (`budget` is null until it sets one), the model turns are priced
+  against, and whether the server has a price for it.
+- `POST /api/budget/{thread}` `{"budget_usd": 5}` — set or raise it; what the
+  conversation has already spent is kept. Same-origin only, like Settings.
+- The chat stream carries two extra events per turn:
+  `{"type": "cost", "phase": "estimate", …}` before the model is called and
+  `{"type": "cost", "phase": "actual", …}` once its tokens are known. Each
+  carries a `note` to show and the conversation's budget after it. The browser
+  shows one note per turn: the estimate, rewritten with what it really cost.
+- A command the remaining budget cannot cover is refused before the model is
+  called, as an `error` event naming the shortfall.
+
+Estimates are calibrated per model from what turns actually cost, so they
+improve with use; see [What a command costs](../README.md#what-a-command-costs)
+and [`scoop/cost.py`](../scoop/cost.py).
+
 ## Proposed backend integration (not implemented)
 
 ```text

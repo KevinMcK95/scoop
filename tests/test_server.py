@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from typing import Annotated
@@ -71,6 +72,27 @@ def events(response):
     return [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
 
 
+def kinds(stream):
+    """Event types without the per-turn cost reports, which every turn emits."""
+    return [event["type"] for event in stream if event["type"] != "cost"]
+
+
+_cost_state: tempfile.TemporaryDirectory | None = None
+
+
+def setUpModule():
+    # Apps built here default to a CostTracker; keep its state out of the checkout.
+    global _cost_state
+    _cost_state = tempfile.TemporaryDirectory()
+    os.environ["COST_CHECKER_STATE_PATH"] = str(Path(_cost_state.name) / "costs.json")
+
+
+def tearDownModule():
+    os.environ.pop("COST_CHECKER_STATE_PATH", None)
+    if _cost_state is not None:
+        _cost_state.cleanup()
+
+
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
 class ServerTests(unittest.TestCase):
     def post_chat(self, client, message="Circle M31", thread_id="thread-0001", context=CONTEXT):
@@ -93,9 +115,11 @@ class ServerTests(unittest.TestCase):
             stream = events(self.post_chat(client))
             record = json.loads(audit.read_text())
 
-        kinds = [event["type"] for event in stream]
-        self.assertEqual(kinds, ["tool_call", "tool_result", "artifact", "assistant", "done"])
-        artifact = stream[2]
+        self.assertEqual(kinds(stream), ["tool_call", "tool_result", "artifact", "assistant", "done"])
+        # Every turn is costed before it runs, whether or not the model has a price.
+        self.assertEqual(stream[0]["type"], "cost")
+        self.assertEqual((stream[0]["phase"], stream[0]["request_id"]), ("estimate", record["request_id"]))
+        artifact = next(event for event in stream if event["type"] == "artifact")
         self.assertEqual(artifact["payload"]["status"], "requested")
         self.assertEqual(artifact["payload"]["actions"], [highlight])
         self.assertEqual(stream[-1]["request_id"], record["request_id"])
@@ -120,6 +144,59 @@ class ServerTests(unittest.TestCase):
         result = next(event for event in stream if event["type"] == "tool_result")
         self.assertEqual(result["status"], "error")
         self.assertFalse(any(event["type"] == "artifact" for event in stream))
+
+    def test_a_conversation_budget_is_estimated_against_and_drawn_down(self):
+        from scoop.cost import CostTracker
+
+        answer = AIMessage(content="Draco is a dwarf spheroidal.",
+                           usage_metadata={"input_tokens": 120_000, "output_tokens": 800, "total_tokens": 120_800})
+        model = ScriptedModel(answer)
+        model.model_name = "claude-opus-5-5"
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(model=model, costs=CostTracker(Path(tmp) / "costs.json")))
+            self.assertIsNone(client.get("/api/budget/thread-0001").json()["budget"])
+            opened = client.post("/api/budget/thread-0001", json={"budget_usd": 5})
+            self.assertEqual(opened.json()["budget"]["remaining_usd"], 5.0)
+            stream = events(self.post_chat(client, message="What is Draco?"))
+
+        costs_sent = [event for event in stream if event["type"] == "cost"]
+        estimate, actual = costs_sent[0], costs_sent[-1]
+        self.assertEqual([event["phase"] for event in costs_sent], ["estimate", "actual"])
+        # The estimate is checked against what this conversation has left, not the server default.
+        self.assertEqual((estimate["budget_usd"], estimate["budget_scope"]), (5.0, "conversation"))
+        self.assertTrue(estimate["priced"] and estimate["within_budget"])
+        # 120k input at $4/MTok and 800 output at $20/MTok.
+        billed = (120_000 * 4 + 800 * 20) / 1e6
+        self.assertAlmostEqual(actual["actual_cost_usd"], billed, places=8)
+        self.assertAlmostEqual(actual["budget"]["remaining_usd"], round(5 - billed, 6), places=6)
+        self.assertEqual(actual["budget"]["turns"], 1)
+        self.assertIn("left of this conversation", actual["note"])
+
+    def test_a_command_the_remaining_budget_cannot_cover_does_not_run(self):
+        from scoop.cost import CostTracker
+
+        model = ScriptedModel(AIMessage(content="never reached"))
+        model.model_name = "claude-opus-5-5"
+        with tempfile.TemporaryDirectory() as tmp:
+            costs = CostTracker(Path(tmp) / "costs.json")
+            costs.set_budget("thread-0001", 0.000001)
+            stream = events(self.post_chat(TestClient(create_app(model=model, costs=costs))))
+            self.assertEqual(costs.budget("thread-0001")["spent_usd"], 0.0)
+
+        self.assertEqual(kinds(stream), ["error", "done"])
+        self.assertIn("Raise the budget", stream[1]["message"])
+        self.assertEqual(model.calls, [])  # nothing was sent to the model
+
+    def test_budget_requests_are_validated(self):
+        client = TestClient(create_app(model=ScriptedModel()))
+        self.assertEqual(client.get("/api/budget/bad id").status_code, 400)
+        self.assertEqual(client.post("/api/budget/thread-0001", json={"budget_usd": 0}).status_code, 400)
+        self.assertEqual(client.post("/api/budget/thread-0001", json={}).status_code, 400)
+        self.assertEqual(self.post_chat(client, message="hi", context={**CONTEXT}).status_code, 200)
+        self.assertEqual(client.post("/api/chat", json={"thread_id": "thread-0001", "message": "hi",
+                                                        "budget_usd": -1}).status_code, 400)
+        self.assertEqual(client.post("/api/budget/thread-0001", json={"budget_usd": 1},
+                                     headers={"origin": "https://evil.example"}).status_code, 403)
 
     def test_rejects_invalid_requests(self):
         client = TestClient(create_app(model=ScriptedModel()))

@@ -1,8 +1,14 @@
 # SCOOP
 
+<img src="assets/scoop-logo.svg" alt="SCOOP — Sky Cone Of Observations and Papers" width="420">
+
 **S**ky **C**one **O**f **O**bservations and **P**apers
 
 > Point at a patch of sky. Get back everything.
+
+The mark is a cone search — an apex at the observer opening onto one patch of
+sky — which, read the other way, is a scoop. Files and usage:
+[`assets/README.md`](assets/README.md).
 
 SCOOP is a tool for querying a region of the sky and getting back *all* of the
 data that exists there — imaging, spectra, catalogs, time-domain alerts,
@@ -206,6 +212,47 @@ See the [workspace architecture](docs/web_workspace.md), the
 [map and agent interaction design](docs/map_interaction.md), the
 [shared ADS service](docs/ads_service.md), and the
 [changes made to teammates' code](docs/changes_to_team_code.md).
+
+## What a command costs
+
+Every chat turn is costed, so nobody finds out what a question cost after the
+fact. A conversation starts by asking for a budget; the workspace sends nothing
+until it has one.
+
+1. **Before the turn runs**, the server estimates it: the user's text plus what
+   rides along with it on every model call — the system prompt, the schema of
+   every tool the turn can reach, the workspace context — priced from the
+   model's rates and multiplied by a learned correction factor. The estimate is
+   shown in the chat and checked against what the conversation has left. A
+   command the remaining budget cannot cover is refused before the model is
+   called, with the shortfall.
+2. **After the turn**, the real token counters (input, output, prompt-cache
+   hits) are priced, charged to the conversation's budget, and the note under
+   the turn becomes what it actually cost and what is left. The audit log keeps
+   both numbers per turn.
+3. **The next estimate is better.** Each confirmation nudges a per-model
+   correction factor towards `actual / base estimate`, so estimates converge on
+   what this agent's turns really cost even though no arithmetic can know in
+   advance which tools it will call. `calibration(model)` reports the factor,
+   the sample count and the rolling relative error.
+
+Budgets and calibration live in one JSON file (`~/.config/scoop/costs.json`),
+beside the settings. `AGENT_BUDGET_USD` sets the per-command default used
+before a conversation sets its own.
+
+An unknown model is reported as unpriced rather than priced at another model's
+rate; `SCOOP_MODEL_PRICE_USD_PER_MTOK="input,output[,cached]"` (USD per million
+tokens) prices a local or self-hosted endpoint.
+
+[`scoop/cost.py`](scoop/cost.py) is also usable on its own:
+
+```bash
+python -m scoop.cost "Summarize this abstract" claude-opus-5-5   # one estimate
+# or run any command through the budget check and the calibration loop:
+python3 scripts/auto_calibrated_runner.py "Summarize this abstract" --model gpt-4 --budget-usd 0.05
+```
+
+Playbook: [skills/cost-checking.skill.md](skills/cost-checking.skill.md).
 
 ## Dataset scout
 
@@ -447,19 +494,6 @@ answering requests like "display data within 2 degrees of the GD-1 spur
 feature" by calling the data tools, and asking the user when a request is
 ambiguous or expensive. It includes a proper-motion agent. Shared plan:
 [plans/natural_language_queries.md](plans/natural_language_queries.md).
-
-## Auto-calibrated cost checking (default command path)
-
-Use the runner below to execute commands through budget checking and automatic
-estimate calibration every run.
-
-```bash
-python3 scripts/auto_calibrated_runner.py "Summarize this abstract" --model gpt-4 --budget-usd 0.05 --output-tokens 300
-```
-
-The runner returns both:
-- budget decision details
-- calibration feedback (estimate vs derived actual)
 
 ## Yilun's idea
 - [ ] orchastration of literature, data agents.

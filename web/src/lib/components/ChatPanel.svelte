@@ -22,6 +22,19 @@
   const turnStart = $derived(workspace.messages.findLast((m) => m.role === 'user')?.id ?? 0);
 
 
+  // A conversation starts by setting a budget; the form comes back when you change it.
+  let budgetDraft = $state('');
+  let budgetError = $state<string | null>(null);
+  let editBudget = $state(false);
+  // Nothing can be asked until this conversation has a budget, where the server keeps them.
+  const needsBudget = $derived(live && workspace.budgetRequired && !workspace.budget);
+  const money = (usd: number) => `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
+  async function saveBudget() {
+    const error = await workspace.setBudget(Number(budgetDraft));
+    budgetError = error;
+    if (!error) { budgetDraft = ''; editBudget = false; }
+  }
+
   const labels = { user: 'YOU', assistant: 'SCOOP', tool: 'TOOL', error: 'ERROR', note: 'NOTE' } as const;
   const visible = $derived(workspace.layers.filter((layer) => layer.visible).length);
   const status = (message: { role: string; status?: string }) => !message.status ? ''
@@ -67,6 +80,29 @@
       <p>SCOOP sees the map as you do: the field, visible layers, what you selected. It answers on the map too, turning layers on or off, highlighting and labelling what it talks about. Undo reverts any change.</p>
       {#if !live}<p class="muted">No agent connected. Start <code>python -m scoop.server</code> with SCOOP_MODEL set.</p>{/if}
     </div>
+    {#if live && workspace.budgetRequired && (!workspace.budget || editBudget)}
+      <form class="budget-card" onsubmit={(event) => { event.preventDefault(); saveBudget(); }}>
+        <h3>{workspace.budget ? 'Change this budget' : 'Set a budget for this conversation'}</h3>
+        <p>SCOOP estimates what a command will cost before it runs, and tells you what is left of the budget
+          afterwards.{#if !workspace.priced} The server has no price for the model it is configured with, so commands
+          cannot be costed until one is set.{/if}</p>
+        <div class="budget-row">
+          <label for="chat-budget">Budget (USD)</label>
+          <input id="chat-budget" type="number" min="0.01" step="0.01" inputmode="decimal" bind:value={budgetDraft}
+            placeholder={workspace.budget ? workspace.budget.budget_usd.toFixed(2)
+              : (workspace.defaultBudget || 1).toFixed(2)} />
+          <button class="primary" type="submit" disabled={!(Number(budgetDraft) > 0)}>Set</button>
+          {#if workspace.budget}
+            <button class="text-button" type="button" onclick={() => { editBudget = false; budgetError = null; }}>Cancel</button>
+          {/if}
+        </div>
+        {#if workspace.budget}
+          <p class="muted">Spent so far: {money(workspace.budget.spent_usd)} over {workspace.budget.turns}
+            {workspace.budget.turns === 1 ? 'command' : 'commands'}. A new budget keeps that spend.</p>
+        {/if}
+        {#if budgetError}<p class="budget-error">{budgetError}</p>{/if}
+      </form>
+    {/if}
     <div class="messages" role="log" aria-label="Conversation messages" aria-live="polite" aria-relevant="additions">
       {#each groupMessages(workspace.messages) as entry (entry.kind === 'message' ? entry.message.id : `a${entry.steps[0].id}`)}
         {#if entry.kind === 'activity'}
@@ -143,9 +179,19 @@
       <span>◎ {row ? `${row.table} ${row.id}` : 'Nothing selected'}</span>
       <span>▤ {paper ? paper.id : 'No paper'}</span>
       <span class="muted">{workspace.field?.target.name ?? 'No field'} · {visible} layers on</span>
+      {#if workspace.budget}
+        <button class="text-button budget-left" type="button" title="Change this conversation's budget"
+          onclick={() => (editBudget = true)}>
+          ◷ {money(Math.max(0, workspace.budget.remaining_usd))} left of {money(workspace.budget.budget_usd)}
+        </button>
+      {:else if live && workspace.budgetRequired}
+        <span class="muted">No budget set</span>
+      {/if}
     </div>
     <label class="sr-only" for="chat-draft">Message</label>
-    <textarea id="chat-draft" bind:value={workspace.draft} rows="3" placeholder="e.g. Which trusted QSOs fall inside JWST footprints?" maxlength="4000"
+    <textarea id="chat-draft" bind:value={workspace.draft} rows="3" disabled={needsBudget}
+      placeholder={needsBudget ? 'Set a budget above to start asking.'
+        : 'e.g. Which trusted QSOs fall inside JWST footprints?'} maxlength="4000"
       onkeydown={(event) => {
       // Enter sends; Shift+Enter is a new line; never mid-composition (IME).
       if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); workspace.send(); }
@@ -153,7 +199,8 @@
     <div class="composer-actions"><span class="muted" title="Enter sends · Shift+Enter for a new line">↵ send · ⇧↵ new line</span>{#if workspace.busy}
         <button class="primary stop" type="button" aria-label="Stop" title="Stop SCOOP" onclick={() => workspace.stop()}>■</button>
       {:else}
-        <button class="primary" type="submit" aria-label="Send" title="Send (↵)" disabled={!workspace.draft.trim()}>↗</button>
+        <button class="primary" type="submit" aria-label="Send" title="Send (↵)"
+          disabled={!workspace.draft.trim() || needsBudget}>↗</button>
       {/if}</div>
   </form>
   {/if}

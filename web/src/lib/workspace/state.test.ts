@@ -346,6 +346,47 @@ describe('field workspace', () => {
     expect(workspace.map.highlight?.ids).toEqual(['1004']); // the view was kept
   });
 
+  it('asks for a budget before the first command, then reports cost and what is left', async () => {
+    const cost = (phase: 'estimate' | 'actual', note: string, remaining: number): ChatEvent =>
+      ({ type: 'cost', phase, note, request_id: 'r1', model: 'claude-opus-5-5',
+         budget: { thread_id: 't', budget_usd: 5, spent_usd: 5 - remaining, remaining_usd: remaining, turns: 1 } });
+    const { fake, requests } = backend([
+      cost('estimate', 'Estimated cost $0.0400 of $5.0000 left in this conversation', 5),
+      { type: 'assistant', id: 'a1', text: 'Draco is a dwarf spheroidal.' },
+      cost('actual', 'This command cost $0.0500 · $4.9500 left of this conversation\'s $5.00 budget', 4.95),
+      { type: 'done' }
+    ]);
+    const budgets: number[] = [];
+    fake.getBudget = async () => ({ budget: null, default_budget_usd: 1, model: 'claude-opus-5-5', priced: true });
+    fake.setBudget = async (_thread, usd) => {
+      budgets.push(usd);
+      return { thread_id: 't', budget_usd: usd, spent_usd: 0, remaining_usd: usd, turns: 0 };
+    };
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+
+    // Nothing is sent to the agent until the conversation has a budget.
+    expect(workspace.budgetRequired).toBe(true);
+    expect(workspace.budget).toBeNull();
+    workspace.draft = 'What is Draco?';
+    await workspace.send();
+    expect(requests).toHaveLength(0);
+    expect(workspace.messages.map((m) => m.role)).toEqual(['note']);
+    expect(workspace.messages[0].text).toMatch(/Set a budget/);
+    expect(workspace.draft).toBe('What is Draco?');  // the question is kept, not lost
+
+    expect(await workspace.setBudget(5)).toBeNull();
+    expect(budgets).toEqual([5]);
+    await workspace.send();
+    expect(requests).toHaveLength(1);
+
+    // One note per turn: the estimate, replaced by what the command actually cost.
+    const notes = workspace.messages.filter((m) => m.role === 'note');
+    expect(notes).toHaveLength(2);  // the "set a budget" note, then this turn's cost
+    expect(notes[1].text).toMatch(/cost \$0.0500 · \$4.9500 left/);
+    expect(workspace.budget?.remaining_usd).toBe(4.95);
+  });
+
   it('says so instead of pretending when no agent is connected', async () => {
     const workspace = createWorkspace();
     workspace.draft = 'Hello';

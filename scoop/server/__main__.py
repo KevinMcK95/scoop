@@ -52,6 +52,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from ..lookup import simbad_query
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
+    from ..cost import DEFAULT_BUDGET_USD, CostTracker
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
@@ -83,7 +84,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         script = Path(__file__).resolve().parents[2] / "smoke_tests" / "lvdb_field.py"
         jobs = JobManager(fields_dir, script) if script.exists() else None
         app = create_app(audit_path=audit_path, fields=fields, settings=settings, make_model=make_model,
-                         checkpointer=checkpointer,
+                         checkpointer=checkpointer, costs=CostTracker(settings_path.with_name("costs.json")),
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
                          jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
                          web=(web_searcher(web), page_reader(web)), python=python,
@@ -93,6 +94,8 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")
         print(f"settings file: {settings_path}; conversations: {threads_path}")
+        print(f"budgets and cost calibration: {settings_path.with_name('costs.json')} "
+              f"(default ${DEFAULT_BUDGET_USD:.2f} per command until a conversation sets its own)")
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
 
 

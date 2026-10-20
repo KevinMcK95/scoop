@@ -1,6 +1,6 @@
 import { applyAction, checkAction, circleCounts, circleLabel, clone, describeStyle, layerRows, regionCounts, regionLabel, rowsOf } from '../field/actions';
 import type { Camera, Field, MapAction, MapState, Origin, Row, RowRef } from '../field/types';
-import type { ADSPayload, ActionAcknowledgment, Backend, ChatEvent, JobView, SourceInfo } from '../api/client';
+import type { ADSPayload, ActionAcknowledgment, Backend, BudgetView, ChatEvent, JobView, SourceInfo } from '../api/client';
 import { contextSummary } from '../chat/activity';
 import { deleteConversation, loadConversations, saveConversation, titleOf, type Conversation } from '../chat/history';
 import { figuresOf } from '../chat/figures';
@@ -21,6 +21,8 @@ export function adsPublications(payload: ADSPayload): Publication[] {
 }
 
 const emptyMap = (): MapState => ({ layers: [], highlight: null, annotations: [], selection: null, plot: null });
+const BUDGET_NOTE = 'Set a budget for this conversation first, so SCOOP can tell you what each command costs '
+  + 'before it runs. Your question is still in the box.';
 const MAX_UNDO = 50;
 
 // Call once per page/component tree. No module-level mutable state (SSR safe).
@@ -53,6 +55,13 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
   // Developer mode shows the Debug tab; remembered in this browser only.
   const DEBUG_KEY = 'scoop.debug';
   let debug = $state((() => { try { return globalThis.localStorage?.getItem(DEBUG_KEY) === '1'; } catch { return false; } })());
+  // What this conversation may spend. Null until the user sets one: a chat starts by asking.
+  let budget = $state<BudgetView | null>(null);
+  // False when the server has no price for the model; then a budget cannot be enforced.
+  let priced = $state(true);
+  let defaultBudget = $state(0);
+  // The cost note for the running turn: written on the estimate, rewritten with the real cost.
+  let costNote: ChatMessage | null = null;
   let papers = $state<Publication[]>([]);
   let publicationId = $state<string | null>(null);
   let literatureNote = $state('Search ADS, or ask the agent to.');
@@ -68,6 +77,17 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
   let streaming: { id: string | null; message: ChatMessage } | null = null;
   let threadId: string = globalThis.crypto.randomUUID();
   let conversations = $state<Conversation[]>([]);
+
+  async function refreshBudget() {
+    costNote = null;
+    if (!backend?.getBudget) return;
+    try {
+      const report = await backend.getBudget(threadId);
+      budget = report.budget;
+      priced = report.priced;
+      defaultBudget = report.default_budget_usd;
+    } catch { /* the server is unreachable; the chat panel says so already */ }
+  }
 
   function persist() {
     conversations = saveConversation({ id: threadId, title: titleOf(messages), field: field?.key ?? null,
@@ -297,6 +317,15 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         else if (payload.service === 'ADS') showPapers(payload as unknown as ADSPayload);
         break;
       }
+      // What the command is expected to cost, then what it cost and what is left of the budget.
+      case 'cost': {
+        if (event.budget) budget = event.budget;
+        if (event.phase === 'estimate') costNote = push({ role: 'note', text: event.note });
+        else if (costNote) costNote.text = event.note;
+        else push({ role: 'note', text: event.note });
+        if (event.priced === false) priced = false;
+        break;
+      }
       case 'error': push({ role: 'error', text: event.message }); break;
     }
   }
@@ -308,6 +337,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     controller = new AbortController();
     const { signal } = controller;
     busy = true;
+    costNote = null;
     turn = { open: new Set(), message: null, done: false, changed: false };
     try {
       for await (const event of backend!.chat({ thread_id: threadId, message: text, context: sent }, signal)) {
@@ -412,6 +442,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       conversations = loadConversations();
       if (!backend) return;
       services = await backend.health();
+      await refreshBudget();
       sources = await backend.listSources();
       fieldKeys = (await backend.listFields()).map((item) => item.key);
       if (autoload && fieldKeys.length && !field) await loadField(fieldKeys[0]);
@@ -448,6 +479,23 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       survey = saved.survey;
       moveCamera(saved.viewport);
     },
+    /** What this conversation may spend; null until the user sets a budget. */
+    get budget() { return budget; },
+    /** Whether this server keeps budgets: asking for one is pointless when it does not. */
+    get budgetRequired() { return !!backend?.getBudget; },
+    /** False when the server cannot price the configured model, so a budget cannot be enforced. */
+    get priced() { return priced; },
+    get defaultBudget() { return defaultBudget; },
+    /** Open this conversation's budget (or raise it); what it has already spent is kept. */
+    async setBudget(usd: number) {
+      if (!(usd > 0) || !backend?.setBudget) return 'A budget must be more than $0.';
+      try {
+        budget = await backend.setBudget(threadId, usd);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
     get conversations() { return conversations; },
     get conversationId() { return threadId; },
     /** Start a fresh conversation (a new server thread); the current one stays in History. */
@@ -457,6 +505,8 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       threadId = globalThis.crypto.randomUUID();
       messages = [];
       unreported = [];
+      budget = null;  // a new conversation asks for its own budget
+      void refreshBudget();
     },
     /** Reopen a saved conversation and continue its server thread. */
     openConversation(id: string) {
@@ -468,12 +518,18 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       messages = clone(saved.messages);
       sequence = Math.max(sequence, ...messages.map((m) => m.id));
       unreported = [];
+      void refreshBudget();  // the server still holds what this conversation has spent
     },
     deleteConversation(id: string) {
       conversations = deleteConversation(id);
       void backend?.deleteFigures?.(id);
       void backend?.deleteTraces?.(id);
-      if (id === threadId && !busy) { threadId = globalThis.crypto.randomUUID(); messages = []; }
+      if (id === threadId && !busy) {
+        threadId = globalThis.crypto.randomUUID();
+        messages = [];
+        budget = null;
+        void refreshBudget();
+      }
     },
     selectRow(ref: RowRef | null) {
       if (ref === null || rowsOf(field, ref.table).some((row) => row.id === ref.id)) map.selection = ref;
@@ -514,6 +570,12 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       if (!backend || !services.chat) {
         push({ role: 'user', text });
         push({ role: 'note', text: 'No agent is connected. Start `python -m scoop.server` with SCOOP_MODEL set.' });
+        return;
+      }
+      if (!budget && backend.getBudget) {
+        // Nothing is sent and nothing is lost: the question waits in the composer for a budget.
+        draft = text;
+        if (messages.at(-1)?.text !== BUDGET_NOTE) push({ role: 'note', text: BUDGET_NOTE });
         return;
       }
       const sent = context();
