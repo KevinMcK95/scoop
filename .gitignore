@@ -10,3 +10,5 @@ node_modules/
 .svelte-kit/
 out/
 .DS_Store
+.ipynb_checkpoints/
+.cost_checker_state.json

@@ -403,6 +403,19 @@ degrees of the GD-1 spur feature" into a query plan for the user to approve,
 then runs the data tools. It includes a proper-motion agent. Shared plan:
 [plans/natural_language_queries.md](plans/natural_language_queries.md).
 
+## Auto-calibrated cost checking (default command path)
+
+Use the runner below to execute commands through budget checking and automatic
+estimate calibration every run.
+
+```bash
+python3 scripts/auto_calibrated_runner.py "Summarize this abstract" --model gpt-4 --budget-usd 0.05 --output-tokens 300
+```
+
+The runner returns both:
+- budget decision details
+- calibration feedback (estimate vs derived actual)
+
 ## Yilun's idea
 - [ ] orchastration of literature, data agents.
 

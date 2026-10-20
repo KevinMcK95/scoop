@@ -31,6 +31,13 @@ archive.
 |---|---|
 | [stsci_proposals](literature/stsci_proposals.md) | The HST and JWST programs behind observations in a region: why they were proposed, status, and what came of them |
 
+## Operations (cost and metrics)
+
+| Skill | Use it for |
+|---|---|
+| [cost-checking](cost-checking.skill.md) | Estimating a request's cost, checking it against a budget, and calibrating estimates from actual usage (`cost_checker.py`) |
+| [metrics-scorecard](metrics-scorecard.skill.md) | Pipeline metrics and the weekly scorecard (`scripts/metrics_scorecard.py`) |
+
 ## Writing new skills (`meta/`)
 
 | Skill | Use it for |
