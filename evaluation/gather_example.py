@@ -35,9 +35,9 @@ from pathlib import Path
 import astropy.units as u
 import numpy as np
 from astropy.coordinates import SkyCoord
-from astroquery.gaia import Gaia
 from astroquery.mast import Observations
 
+from .checks import gaia_query
 from .geometry import parse_s_region
 from .gw import GWTC1_SKYMAP, credible_level, fetch, read_skymap
 from .literature import ads_object_query, ads_search
@@ -77,7 +77,7 @@ def gaia_cone_adql(ra, dec, radius_deg) -> str:
 
 def gather_gaia(ra, dec, radius_deg):
     adql = gaia_cone_adql(ra, dec, radius_deg)
-    table = Gaia.launch_job(adql).get_results()
+    table, _ = gaia_query(adql)
     t = now()
     records = []
     for row in table:
@@ -92,7 +92,7 @@ def gather_gaia(ra, dec, radius_deg):
             "pmra": py(row["pmra"]),
             "pmdec": py(row["pmdec"]),
             "query": adql,
-            "access_url": "https://gea.esac.esa.int/tap-server/tap",
+            "access_url": "https://gaia.ari.uni-heidelberg.de/tap",
             "retrieved_at": t,
         })
     return records
@@ -250,7 +250,7 @@ def inject_fakes(records, ra0, dec0, radius_deg, out_dir):
         f"WHERE 1 = CONTAINS(POINT(ra, dec), CIRCLE({ra0!r}, {dec0!r}, {4 * radius_deg!r})) "
         f"AND 0 = CONTAINS(POINT(ra, dec), CIRCLE({ra0!r}, {dec0!r}, {2 * radius_deg!r}))"
     )
-    row = Gaia.launch_job(adql).get_results()[0]
+    row = gaia_query(adql)[0][0]
     f = copy.deepcopy(gaia[0])
     f.update(native_id=str(row["source_id"]), ra=py(row["ra"]), dec=py(row["dec"]),
              phot_g_mean_mag=py(row["phot_g_mean_mag"]), parallax=py(row["parallax"]),
@@ -348,6 +348,14 @@ def inject_fakes(records, ra0, dec0, radius_deg, out_dir):
         fakes.append({**copy.deepcopy(g), "native_id": "GW170999",
                       "access_url": GWTC1_SKYMAP.format(event="GW170999"), "path": None,
                       "_injected": "made-up GW event"})
+
+    # Broken data links.
+    for url, why in [("https://archive.scoop-example.invalid/data/12345", "link to a host that doesn't exist"),
+                     (MAST_DOWNLOAD + "mast:HST/product/zzzz99999_x1d.fits", "download link to a file MAST doesn't have"),
+                     ("https://www.stsci.edu/jwst-program-info/program/?program=99999",
+                      "link to a JWST program that doesn't exist (soft 404)")]:
+        fakes.append({"kind": "link", "archive": "web", "native_id": url, "access_url": url,
+                      "query": "planted link", "retrieved_at": now(), "_injected": why})
 
     # Drop a few real Gaia sources so the result is incomplete.
     dropped = [r["native_id"] for r in gaia[-3:]]

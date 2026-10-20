@@ -2,8 +2,19 @@
 
 **Owner:** Duo Xu ([@xuduo117](https://github.com/xuduo117))
 **Started:** 2026-10-19
-**Status:** prototype on branch `duo/evaluation-prototype`, see
-[evaluation/README.md](../evaluation/README.md)
+**Status:** working on `main`. It verifies the pipeline's real output (fields
+from `smoke_tests/lvdb_field.py`, as the workspace loads them), including data
+links and the papers attached to each source, on a random sample first and
+fully on request. It's also available as an MCP server (`evaluation/mcp_server.py`).
+See [evaluation/README.md](../evaluation/README.md).
+
+> **Update (2026-10-20):** besides correctness, completeness and field of
+> view, the evaluation now checks that **data links work** (no dead links,
+> HTTP errors or generic "not found" pages) and that **each paper is real and
+> actually about its source** (ADS, SIMBAD links, title/abstract/full-text
+> mentions of the source's names). Big results are checked on a reproducible
+> random sample (100 records per archive by default) with a 95% upper limit on
+> the failure rate; a full check runs when asked.
 
 > **Change of scope (2026-10-19):** I was originally going to work on data
 > reduction and cross-matching across data sets. After discussing it as a

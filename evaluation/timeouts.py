@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 
 # Any socket opened without its own timeout gives up after this many seconds.
 # This covers clients (e.g. the Gaia TAP client) that don't take a timeout argument.
@@ -40,3 +41,22 @@ def call_with_timeout(fn, seconds: float):
     if "error" in box:
         raise box["error"]
     return box["value"]
+
+
+def is_network_error(exc: BaseException) -> bool:
+    """Connection resets, timeouts, HTTP and service errors: worth retrying."""
+    if isinstance(exc, (OSError, TimeoutError)):  # includes ConnectionError and requests' errors
+        return True
+    name = type(exc).__name__
+    return any(word in name for word in ("Timeout", "Connection", "Service", "HTTP"))
+
+
+def with_retries(fn, attempts: int = 3, delay: float = 10, sleep=time.sleep):
+    """Call ``fn()``, retrying network errors with doubling delays (10 s, 20 s by default)."""
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:
+            if attempt == attempts - 1 or not is_network_error(exc):
+                raise
+            sleep(delay * 2**attempt)

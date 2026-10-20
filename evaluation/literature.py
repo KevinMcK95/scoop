@@ -112,11 +112,28 @@ def check_papers_exist(result):
     return out
 
 
+def simbad_main_id(target):
+    """SIMBAD's main identifier for a name, trying common variants ("Draco" is "Draco dSph"), or None."""
+    from astroquery.simbad import Simbad
+
+    for name in (target, f"{target} dSph", f"{target} Dwarf Galaxy", f"NAME {target}"):
+        try:
+            table = Simbad.query_object(name)
+        except Exception:
+            continue
+        if len(table):
+            return str(table["main_id"][0])
+    return None
+
+
 def _simbad_linked(target, bibcodes):
     """Bibcodes in SIMBAD's bibliography of ``target`` (by SIMBAD main identifier)."""
     from astroquery.simbad import Simbad
 
-    main_id = str(Simbad.query_object(target)["main_id"][0]).replace("'", "''")
+    main_id = simbad_main_id(target)
+    if main_id is None:
+        return set()
+    main_id = main_id.replace("'", "''")
     quoted = ", ".join("'" + b.replace("'", "''") + "'" for b in bibcodes)
     table = Simbad.query_tap(
         "SELECT ref.bibcode FROM ref "
@@ -127,28 +144,73 @@ def _simbad_linked(target, bibcodes):
     return {str(b) for b in table["bibcode"]}
 
 
+def target_aliases(target) -> dict[str, str]:
+    """Normalized name -> name, for every identifier SIMBAD has for the target (plus the name given).
+
+    Very short names (under 3 characters once normalized) are left out, since they match too easily.
+    """
+    from astroquery.simbad import Simbad
+
+    names = {target}
+    main_id = simbad_main_id(target)
+    if main_id:
+        try:
+            names.update(str(i) for i in Simbad.query_objectids(main_id)["id"])
+        except Exception:
+            pass
+    out = {}
+    for name in names:
+        name = re.sub(r"^NAME\s+", "", " ".join(name.split()))
+        key = _norm(name)
+        if len(key) >= 3:
+            out.setdefault(key, name)
+    return out
+
+
 def check_papers_linked(result):
-    """Is each paper linked to the target in SIMBAD or ADS, or at least named in its title?"""
+    """Is each paper about the target? Linked to it in SIMBAD or ADS, or its title or abstract
+    names the target or one of its SIMBAD aliases."""
     papers = _papers(result)
-    if not papers:
+    target = result["query"].get("target")
+    if not papers or not target:
         return []
-    target = result["query"]["target"]
     bibcodes = sorted({p["native_id"] for p in papers})
-    linked = {b: "SIMBAD" for b in _simbad_linked(target, bibcodes)}
+    linked = {b: "SIMBAD's bibliography" for b in _simbad_linked(target, bibcodes)}
     rest = [b for b in bibcodes if b not in linked]
+    texts = {p["native_id"]: f"{p.get('title') or ''} {p.get('abstract') or ''}" for p in papers}
     if rest and ads_token():
         for d in ads_search(f"{_bibcode_query(rest)} AND {ads_object_query(target)}", ["bibcode"], rows=len(rest)):
-            linked.setdefault(d["bibcode"], "ADS object search")
+            linked.setdefault(d["bibcode"], "ADS's object search")
+        rest = [b for b in rest if b not in linked]
+        if rest:
+            for d in ads_search(_bibcode_query(rest), ["bibcode", "title", "abstract"], rows=len(rest)):
+                texts[d["bibcode"]] = f"{(d.get('title') or [''])[0]} {d.get('abstract') or ''}"
+    aliases = target_aliases(target) if rest else {}
+    # Last resort: ADS full-text search (where ADS has the full text) for the target's names.
+    unconfirmed = [b for b in rest if not any(k in _norm(texts.get(b, "")) for k in aliases)]
+    full_text = set()
+    if unconfirmed and ads_token():
+        names = [target] + [n for n in aliases.values() if n != target and re.search(r"[A-Za-z]{3}", n)][:7]
+        terms = " OR ".join('"' + n.replace('"', "") + '"' for n in names)
+        for d in ads_search(f"{_bibcode_query(unconfirmed)} AND full:({terms})", ["bibcode"], rows=len(unconfirmed)):
+            full_text.add(d["bibcode"])
     out = []
     for p in papers:
         b = p["native_id"]
         if b in linked:
             out.append(CheckResult("paper_about_target", PASS, record_key(p), f"linked to {target} in {linked[b]}"))
-        elif _norm(target) in _norm(p.get("title", "")):
-            out.append(CheckResult("paper_about_target", PASS, record_key(p), f"title mentions {target}"))
+            continue
+        text = _norm(texts.get(b, ""))
+        named = next((name for key, name in aliases.items() if key in text), None)
+        if named:
+            out.append(CheckResult("paper_about_target", PASS, record_key(p), f"title or abstract names {named!r}"))
+        elif b in full_text:
+            out.append(CheckResult("paper_about_target", PASS, record_key(p), f"full text (ADS) names {target}"))
         else:
             out.append(CheckResult("paper_about_target", FAIL, record_key(p),
-                                   f"not linked to {target} in SIMBAD or ADS, and the title doesn't mention it"))
+                                   f"not linked to {target} in SIMBAD or ADS, and neither the title, the "
+                                   f"abstract nor the full text (where ADS has it) names it or any of its "
+                                   f"{len(aliases)} SIMBAD identifiers"))
     return out
 
 

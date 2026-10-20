@@ -125,6 +125,8 @@ def check_localizations(result, base_dir: Path, level_tol=0.01):
     """Re-download each sky map from its access URL and recompute the claims."""
     q = result["query"]
     out = []
+    if q.get("ra") is None:
+        return out
     for rec in result["records"]:
         if rec.get("kind") != "localization":
             continue
