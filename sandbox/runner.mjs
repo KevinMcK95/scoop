@@ -25,6 +25,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.show = lambda *args, **kwargs: None  # figures are collected after the run
+import warnings
+from astropy.utils import iers
+from astropy.utils.data import conf as data_conf
+# No network: use astropy's bundled Earth orientation and leap-second tables, quietly.
+data_conf.allow_internet = False
+iers.conf.auto_download = False
+iers.conf.auto_max_age = None
+warnings.filterwarnings("ignore", category=iers.IERSStaleWarning)
+
+INSTALLED = "numpy, pandas, scipy, astropy, matplotlib, scikit-learn, statsmodels, sympy, uncertainties, shapely"
 
 MAX_OUTPUT = 10_000
 MAX_FIGURES = 2
@@ -49,6 +59,8 @@ def _scoop_run(code, tables_json):
         # Keep the user's frames, not the harness's.
         start = next((i for i, l in enumerate(lines) if "<run_python>" in l), 1)
         error = "\\n".join([lines[0], *lines[start:]])[-4000:]
+        if lines[-1].startswith("ModuleNotFoundError"):
+            error += f"\\nThis sandbox cannot install packages. Available besides the standard library: {INSTALLED}."
     figures = []
     for number in plt.get_fignums()[:MAX_FIGURES]:
         buffer = io.BytesIO()
