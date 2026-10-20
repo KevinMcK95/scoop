@@ -9,6 +9,8 @@
   import FieldNotesPanel from '../lib/components/FieldNotesPanel.svelte';
   import PlotPanel from '../lib/components/PlotPanel.svelte';
   import DebugPanel from '../lib/components/DebugPanel.svelte';
+  import Landing from '../lib/components/Landing.svelte';
+  import { fade } from 'svelte/transition';
   import Splitter from '../lib/components/Splitter.svelte';
   import { createWorkspace } from '../lib/workspace/state.svelte';
   import { httpBackend } from '../lib/api/client';
@@ -16,9 +18,36 @@
   import '../app.css';
 
   const workspace = createWorkspace(httpBackend());
-  let layersOpen = $state(true);
-  let chatOpen = $state(true);
-  let resultsOpen = $state(true);
+  // The start page covers the workspace until the first question (or a view link,
+  // a saved conversation, or "Open the sky map"); the map stays mounted beneath it.
+  let landing = $state(true);
+  let layersOpen = $state(false);
+  let chatOpen = $state(false);
+  let resultsOpen = $state(false);
+  const narrow = () => window.matchMedia('(max-width: 800px)').matches;
+  // Leaving the start page: the chat slides in from the right, layers open on wide screens.
+  function enterWorkspace() {
+    landing = false;
+    chatOpen = true;
+    layersOpen = !narrow();
+  }
+  async function startWith(question: string) {
+    if (workspace.messages.length) workspace.newConversation();
+    enterWorkspace();
+    workspace.draft = question;
+    await tick();
+    await workspace.send();
+  }
+  function explore() {
+    enterWorkspace();
+    if (!workspace.field && workspace.fieldKeys.length) void workspace.loadField(workspace.fieldKeys[0]);
+  }
+  function continueConversation(id: string) {
+    workspace.openConversation(id);
+    enterWorkspace();
+    const saved = workspace.conversations.find((c) => c.id === id)?.field;
+    if (saved && saved !== workspace.field?.key) void workspace.loadField(saved);
+  }
   const CHAT_WIDTH = 340, RESULTS_HEIGHT = 300;
   // Sizes are a per-browser convenience; storage may be unavailable.
   const stored = (name: string, fallback: number) => {
@@ -58,11 +87,15 @@
     lastPlot = key;
   });
   onMount(() => {
-    // A shared view link opens once its field is loaded.
-    void workspace.connect().then(() => { if (location.hash) void workspace.openViewLink(location.hash); });
-    if (window.matchMedia('(max-width: 800px)').matches) {
-      layersOpen = false;
-      chatOpen = false;
+    // A shared view link skips the start page and opens once its field is loaded.
+    if (location.hash) {
+      landing = false;
+      layersOpen = !narrow();
+      chatOpen = !narrow();
+      resultsOpen = true;
+      void workspace.connect().then(() => workspace.openViewLink(location.hash));
+    } else {
+      void workspace.connect({ autoload: false });
     }
   });
   async function ask() {
@@ -114,8 +147,8 @@
 <div class="app-shell">
   <a class="skip-link" href="#workspace">Skip to atlas workspace</a>
   <header class="app-header">
-    <h1 class="wordmark">◉ SCOOP <span>Sky atlas</span></h1>
-    <nav aria-label="Workspace panels">
+    <h1 class="wordmark"><button class="wordmark-home" title="Start page" onclick={() => (landing = true)} disabled={landing}>◉ SCOOP <span>Sky atlas</span></button></h1>
+    <nav aria-label="Workspace panels" hidden={landing}>
       <button aria-expanded={layersOpen} aria-controls="layers-drawer" onclick={toggleLayers}>Layers</button>
       <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>
       <button aria-expanded={chatOpen} aria-controls="chat-drawer" onclick={toggleChat}>Chat</button>
@@ -126,7 +159,12 @@
       <span class="dot" class:on={workspace.services.literature} title={workspace.services.literature ? 'ADS connected' : 'ADS not configured'} aria-label={workspace.services.literature ? 'ADS connected' : 'ADS not configured'}></span>ADS
     </span>
   </header>
-  <main id="workspace" tabindex="-1" class="atlas-workspace" style:--chat-width={`${chatWidth}px`} bind:this={workspaceEl}>
+  {#if landing}
+    <div class="landing-layer" out:fade={{ duration: 280 }}>
+      <Landing {workspace} onask={startWith} onexplore={explore} onopen={continueConversation} />
+    </div>
+  {/if}
+  <main id="workspace" tabindex="-1" class="atlas-workspace" style:--chat-width={`${chatWidth}px`} bind:this={workspaceEl} inert={landing}>
     <!-- Drawers stay mounted and animate their size; inert keeps a closed one out of focus and reading order. -->
     <aside id="layers-drawer" class="left-drawer" class:collapsed={!layersOpen} inert={!layersOpen} aria-hidden={!layersOpen}>
       <div class="drawer-inner">

@@ -57,6 +57,8 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
   let publicationId = $state<string | null>(null);
   let literatureNote = $state('Search ADS, or ask the agent to.');
   let sequence = 0;
+  // Settles when the latest field load or refresh the agent asked for has finished.
+  let fieldReady: Promise<void> = Promise.resolve();
   // Agent requests the renderer has resolved but the agent has not yet heard about.
   let unreported: ActionAcknowledgment[] = [];
   // Requests from the running turn; the answer's scene is captured once they resolve.
@@ -275,9 +277,19 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       }
       case 'artifact': {
         const payload = event.payload;
-        if (payload.kind === 'map_actions' && Array.isArray(payload.actions)) request(payload.actions as MapAction[], 'agent', event.id);
-        else if (payload.kind === 'field_load' && typeof payload.key === 'string') void loadField(payload.key, event.id);
-        else if (payload.kind === 'field_refresh' && typeof payload.key === 'string') void refreshField(payload.key, event.id);
+        if (payload.kind === 'map_actions' && Array.isArray(payload.actions)) {
+          // The agent may load a field and act on it in one turn: act once it has loaded.
+          const actions = payload.actions as MapAction[];
+          const hold = -++sequence;
+          turn?.open.add(hold);
+          void fieldReady.then(() => {
+            request(actions, 'agent', event.id);
+            turn?.open.delete(hold);
+            maybeCaptureScene();
+          });
+        }
+        else if (payload.kind === 'field_load' && typeof payload.key === 'string') fieldReady = loadField(payload.key, event.id);
+        else if (payload.kind === 'field_refresh' && typeof payload.key === 'string') fieldReady = refreshField(payload.key, event.id);
         else if (payload.kind === 'field_job' && typeof payload.job === 'string' && typeof payload.key === 'string')
           void trackJob(payload.job, payload.key, event.id);
         else if (payload.service === 'ADS') showPapers(payload as unknown as ADSPayload);
@@ -393,13 +405,14 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     stop() {
       controller?.abort();
     },
-    async connect() {
+    /** Reach the server; with `autoload`, show the first field (the start page leaves it to the agent). */
+    async connect({ autoload = true }: { autoload?: boolean } = {}) {
       conversations = loadConversations();
       if (!backend) return;
       services = await backend.health();
       sources = await backend.listSources();
       fieldKeys = (await backend.listFields()).map((item) => item.key);
-      if (fieldKeys.length && !field) await loadField(fieldKeys[0]);
+      if (autoload && fieldKeys.length && !field) await loadField(fieldKeys[0]);
     },
     undo() {
       const previous = undoStack.at(-1);

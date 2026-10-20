@@ -373,6 +373,7 @@ def build_map_tools(
     jobs=None, lvdb=None,
     fetch_image: Callable[[float, float, float, str], Awaitable[bytes]] | None = None,
     add_source: Callable[[str, str], Awaitable[int]] | None = None,
+    read_field: Callable[[str], dict | None] | None = None,
 ) -> list[BaseTool]:
     """Tools bound to the field and layers the browser reports for this turn."""
     current = {layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer}
@@ -459,16 +460,27 @@ def build_map_tools(
 
     @tool
     async def load_field(key: str, tool_call_id: Annotated[str, InjectedToolCallId]):
-        """Load a field result (archive data around a Local Volume object) onto the
-        map, replacing the current field. Its default layers follow the pipeline's
-        presentation; adjust them afterwards with update_map.
+        """Load a field result (archive data around a target) onto the map, replacing
+        the current field. Its default layers follow the pipeline's presentation. The
+        other tools use the new field straight away, in this same turn: describe it,
+        summarize, highlight and adjust layers without waiting.
         """
+        nonlocal field
         if key not in field_keys:
             return ToolMessage(content=f"No field {key!r}. Available: {list(field_keys) or 'none'}.",
                                tool_call_id=tool_call_id, status="error")
+        loaded = read_field(key) if read_field else None
+        if loaded is None:
+            return publish_result(tool_call_id, tool_call_id, {"kind": "field_load", "key": key},
+                                  f"Requested field {key!r}. Call describe_field on the next turn, "
+                                  "after the browser confirms it loaded.")
+        # The browser shows the field's default layers; map actions this turn apply after it loads.
+        field = loaded
+        current.clear()
+        current.update({layer["id"]: layer for layer in loaded.get("layers", [])})
         return publish_result(tool_call_id, tool_call_id, {"kind": "field_load", "key": key},
-                              f"Requested field {key!r}. Call describe_field on the next turn, "
-                              "after the browser confirms it loaded.")
+                              f"Loaded field {key!r} ({loaded['target']['name']}); the other tools use it now. "
+                              "Map actions you request next apply once the browser has loaded it.")
 
     async def locate(ra, dec, table, row_id, name) -> tuple[float, float, str] | str:
         """A center from ra+dec, a field row, or a name; or why not."""

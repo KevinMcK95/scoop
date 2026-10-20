@@ -280,9 +280,20 @@
     <!-- Data being retrieved: field loads, archive queries, ADS searches, pipeline runs. -->
     <div class="progress" role="progressbar" aria-label={workspace.progress.join('; ')}>
       <div class="progress-bar"></div>
-      <span class="progress-label">{workspace.progress[0]}{workspace.progress.length > 1 ? ` (+${workspace.progress.length - 1})` : ''}</span>
+      <span class="progress-label"><span class="spinner small" aria-hidden="true"></span>{workspace.progress[0]}{workspace.progress.length > 1 ? ` (+${workspace.progress.length - 1})` : ''}</span>
     </div>
   {/if}
+  {#each workspace.jobs.filter((job) => job.status === 'running') as job (job.id)}
+    <!-- Archive queries take minutes; say what is happening and that the chat stays usable. -->
+    <div class="job-card" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>
+        <strong>Querying the archives for {job.key} · {Math.floor(job.elapsed_s / 60)}:{String(Math.floor(job.elapsed_s % 60)).padStart(2, '0')}</strong>
+        <small>{job.decisions.at(-1) ?? job.last ?? 'HST/JWST, Gaia, quasar catalogs, spectra… usually 1–6 minutes'}</small>
+        <small>The map fills in when it is done; you can keep asking meanwhile.</small>
+      </span>
+    </div>
+  {/each}
   <div class="map-actions" role="group" aria-label="Map tools">
     <button class="small-button" disabled={phase !== 'ready' || !field} title="Fit the field" aria-label="Fit the field" onclick={fitField}>⌖</button>
     <button class="small-button" disabled={!workspace.canUndo} title="Undo" aria-label="Undo" onclick={() => workspace.undo()}>↶</button>

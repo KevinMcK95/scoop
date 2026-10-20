@@ -10,4 +10,11 @@ describe('server rendering', () => {
     expect(body).toContain('id="workspace"');
     expect(body).toContain('role="separator"');
   });
+
+  it('opens on the start page, over the mounted workspace', () => {
+    const { body } = render(Page);
+    expect(body).toContain('id="landing-title"');
+    expect(body).toContain('Suggested questions');
+    expect(body).toMatch(/<main[^>]*id="workspace"[^>]*inert/);
+  });
 });
