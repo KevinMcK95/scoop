@@ -97,5 +97,21 @@ class SettingsEndpointTests(unittest.TestCase):
         self.assertEqual(self.post({"model": "bad model"}).status_code, 400)
 
 
+
+
+class AttributionTests(unittest.TestCase):
+    def test_scoop_is_named_only_to_openrouter(self):
+        try:
+            from scoop.server.__main__ import attribution_headers
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"server dependencies absent ({exc.name})")
+
+        headers = attribution_headers("https://openrouter.ai/api/v1")
+        self.assertEqual((headers["HTTP-Referer"], headers["X-OpenRouter-Title"]), ("https://github.com/KevinMcK95/scoop", "SCOOP"))
+        self.assertNotIn("X-OpenRouter-App-Visibility", headers)  # public in OpenRouter's rankings
+        for other in ("https://api.openai.com/v1", "https://openrouter.ai.example.com/v1", None):
+            self.assertEqual(attribution_headers(other), {})
+
+
 if __name__ == "__main__":
     unittest.main()
