@@ -13,6 +13,7 @@ import json
 import math
 from datetime import date
 from pathlib import Path
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 from langchain_core.messages import ToolMessage
@@ -133,12 +134,13 @@ def _summary(epochs: list[dict], errors: list[tuple[float, float]]) -> list[dict
 AGENT_MEMBERS = "agent:members:{table}"
 
 
-def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, layers=(),
-                   known_layers: dict | None = None) -> list:
+def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache: Path | None, loader=None,
+                   layers=(), known_layers: dict | None = None) -> list:
     """``loader(cache) -> (comb_all, pm_overview)`` reads the LVDB tables (scoop.pm.load_lvdb
     by default; injectable for tests). ``layers`` are the browser's current layers, so
     auto_members updates its layer rather than adding it twice; ``known_layers`` is the
     dict shared with the map tools (build_map_tools), which then see the layer too."""
+    current_field = field if callable(field) else (lambda: field)  # the field may change mid-turn
     current = known_layers if known_layers is not None else {}
     current.update({layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer})
     from .. import pm
@@ -152,6 +154,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         return state["tables"]
 
     async def target_row():
+        field = current_field()
         if field is None:
             return None, "No field is loaded."
         comb, pms = await lvdb()
@@ -162,7 +165,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         return (row, pms), None
 
     def point(ra, dec):
-        t = field["target"]
+        t = current_field()["target"]
         return (t["ra"] if ra is None else ra), (t["dec"] if dec is None else dec)
 
     @tool
@@ -226,6 +229,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         compared with the best published value. Position errors are per star per epoch
         (mas); ground-based imaging is far less precise than HST/JWST, so give
         position_errors_by_instrument or restrict instruments. Say what you assumed."""
+        field = current_field()
         if field is None:
             return _err("No field is loaded.", tool_call_id)
         ra, dec = point(ra, dec)
@@ -273,6 +277,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         grouped into visits; use instruments (e.g. ["HST"] for HST+HST) and
         position_errors_by_instrument as in pm_new_epoch. Returns the earliest year for
         the new epoch, or that it is out of reach and why."""
+        field = current_field()
         if field is None:
             return _err("No field is loaded.", tool_call_id)
         ra, dec = point(ra, dec)
@@ -426,6 +431,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         you read (ads_paper) to the comparison. Not a mixture model: it trusts the
         selection. error_scale multiplies every star's PM errors (a sensitivity test for
         underestimated errors)."""
+        field = current_field()
         if field is None:
             return _err("No field is loaded.", tool_call_id)
         if table not in field["tables"]:
@@ -483,6 +489,7 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, 
         Members layer is not changed."""
         from .. import members, pm
 
+        field = current_field()
         if field is None:
             return _err("No field is loaded.", tool_call_id)
         if table not in field["tables"]:

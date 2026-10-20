@@ -10,7 +10,10 @@ from pydantic import Field
 from ..sandbox import table_payload
 
 
-def build_python_tools(sandbox, field: dict | None = None) -> list[BaseTool]:
+def build_python_tools(sandbox, field=None) -> list[BaseTool]:
+    # field: the field, or a function returning the turn's current field (load_field can switch it).
+    current_field = field if callable(field) else (lambda: field)
+
     @tool
     async def run_python(
         code: Annotated[str, Field(min_length=1, max_length=20_000)],
@@ -38,6 +41,7 @@ def build_python_tools(sandbox, field: dict | None = None) -> list[BaseTool]:
         - astropy uses its bundled Earth-orientation data (to early 2025);
         - every call starts with fresh variables (re-create what you need); 30 s per call.
         """
+        field = current_field()
         unknown = [t for t in tables if field is None or t not in field["tables"]]
         if unknown:
             offered = sorted(field["tables"]) if field else []

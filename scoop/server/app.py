@@ -347,29 +347,40 @@ def create_app(
             return _bad_request(f"Invalid chat request: {exc}")
 
         field = fields.get(field_key) if fields and field_key else None
+        # The field this turn works on: load_field can switch it mid-turn (e.g. from the start
+        # page), and the PM tools, the data agent and run_python follow it through current_field.
+        turn = {"field": field}
+
+        def read_field(key: str) -> dict | None:
+            turn["field"] = fields.get(key)
+            return turn["field"]
+
+        def current_field() -> dict | None:
+            return turn["field"]
+
         known_layers: dict = {}  # layers seen or added this turn, shared by the map and PM tools
         map_tools = build_map_tools(field=field, layers=layers, known_layers=known_layers,
                                     resolver=resolver, simbad=simbad,
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
-                                    read_field=fields.get if fields else None,
+                                    read_field=read_field if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
         async def store_rows(key: str, name: str, rows: list[dict], meta: dict) -> None:
             fields.add_rows(key, name, rows, meta)
             # The map tools hold this field object: refresh it in place so the rest of
             # this turn sees the new table.
-            refreshed = fields.get(key)
-            if field is not None and refreshed is not None and field.get("key") == key:
-                field.clear()
-                field.update(refreshed)
+            refreshed, current = fields.get(key), turn["field"]
+            if current is not None and refreshed is not None and current.get("key") == key:
+                current.clear()
+                current.update(refreshed)
 
         # The data agent runs on the same model, for data the field doesn't have yet.
-        handoff = build_handoff_tool(model=model, field=field, store_rows=store_rows if fields else None)
+        handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None)
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
-        pm_tools = build_pm_tools(field=field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
+        pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
         tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
-                 *(build_python_tools(python, field) if python else []),
+                 *(build_python_tools(python, current_field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)

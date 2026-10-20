@@ -141,3 +141,17 @@ notebook; no bp3m code) and for the proper-motion tools (`scoop/pm.py`,
   anything that wasn't a dict, so those tools' results and artifacts (including map
   layers) never reached the browser. It now flattens the list. Test:
   `tests/test_server.py::ParallelCommandEventTests`.
+
+## Tools follow a field loaded mid-turn (with the start page)
+
+With the start page, a turn can begin with no field and `load_field` it (Yilun's
+change: the map tools switch to it at once). The other tools now switch too:
+
+- `scoop/server/app.py` keeps the turn's field in `turn["field"]`: the `read_field`
+  hook passed to `build_map_tools` records each field it loads, and `store_rows`
+  refreshes that field in place. The PM tools, `ask_data_agent` and `run_python` get
+  `current_field` (a function) instead of the field.
+- `scoop/chat/python_tool.py` `build_python_tools`, `scoop/chat/data_agent.py`
+  `build_handoff_tool` and `scoop/chat/pm_tools.py` `build_pm_tools` accept either a
+  field or a function returning it; passing a field works as before.
+- Test: `tests/test_server.py::StartPageTests` (load_field then a PM tool, in one turn).

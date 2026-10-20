@@ -306,8 +306,10 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
             query_catalog, find_services, describe_service, query_service]
 
 
-def build_handoff_tool(*, model, field: dict | None, store_rows, skills_dir: Path = SKILLS_DIR):
-    """The chat agent's ``ask_data_agent`` tool: runs the data agent for one request."""
+def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR):
+    """The chat agent's ``ask_data_agent`` tool: runs the data agent for one request.
+    ``field`` is the field, or a function returning the turn's current field."""
+    current_field = field if callable(field) else (lambda: field)
 
     @tool
     async def ask_data_agent(request: str, tool_call_id: Annotated[str, InjectedToolCallId]):
@@ -316,6 +318,7 @@ def build_handoff_tool(*, model, field: dict | None, store_rows, skills_dir: Pat
         "LAMOST spectra", "radio sources"), or "what other data exist here?".
         Describe what the user wants in plain words. It finds the data, adds it to
         the field as tables and layers, and returns a report. Takes up to a few minutes."""
+        field = current_field()
         if field is None or store_rows is None or model is None:
             return _error("No field is loaded (or the data agent isn't available).", tool_call_id)
         added: list[str] = []

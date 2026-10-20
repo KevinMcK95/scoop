@@ -273,6 +273,36 @@ class ServerTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
+class StartPageTests(unittest.TestCase):
+    def test_tools_follow_a_field_loaded_mid_turn(self):
+        # From the start page there is no field; after load_field, the PM tools (like the
+        # map tools) must work on the newly loaded field in the same turn.
+        try:
+            from scoop import pm
+            from tests.test_pm import lvdb_tables
+        except ModuleNotFoundError:
+            self.skipTest("astropy absent")
+        model = ScriptedModel(
+            AIMessage(content="", tool_calls=[{"name": "load_field", "args": {"key": "mini_1"}, "id": "c1",
+                                               "type": "tool_call"}]),
+            AIMessage(content="", tool_calls=[{"name": "pm_published", "args": {}, "id": "c2", "type": "tool_call"}]),
+            AIMessage(content="Done."))
+        with tempfile.TemporaryDirectory() as tmp:
+            store = field_store(tmp)
+            cache = Path(tmp) / "lvdb_cache"
+            cache.mkdir()
+            comb, pms = lvdb_tables()
+            comb.write(cache / f"lvdb_{pm.LVDB_RELEASE}_comb_all.ecsv")
+            pms.write(cache / f"lvdb_{pm.LVDB_RELEASE}_pm_overview.csv", format="ascii.csv")
+            context = {**CONTEXT, "field": None, "layers": []}
+            stream = events(ServerTests.post_chat(self, TestClient(create_app(model=model, fields=store)),
+                                                  context=context))
+        published = next(e for e in stream if e["type"] == "tool_result" and e["id"] == "c2")
+        self.assertEqual(published["status"], "success", published["summary"])
+        self.assertIn('"object": "Mini"', published["summary"])
+
+
+@unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
 class ParallelCommandEventTests(unittest.IsolatedAsyncioTestCase):
     async def test_artifacts_from_parallel_tool_commands_reach_the_browser(self):
         # Several tools returning Commands in one step stream as a list of updates; the
