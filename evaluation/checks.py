@@ -638,7 +638,7 @@ def sampling_notes(results, cut, seed):
         out.append(CheckResult("sampling", INFO, f"{archive} ({kind})",
                                f"checked {n} of {total} at random (seed {seed}): {k} failed; at 95% confidence "
                                f"at most {upper_limit(k, n):.1%} of all {total} would fail. "
-                               "Run with sample=None to check every one."))
+                               "Run with sample=0 (MCP) or --sample 0 (command line) to check every one."))
     return out
 
 
