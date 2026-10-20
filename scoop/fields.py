@@ -1,0 +1,323 @@
+"""Field results and layers: what the map shows, as JSON shared with the browser.
+
+A field result holds tables of rows (``id``, ``ra``, ``dec``, optional
+``s_region`` footprint or ``polygon``, plus flat properties). A layer is a view
+of one table: a filter, a style and a label. Tables, their metadata and the
+default layers come from the data sources in ``scoop/sources/``.
+
+The filter evaluator here and ``web/src/lib/field/filter.ts`` must agree; both
+are tested against ``tests/fixtures/filter_cases.json``.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from pathlib import Path
+from typing import Any
+
+from .spatial import polygon_contains, separation_deg
+
+OPS = ("==", "!=", "<", "<=", ">", ">=", "in", "exists", "within", "inside")
+SHAPES = ("circle", "square", "plus", "cross", "rhomb", "triangle")
+FIELD_KEY = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+def _within(value: Any) -> bool:
+    return (isinstance(value, dict) and set(value) == {"ra", "dec", "radius"}
+            and all(isinstance(value[k], (int, float)) and not isinstance(value[k], bool)
+                    for k in value) and 0 <= value["ra"] < 360 and -90 <= value["dec"] <= 90
+            and 0 < value["radius"] <= 180)
+
+
+def _inside(value: Any) -> bool:
+    points = value.get("polygon") if isinstance(value, dict) and set(value) == {"polygon"} else None
+    return (isinstance(points, list) and 3 <= len(points) <= 64 and all(
+        isinstance(p, list) and len(p) == 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in p)
+        and 0 <= p[0] < 360 and -90 <= p[1] <= 90 for p in points))
+
+
+def validate_filter(filters: Any, columns: set[str]) -> list[dict]:
+    """Return the filter if every clause is well formed and names a known column.
+
+    ``{"column": "position", "op": "within", "value": {"ra", "dec", "radius"}}``
+    keeps rows within ``radius`` degrees of a point;
+    ``{"column": "position", "op": "inside", "value": {"polygon": [[ra, dec], ...]}}``
+    keeps rows inside a polygon (3–64 vertices, e.g. a box drawn on the map).
+    """
+    if not isinstance(filters, list):
+        raise ValueError("filter must be a list of clauses")
+    for clause in filters:
+        if not isinstance(clause, dict) or set(clause) - {"column", "op", "value"}:
+            raise ValueError(f"bad clause {clause!r}")
+        if clause.get("op") == "within":
+            if clause.get("column") != "position" or not _within(clause.get("value")):
+                raise ValueError("'within' needs column 'position' and value {ra, dec, radius} in degrees")
+            continue
+        if clause.get("op") == "inside":
+            if clause.get("column") != "position" or not _inside(clause.get("value")):
+                raise ValueError("'inside' needs column 'position' and value {polygon: [[ra, dec], ...]} "
+                                 "with 3-64 vertices in degrees")
+            continue
+        if clause.get("column") not in columns:
+            raise ValueError(f"unknown column {clause.get('column')!r}; known: {sorted(columns)}")
+        if clause.get("op") not in OPS:
+            raise ValueError(f"unknown op {clause.get('op')!r}; use one of {OPS}")
+        if clause["op"] == "in" and not isinstance(clause.get("value"), list):
+            raise ValueError("'in' needs a list value")
+        if clause["op"] != "exists" and "value" not in clause:
+            raise ValueError(f"clause on {clause['column']!r} needs a value")
+    return filters
+
+
+def _equal(a: Any, b: Any) -> bool:
+    # JSON semantics: true is not 1 (Python says it is).
+    return a == b and isinstance(a, bool) == isinstance(b, bool)
+
+
+def _clause(row: dict, clause: dict) -> bool:
+    value, op, target = row.get(clause["column"]), clause["op"], clause.get("value")
+    if op == "inside":
+        ra, dec = row.get("ra"), row.get("dec")
+        return (isinstance(ra, (int, float)) and isinstance(dec, (int, float))
+                and polygon_contains(target["polygon"], ra, dec))
+    if op == "within":
+        ra, dec = row.get("ra"), row.get("dec")
+        return (isinstance(ra, (int, float)) and isinstance(dec, (int, float))
+                and separation_deg(ra, dec, target["ra"], target["dec"]) <= target["radius"])
+    if op == "exists":
+        return (value is not None and value != "") == bool(target if "value" in clause else True)
+    if op == "==":
+        return _equal(value, target)
+    if op == "!=":
+        return not _equal(value, target)
+    if op == "in":
+        return any(_equal(value, item) for item in target)
+    # Ordered comparisons only between two numbers or two strings; missing never matches.
+    numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (value, target))
+    if not numbers and not (isinstance(value, str) and isinstance(target, str)):
+        return False
+    return {"<": value < target, "<=": value <= target,
+            ">": value > target, ">=": value >= target}[op]
+
+
+def matches(row: dict, filters: list[dict]) -> bool:
+    return all(_clause(row, clause) for clause in filters)
+
+
+# ── Field result from the smoke-test pipeline ────────────────────────────────
+
+def _columns(rows: list[dict]) -> list[str]:
+    names: dict[str, None] = {}
+    for row in rows:
+        names.update(dict.fromkeys(row))
+    # "_"-prefixed keys (links, details) are for display, not filtering.
+    return [n for n in names if n not in ("id", "polygon") and not n.startswith("_")]
+
+
+def field_from_viewer_data(data: dict) -> dict:
+    """Build a field from pipeline output with every registered data source.
+
+    Each data source (``scoop/sources/<name>.py``) supplies its table's rows,
+    column metadata, default layers and presets; enrichments then add
+    cross-source columns and details. Nothing here names a data source.
+    """
+    from .sources import ENRICHMENTS, SOURCES
+
+    present, rows = [], {}
+    for source in sorted(SOURCES.values(), key=lambda s: (s.order, s.name)):
+        try:
+            rows[source.name] = source.rows(data)
+        except KeyError:  # this pipeline output has nothing from that data source
+            continue
+        present.append(source)
+    for source in present:
+        if source.links:
+            for row in rows[source.name]:
+                links = source.links(row)
+                if links:
+                    row["_links"] = [list(link) for link in links]
+    for enrichment in ENRICHMENTS:
+        if all(name in rows for name in enrichment.needs):
+            enrichment.apply(rows, data)
+    from .sources import Column
+
+    # Positions are part of the field model, the same for every data source.
+    position = {"ra": Column("deg", "ICRS right ascension"), "dec": Column("deg", "ICRS declination")}
+    tables = {}
+    for source in present:
+        columns = _columns(rows[source.name])
+        known = {**position, **source.columns}
+        info = {c: known[c] for c in columns if c in known}
+        tables[source.name] = {
+            "label": source.label, "provenance": source.provenance, "kind": source.kind,
+            "columns": columns, "units": {c: i.unit for c, i in info.items() if i.unit},
+            "descriptions": {c: i.description for c, i in info.items() if i.description},
+            "presets": [dict(p) for p in source.presets], "browse": list(source.browse),
+            "rows": rows[source.name]}
+    field = {"key": data.get("key", data["target"]["name"]), "target": data["target"],
+             "n_rhalf": data["n_rhalf"], "fov": data["fov"], "region": data["ellipses"]["n"],
+             "tables": tables,
+             # Data-source summaries (e.g. MAST imaging coverage), shown in the Summary tab.
+             "summaries": [{"source": s.name, **summary} for s in present for summary in s.summaries(rows[s.name], data)],
+             "decisions": data["decisions"], "surveys": data["surveys"]}
+    layers = [layer for source in present for layer in source.layers(rows[source.name], data)]
+    layers.sort(key=lambda layer: layer.pop("order"))
+    for layer in layers:
+        layer["count"] = layer_count(field, layer)
+        # On the user's list from the start if shown by default; others wait in "Add data".
+        layer["added"] = layer["visible"]
+    field["layers"] = layers
+    return field
+
+
+def default_layers(field: dict) -> list[dict]:
+    """The data sources' default presentation of a field (as built)."""
+    return field["layers"]
+
+
+def layer_count(field: dict, layer: dict) -> int:
+    return sum(matches(row, layer["filter"]) for row in field["tables"][layer["table"]]["rows"])
+
+
+def table_summary(table: dict, max_values: int = 8) -> dict:
+    """Columns with numeric ranges or a few distinct values: what the agent sees."""
+    columns = {}
+    for name in table["columns"]:
+        values = [row.get(name) for row in table["rows"] if row.get(name) not in (None, "")]
+        numbers = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)
+                   and math.isfinite(v)]
+        if numbers and len(numbers) == len(values):
+            columns[name] = {"type": "number", "min": min(numbers), "max": max(numbers),
+                             "present": len(values)}
+        elif values and all(isinstance(v, bool) for v in values):
+            columns[name] = {"type": "bool", "true": sum(values), "present": len(values)}
+        elif name not in ("s_region",):
+            distinct = sorted({str(v) for v in values})
+            columns[name] = {"type": "text", "distinct": len(distinct),
+                             "examples": distinct[:max_values], "present": len(values)}
+    for name, info in columns.items():
+        if name in table.get("units", {}):
+            info["unit"] = table["units"][name]
+        if name in table.get("descriptions", {}):
+            info["description"] = table["descriptions"][name]
+    return {"label": table["label"], "provenance": table["provenance"],
+            "rows": len(table["rows"]), "columns": columns}
+
+
+def _quantile(sorted_values: list[float], q: float) -> float:
+    """Linear interpolation between order statistics (numpy's default)."""
+    pos = (len(sorted_values) - 1) * q
+    lo, hi = math.floor(pos), math.ceil(pos)
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
+
+
+def column_stats(rows: list[dict], column: str, *, bins: int = 20,
+                 error_column: str | None = None) -> dict:
+    """Distribution of one column over rows: robust numbers for numbers,
+    counts for booleans and text. Missing values are counted, never imputed."""
+    values = [row.get(column) for row in rows]
+    present = [v for v in values if v not in (None, "")]
+    out: dict = {"column": column, "n": len(present), "missing": len(values) - len(present)}
+    numbers = [float(v) for v in present if isinstance(v, (int, float)) and not isinstance(v, bool)
+               and math.isfinite(v)]
+    if present and all(isinstance(v, bool) for v in present):
+        out.update(type="bool", true=sum(present), false=len(present) - sum(present))
+        return out
+    if not numbers or len(numbers) != len(present):
+        counts: dict[str, int] = {}
+        for v in present:
+            counts[str(v)] = counts.get(str(v), 0) + 1
+        out.update(type="text", top=dict(sorted(counts.items(), key=lambda kv: -kv[1])[:10]),
+                   distinct=len(counts))
+        return out
+    xs = sorted(numbers)
+    n, mean = len(xs), sum(xs) / len(xs)
+    median = _quantile(xs, 0.5)
+    mad = _quantile(sorted(abs(x - median) for x in xs), 0.5)
+    out.update(type="number", min=xs[0], max=xs[-1], mean=mean,
+               std=math.sqrt(sum((x - mean) ** 2 for x in xs) / (n - 1)) if n > 1 else None,
+               median=median, mad=mad, sigma_mad=1.4826 * mad,
+               percentiles={str(q): _quantile(xs, q / 100) for q in (5, 16, 50, 84, 95)})
+    if bins and xs[-1] > xs[0]:
+        width = (xs[-1] - xs[0]) / bins
+        counts = [0] * bins
+        for x in xs:
+            counts[min(int((x - xs[0]) / width), bins - 1)] += 1
+        out["histogram"] = {"edges": [xs[0] + i * width for i in range(bins + 1)], "counts": counts}
+    if error_column:
+        pairs = [(float(r[column]), float(r[error_column])) for r in rows
+                 if isinstance(r.get(column), (int, float)) and isinstance(r.get(error_column), (int, float))
+                 and not isinstance(r.get(column), bool) and r[error_column] > 0]
+        if pairs:
+            weights = [1 / e ** 2 for _, e in pairs]
+            wmean = sum(w * x for w, (x, _) in zip(weights, pairs)) / sum(weights)
+            out["weighted_mean"] = {"value": wmean, "error": 1 / math.sqrt(sum(weights)),
+                                    "n": len(pairs), "error_column": error_column}
+            # A few very precise outliers (e.g. foreground stars) can dominate.
+            if out["sigma_mad"] and abs(wmean - median) > 3 * out["sigma_mad"]:
+                out["weighted_mean"]["warning"] = (
+                    "Far from the median: a few low-error outliers dominate. Select members "
+                    "(or clip outliers) before quoting a weighted mean.")
+    return out
+
+
+class FieldStore:
+    """Field results under ``root/<dir>/<key>_field.json`` (smoke-test output).
+
+    Rows from on-demand data-source queries live beside each field in
+    ``<key>_extra.json`` ({source: {"rows": [...]}}), so pipeline output is never edited.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self._cache: dict[str, tuple[tuple, dict]] = {}
+
+    def keys(self) -> list[dict]:
+        found = []
+        for path in sorted(self.root.glob("*/*_field.json")):
+            key = path.name.removesuffix("_field.json")
+            found.append({"key": key, "path": str(path.relative_to(self.root))})
+        return found
+
+    def _path(self, key: str) -> Path | None:
+        if not FIELD_KEY.fullmatch(key):
+            return None
+        return next(iter(sorted(self.root.glob(f"*/{key}_field.json"))), None)
+
+    def _extra(self, path: Path) -> Path:
+        return path.with_name(path.name.replace("_field.json", "_extra.json"))
+
+    def get(self, key: str) -> dict | None:
+        path = self._path(key)
+        if path is None:
+            return None
+        extra = self._extra(path)
+        stamp = (path.stat().st_mtime, extra.stat().st_mtime if extra.exists() else None)
+        cached = self._cache.get(key)
+        if cached is None or cached[0] != stamp:
+            data = json.loads(path.read_text())
+            data["extra"] = json.loads(extra.read_text()) if extra.exists() else {}
+            cached = (stamp, field_from_viewer_data(data))
+            self._cache[key] = cached
+        return cached[1]
+
+    def add_rows(self, key: str, source: str, rows: list[dict]) -> None:
+        """Store an on-demand query's rows for a field (replacing earlier ones)."""
+        path = self._path(key)
+        if path is None:
+            raise KeyError(key)
+        extra = self._extra(path)
+        stored = json.loads(extra.read_text()) if extra.exists() else {}
+        stored[source] = {"rows": rows}
+        extra.write_text(json.dumps(stored))
+
+
+def field_region(field: dict) -> dict:
+    """The field's queried area as a circle: target center, out to the farthest region vertex."""
+    target = field["target"]
+    radius = max((separation_deg(target["ra"], target["dec"], ra, dec) for ra, dec in field.get("region") or []),
+                 default=target.get("rhalf_arcmin", 1) / 60)
+    return {"ra": target["ra"], "dec": target["dec"], "radius_deg": radius}
+
+
+__all__ = ["FieldStore", "field_region", "OPS", "SHAPES", "column_stats", "default_layers", "field_from_viewer_data",
+           "layer_count", "matches", "table_summary", "validate_filter"]

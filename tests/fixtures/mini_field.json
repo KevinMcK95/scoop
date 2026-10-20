@@ -1,0 +1,1124 @@
+{
+ "key": "mini_1",
+ "target": {
+  "name": "Mini",
+  "ra": 260.05,
+  "dec": 57.92,
+  "rhalf_arcmin": 9.6,
+  "ellipticity": 0.3,
+  "pa_deg": 89,
+  "ref_structure": "test",
+  "distance_kpc": 80.0,
+  "pmra": 0.04,
+  "pmdec": -0.19,
+  "ref_proper_motion": "test"
+ },
+ "n_rhalf": 2,
+ "fov": 0.8,
+ "region": [
+  [
+   259.9,
+   57.8
+  ],
+  [
+   260.2,
+   57.8
+  ],
+  [
+   260.2,
+   58.1
+  ]
+ ],
+ "tables": {
+  "target": {
+   "label": "Target",
+   "provenance": "Local Volume Database v1.1.1",
+   "kind": "annotation",
+   "columns": [
+    "ra",
+    "dec",
+    "name"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination"
+   },
+   "presets": [],
+   "browse": [],
+   "rows": [
+    {
+     "id": "center",
+     "ra": 260.05,
+     "dec": 57.92,
+     "name": "Mini"
+    },
+    {
+     "id": "rhalf",
+     "ra": 260.05,
+     "dec": 57.92,
+     "polygon": [
+      [
+       260.0,
+       57.9
+      ],
+      [
+       260.1,
+       57.9
+      ],
+      [
+       260.1,
+       58.0
+      ]
+     ],
+     "name": "1 r_half"
+    },
+    {
+     "id": "region",
+     "ra": 260.05,
+     "dec": 57.92,
+     "polygon": [
+      [
+       259.9,
+       57.8
+      ],
+      [
+       260.2,
+       57.8
+      ],
+      [
+       260.2,
+       58.1
+      ]
+     ],
+     "name": "2 r_half (query region)"
+    }
+   ]
+  },
+  "observations": {
+   "label": "HST/JWST observations",
+   "provenance": "MAST",
+   "kind": "footprints",
+   "columns": [
+    "ra",
+    "dec",
+    "s_region",
+    "tel",
+    "inst",
+    "filters",
+    "date",
+    "year",
+    "exptime",
+    "program",
+    "pi",
+    "rights",
+    "frac_in_region"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg",
+    "year": "yr",
+    "exptime": "s"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination",
+    "year": "mid-exposure decimal year",
+    "frac_in_region": "fraction of the footprint inside the query region"
+   },
+   "presets": [],
+   "browse": [
+    "tel",
+    "inst",
+    "filters",
+    "date",
+    "exptime",
+    "program",
+    "pi",
+    "frac_in_region"
+   ],
+   "rows": [
+    {
+     "id": "j8x101",
+     "ra": 260.02,
+     "dec": 57.92,
+     "s_region": "POLYGON 260.0 57.9 260.05 57.9 260.05 57.95",
+     "tel": "HST",
+     "inst": "ACS/WFC",
+     "filters": "F606W",
+     "date": "2004-08-01",
+     "year": 2004.6,
+     "exptime": 500.0,
+     "program": "10229",
+     "pi": "Doe, J.",
+     "rights": "PUBLIC",
+     "frac_in_region": 1.0,
+     "_links": [
+      [
+       "https://www.stsci.edu/hst-program-info/program/?program=10229",
+       "STScI program 10229"
+      ]
+     ]
+    },
+    {
+     "id": "jw01234",
+     "ra": 260.01,
+     "dec": 57.91,
+     "s_region": "POLYGON 260.0 57.9 260.03 57.9 260.03 57.93",
+     "tel": "JWST",
+     "inst": "NIRCAM/IMAGE",
+     "filters": "F150W",
+     "date": "2023-05-01",
+     "year": 2023.3,
+     "exptime": 1200.0,
+     "program": "1234",
+     "pi": "Roe, R.",
+     "rights": "PUBLIC",
+     "frac_in_region": 0.5,
+     "_links": [
+      [
+       "https://www.stsci.edu/jwst-program-info/program/?program=1234",
+       "STScI program 1234"
+      ]
+     ]
+    }
+   ]
+  },
+  "planned": {
+   "label": "Planned JWST observations",
+   "provenance": "MAST",
+   "kind": "footprints",
+   "columns": [],
+   "units": {},
+   "descriptions": {},
+   "presets": [],
+   "browse": [
+    "tel",
+    "inst",
+    "filters",
+    "program",
+    "pi"
+   ],
+   "rows": []
+  },
+  "gaia": {
+   "label": "Gaia DR3 sources",
+   "provenance": "Gaia DR3 (ARI Heidelberg TAP)",
+   "kind": "catalog",
+   "columns": [
+    "ra",
+    "dec",
+    "G",
+    "bp_rp",
+    "parallax",
+    "pmra",
+    "pmdec",
+    "parallax_error",
+    "pmra_error",
+    "pmdec_error",
+    "r_ell",
+    "ruwe",
+    "clean",
+    "star",
+    "galaxy_candidate",
+    "gaia_crf",
+    "quaia",
+    "qso_candidate",
+    "rrlyrae_candidate",
+    "has_spectra"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg",
+    "G": "mag",
+    "bp_rp": "mag",
+    "parallax": "mas",
+    "pmra": "mas/yr",
+    "pmdec": "mas/yr",
+    "parallax_error": "mas",
+    "pmra_error": "mas/yr",
+    "pmdec_error": "mas/yr",
+    "r_ell": "r_half"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination",
+    "G": "Gaia G",
+    "bp_rp": "Gaia BP-RP colour",
+    "pmra": "proper motion in RA (\u00d7cos dec)",
+    "r_ell": "elliptical radius from the target center, in half-light radii",
+    "ruwe": "renormalised unit weight error; >1.4 suggests a poor astrometric fit",
+    "clean": "passes RUWE, IPD, visibility-period and excess-noise cuts",
+    "gaia_crf": "Gaia-CRF3 source (trusted QSO)",
+    "quaia": "in Quaia (G < 20)"
+   },
+   "presets": [
+    {
+     "label": "CMD",
+     "x": "bp_rp",
+     "y": "G",
+     "invert_y": true,
+     "title": "Gaia colour\u2013magnitude"
+    },
+    {
+     "label": "Proper motion",
+     "x": "pmra",
+     "y": "pmdec",
+     "title": "Gaia proper motions"
+    },
+    {
+     "label": "Parallax / G",
+     "x": "G",
+     "y": "parallax",
+     "title": "Parallax vs G"
+    }
+   ],
+   "browse": [
+    "G",
+    "bp_rp",
+    "parallax",
+    "pmra",
+    "pmdec",
+    "ruwe",
+    "r_ell",
+    "clean"
+   ],
+   "rows": [
+    {
+     "id": "1001",
+     "ra": 260.01,
+     "dec": 57.9,
+     "G": 18.0,
+     "bp_rp": 0.9,
+     "parallax": 0.01,
+     "pmra": 0.04,
+     "pmdec": -0.19,
+     "parallax_error": 0.2,
+     "pmra_error": 0.3,
+     "pmdec_error": 0.3,
+     "r_ell": 0.4,
+     "ruwe": 1.0,
+     "clean": true,
+     "star": true,
+     "galaxy_candidate": false,
+     "gaia_crf": false,
+     "quaia": false,
+     "qso_candidate": false,
+     "rrlyrae_candidate": false,
+     "has_spectra": true,
+     "_details": {
+      "Spectra": [
+       {
+        "title": "DESI main/ \u00b7 STAR",
+        "fields": {
+         "RV (km/s)": -291.5,
+         "RV error (km/s)": 1.2,
+         "[Fe/H]": -1.9,
+         "Teff (K)": 4500,
+         "log g": 1.2
+        },
+        "links": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "1002",
+     "ra": 260.02,
+     "dec": 57.9,
+     "G": 20.4,
+     "bp_rp": 0.9,
+     "parallax": 0.01,
+     "pmra": 0.04,
+     "pmdec": -0.19,
+     "parallax_error": 0.2,
+     "pmra_error": 0.3,
+     "pmdec_error": 0.3,
+     "r_ell": 0.3,
+     "ruwe": 1.0,
+     "clean": false,
+     "star": true,
+     "galaxy_candidate": false,
+     "gaia_crf": false,
+     "quaia": false,
+     "qso_candidate": false,
+     "rrlyrae_candidate": false,
+     "has_spectra": false
+    },
+    {
+     "id": "1003",
+     "ra": 260.03,
+     "dec": 57.9,
+     "G": 20.9,
+     "bp_rp": 0.9,
+     "parallax": 0.01,
+     "pmra": 0.04,
+     "pmdec": -0.19,
+     "parallax_error": 0.2,
+     "pmra_error": 0.3,
+     "pmdec_error": 0.3,
+     "r_ell": 0.2,
+     "ruwe": 1.0,
+     "clean": true,
+     "star": false,
+     "galaxy_candidate": true,
+     "gaia_crf": false,
+     "quaia": false,
+     "qso_candidate": false,
+     "rrlyrae_candidate": false,
+     "has_spectra": false
+    },
+    {
+     "id": "1004",
+     "ra": 260.04,
+     "dec": 57.9,
+     "G": 19.0,
+     "bp_rp": 0.9,
+     "parallax": 0.01,
+     "pmra": 0.04,
+     "pmdec": -0.19,
+     "parallax_error": 0.2,
+     "pmra_error": 0.3,
+     "pmdec_error": 0.3,
+     "r_ell": 0.1,
+     "ruwe": 1.0,
+     "clean": true,
+     "star": false,
+     "galaxy_candidate": false,
+     "gaia_crf": true,
+     "quaia": true,
+     "qso_candidate": false,
+     "rrlyrae_candidate": false,
+     "has_spectra": false
+    },
+    {
+     "id": "1005",
+     "ra": 260.05,
+     "dec": 57.9,
+     "G": 19.5,
+     "bp_rp": 0.9,
+     "parallax": 0.01,
+     "pmra": 0.04,
+     "pmdec": -0.19,
+     "parallax_error": 0.2,
+     "pmra_error": 0.3,
+     "pmdec_error": 0.3,
+     "r_ell": 0.0,
+     "ruwe": 1.0,
+     "clean": true,
+     "star": false,
+     "galaxy_candidate": false,
+     "gaia_crf": false,
+     "quaia": false,
+     "qso_candidate": false,
+     "rrlyrae_candidate": true,
+     "has_spectra": false
+    }
+   ]
+  },
+  "spectra": {
+   "label": "Objects with spectra",
+   "provenance": "SDSS DR20, DESI DR1",
+   "kind": "catalog",
+   "columns": [
+    "ra",
+    "dec",
+    "n_spectra",
+    "kinds",
+    "has_desi",
+    "has_sdss",
+    "gaia_id",
+    "spectype",
+    "z",
+    "zwarn",
+    "rv",
+    "rv_err",
+    "feh",
+    "teff",
+    "logg"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg",
+    "rv": "km/s",
+    "rv_err": "km/s",
+    "feh": "dex",
+    "teff": "K",
+    "logg": "dex"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination",
+    "gaia_id": "matched Gaia DR3 source",
+    "z": "redshift",
+    "rv": "DESI radial velocity",
+    "feh": "DESI [Fe/H]"
+   },
+   "presets": [
+    {
+     "label": "RV histogram",
+     "x": "rv",
+     "title": "DESI radial velocities"
+    },
+    {
+     "label": "RV vs [Fe/H]",
+     "x": "feh",
+     "y": "rv",
+     "title": "DESI RV vs [Fe/H]"
+    }
+   ],
+   "browse": [
+    "kinds",
+    "n_spectra",
+    "spectype",
+    "rv",
+    "rv_err",
+    "feh",
+    "teff",
+    "logg"
+   ],
+   "rows": [
+    {
+     "id": "1001",
+     "ra": 260.01,
+     "dec": 57.9,
+     "n_spectra": 1,
+     "kinds": "DESI",
+     "has_desi": true,
+     "has_sdss": false,
+     "gaia_id": "1001",
+     "spectype": "STAR",
+     "z": -0.0009,
+     "zwarn": 0,
+     "rv": -291.5,
+     "rv_err": 1.2,
+     "feh": -1.9,
+     "teff": 4500,
+     "logg": 1.2,
+     "_details": {
+      "Spectra": [
+       {
+        "title": "DESI main/ \u00b7 STAR",
+        "fields": {
+         "RV (km/s)": -291.5,
+         "RV error (km/s)": 1.2,
+         "[Fe/H]": -1.9,
+         "Teff (K)": 4500,
+         "log g": 1.2
+        },
+        "links": []
+       }
+      ]
+     }
+    },
+    {
+     "id": "sdss:42",
+     "ra": 260.08,
+     "dec": 57.97,
+     "n_spectra": 1,
+     "kinds": "APOGEE",
+     "has_desi": false,
+     "has_sdss": true,
+     "gaia_id": null,
+     "spectype": null,
+     "z": null,
+     "zwarn": null,
+     "rv": null,
+     "rv_err": null,
+     "feh": null,
+     "teff": null,
+     "logg": null,
+     "_details": {
+      "Spectra": [
+       {
+        "title": "APOGEE apogee2",
+        "fields": {},
+        "links": []
+       }
+      ]
+     }
+    }
+   ]
+  },
+  "milliquas": {
+   "label": "MILLIQUAS QSOs",
+   "provenance": "VizieR VII/294",
+   "kind": "catalog",
+   "columns": [
+    "ra",
+    "dec",
+    "type",
+    "z",
+    "Rmag",
+    "confirmed"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg",
+    "Rmag": "mag"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination",
+    "z": "redshift",
+    "confirmed": "spectroscopic redshift (class Q/A/B/K/N)"
+   },
+   "presets": [],
+   "browse": [
+    "type",
+    "z",
+    "Rmag",
+    "confirmed"
+   ],
+   "rows": [
+    {
+     "id": "J1720+5757",
+     "ra": 260.06,
+     "dec": 57.95,
+     "type": "Q",
+     "z": 1.4,
+     "Rmag": 19.8,
+     "confirmed": true
+    }
+   ]
+  },
+  "simbad_galaxies": {
+   "label": "SIMBAD galaxies",
+   "provenance": "SIMBAD TAP",
+   "kind": "catalog",
+   "columns": [
+    "ra",
+    "dec",
+    "type",
+    "major_axis_arcmin",
+    "gaia_verdict",
+    "gaia_id",
+    "flagged",
+    "unflagged"
+   ],
+   "units": {
+    "ra": "deg",
+    "dec": "deg",
+    "major_axis_arcmin": "arcmin"
+   },
+   "descriptions": {
+    "ra": "ICRS right ascension",
+    "dec": "ICRS declination"
+   },
+   "presets": [],
+   "browse": [
+    "type",
+    "major_axis_arcmin",
+    "gaia_verdict"
+   ],
+   "rows": [
+    {
+     "id": "LEDA 1",
+     "ra": 260.07,
+     "dec": 57.96,
+     "type": "G",
+     "major_axis_arcmin": 0.3,
+     "gaia_verdict": "Gaia galaxy candidate",
+     "gaia_id": "1003",
+     "flagged": true,
+     "unflagged": false
+    }
+   ]
+  }
+ },
+ "summaries": [
+  {
+   "source": "observations",
+   "title": "Imaging coverage",
+   "columns": [
+    "instrument",
+    "observations",
+    "region covered"
+   ],
+   "rows": [
+    [
+     "HST ACS/WFC",
+     1,
+     0.2
+    ]
+   ],
+   "note": "Fraction of the query region covered by each instrument's footprints."
+  },
+  {
+   "source": "observations",
+   "title": "Longest baselines (overlapping images)",
+   "columns": [
+    "pair",
+    "years",
+    "first",
+    "second"
+   ],
+   "rows": [
+    [
+     "HST\u2013JWST",
+     18.7,
+     "j8x101",
+     "jw01234"
+    ]
+   ],
+   "note": "Per telescope pair; the overlaps tool lists every overlapping pair."
+  }
+ ],
+ "decisions": [
+  "Hid the Gaia QSO candidate table."
+ ],
+ "surveys": [
+  [
+   "CDS/P/DSS2/color",
+   "DSS2 color"
+  ]
+ ],
+ "layers": [
+  {
+   "id": "fp:HST:ACS/WFC",
+   "table": "observations",
+   "filter": [
+    {
+     "column": "tel",
+     "op": "==",
+     "value": "HST"
+    },
+    {
+     "column": "inst",
+     "op": "==",
+     "value": "ACS/WFC"
+    }
+   ],
+   "group": "HST/JWST footprints",
+   "label": "HST ACS/WFC",
+   "style": {
+    "color": "#3987e5",
+    "shape": "circle",
+    "size": 8,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  },
+  {
+   "id": "fp:JWST:NIRCAM/IMAGE",
+   "table": "observations",
+   "filter": [
+    {
+     "column": "tel",
+     "op": "==",
+     "value": "JWST"
+    },
+    {
+     "column": "inst",
+     "op": "==",
+     "value": "NIRCAM/IMAGE"
+    }
+   ],
+   "group": "HST/JWST footprints",
+   "label": "JWST NIRCAM/IMAGE",
+   "style": {
+    "color": "#d95926",
+    "shape": "circle",
+    "size": 8,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  },
+  {
+   "id": "gaia:stars",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "star",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Gaia DR3",
+   "label": "Gaia sources",
+   "style": {
+    "color": "#c3c2b7",
+    "shape": "circle",
+    "size": 5,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 2,
+   "added": false
+  },
+  {
+   "id": "gaia:galaxies",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "galaxy_candidate",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Gaia DR3",
+   "label": "Gaia galaxy candidates",
+   "style": {
+    "color": "#2fd39b",
+    "shape": "square",
+    "size": 10,
+    "dash": false,
+    "hollow": true
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": false
+  },
+  {
+   "id": "spectra:sdss",
+   "table": "spectra",
+   "filter": [
+    {
+     "column": "has_sdss",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Spectra",
+   "label": "SDSS / APOGEE / MaNGA",
+   "style": {
+    "color": "#d55181",
+    "shape": "plus",
+    "size": 14,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": false
+  },
+  {
+   "id": "spectra:desi",
+   "table": "spectra",
+   "filter": [
+    {
+     "column": "has_desi",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Spectra",
+   "label": "DESI DR1",
+   "style": {
+    "color": "#d55181",
+    "shape": "triangle",
+    "size": 12,
+    "dash": false,
+    "hollow": true
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": false
+  },
+  {
+   "id": "simbad:flagged",
+   "table": "simbad_galaxies",
+   "filter": [
+    {
+     "column": "flagged",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "SIMBAD galaxies",
+   "label": "Flagged by Gaia as galaxy candidates",
+   "style": {
+    "color": "#c98500",
+    "shape": "circle",
+    "size": 20,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": false
+  },
+  {
+   "id": "simbad:unflagged",
+   "table": "simbad_galaxies",
+   "filter": [
+    {
+     "column": "unflagged",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "SIMBAD galaxies",
+   "label": "Gaia source, not flagged",
+   "style": {
+    "color": "#c98500",
+    "shape": "cross",
+    "size": 20,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 0,
+   "added": false
+  },
+  {
+   "id": "simbad:other",
+   "table": "simbad_galaxies",
+   "filter": [
+    {
+     "column": "flagged",
+     "op": "==",
+     "value": false
+    },
+    {
+     "column": "unflagged",
+     "op": "==",
+     "value": false
+    }
+   ],
+   "group": "SIMBAD galaxies",
+   "label": "Other (no Gaia source, or QSO-flagged)",
+   "style": {
+    "color": "#c98500",
+    "shape": "circle",
+    "size": 14,
+    "dash": false,
+    "hollow": true
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 0,
+   "added": false
+  },
+  {
+   "id": "qso:crf",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "gaia_crf",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Trusted QSOs",
+   "label": "Gaia-CRF3",
+   "style": {
+    "color": "#2fd39b",
+    "shape": "rhomb",
+    "size": 16,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  },
+  {
+   "id": "qso:quaia",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "quaia",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Trusted QSOs",
+   "label": "Quaia (G < 20)",
+   "style": {
+    "color": "#2fd39b",
+    "shape": "circle",
+    "size": 14,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  },
+  {
+   "id": "qso:milliquas",
+   "table": "milliquas",
+   "filter": [
+    {
+     "column": "confirmed",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Trusted QSOs",
+   "label": "MILLIQUAS confirmed",
+   "style": {
+    "color": "#2fd39b",
+    "shape": "triangle",
+    "size": 14,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  },
+  {
+   "id": "qso:milliquas-candidates",
+   "table": "milliquas",
+   "filter": [
+    {
+     "column": "confirmed",
+     "op": "==",
+     "value": false
+    }
+   ],
+   "group": "Trusted QSOs",
+   "label": "MILLIQUAS radio/X-ray candidates",
+   "style": {
+    "color": "#2fd39b",
+    "shape": "triangle",
+    "size": 10,
+    "dash": false,
+    "hollow": true
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 0,
+   "added": true
+  },
+  {
+   "id": "gaia:qso-candidates",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "qso_candidate",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Gaia QSO candidates (impure)",
+   "label": "Other Gaia QSO candidates",
+   "style": {
+    "color": "#9085e9",
+    "shape": "circle",
+    "size": 9,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 0,
+   "added": false
+  },
+  {
+   "id": "gaia:rrlyrae",
+   "table": "gaia",
+   "filter": [
+    {
+     "column": "rrlyrae_candidate",
+     "op": "==",
+     "value": true
+    }
+   ],
+   "group": "Gaia QSO candidates (impure)",
+   "label": "Candidates that are Gaia RR Lyrae",
+   "style": {
+    "color": "#9085e9",
+    "shape": "cross",
+    "size": 9,
+    "dash": false,
+    "hollow": false
+   },
+   "visible": false,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": false
+  },
+  {
+   "id": "target:center",
+   "table": "target",
+   "filter": [
+    {
+     "column": "id",
+     "op": "in",
+     "value": [
+      "center",
+      "rhalf"
+     ]
+    }
+   ],
+   "group": "Mini",
+   "label": "Center and r_half ellipse",
+   "style": {
+    "color": "#f0efec",
+    "shape": "plus",
+    "size": 22,
+    "dash": false,
+    "hollow": true
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 2,
+   "added": true
+  },
+  {
+   "id": "target:region",
+   "table": "target",
+   "filter": [
+    {
+     "column": "id",
+     "op": "==",
+     "value": "region"
+    }
+   ],
+   "group": "Mini",
+   "label": "2 r_half (query region)",
+   "style": {
+    "color": "#f0efec",
+    "shape": "circle",
+    "size": 8,
+    "dash": true,
+    "hollow": true
+   },
+   "visible": true,
+   "origin": "pipeline",
+   "note": null,
+   "count": 1,
+   "added": true
+  }
+ ]
+}

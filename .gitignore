@@ -1,3 +1,12 @@
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.env
+node_modules/
+.svelte-kit/
 out/
+.DS_Store

@@ -1,0 +1,172 @@
+<script lang="ts">
+  import { onMount, tick } from 'svelte';
+  import ChatPanel from '../lib/components/ChatPanel.svelte';
+  import SkyPanel from '../lib/components/SkyPanel.svelte';
+  import LayersPanel from '../lib/components/LayersPanel.svelte';
+  import LiteraturePanel from '../lib/components/LiteraturePanel.svelte';
+  import SelectedPanel from '../lib/components/SelectedPanel.svelte';
+  import TablePanel from '../lib/components/TablePanel.svelte';
+  import FieldNotesPanel from '../lib/components/FieldNotesPanel.svelte';
+  import PlotPanel from '../lib/components/PlotPanel.svelte';
+  import Splitter from '../lib/components/Splitter.svelte';
+  import { createWorkspace } from '../lib/workspace/state.svelte';
+  import { httpBackend } from '../lib/api/client';
+  import 'katex/dist/katex.min.css';
+  import '../app.css';
+
+  const workspace = createWorkspace(httpBackend());
+  let layersOpen = $state(true);
+  let chatOpen = $state(true);
+  let resultsOpen = $state(true);
+  const CHAT_WIDTH = 340, RESULTS_HEIGHT = 300;
+  // Sizes are a per-browser convenience; storage may be unavailable.
+  const stored = (name: string, fallback: number) => {
+    try { const v = Number(localStorage.getItem(`scoop.${name}`)); return Number.isFinite(v) && v > 0 ? v : fallback; }
+    catch { return fallback; }
+  };
+  let chatWidth = $state(CHAT_WIDTH);
+  let resultsHeight = $state(RESULTS_HEIGHT);
+  let workspaceEl = $state<HTMLElement>();
+  onMount(() => { chatWidth = stored('chatWidth', CHAT_WIDTH); resultsHeight = stored('resultsHeight', RESULTS_HEIGHT); });
+  $effect(() => {
+    const [w, h] = [chatWidth, resultsHeight];
+    try { localStorage.setItem('scoop.chatWidth', String(w)); localStorage.setItem('scoop.resultsHeight', String(h)); } catch { /* not persisted */ }
+  });
+  // These run during server rendering too, where there is no window.
+  const browser = typeof window !== 'undefined';
+  const chatMax = () => (browser ? Math.min(900, window.innerWidth * 0.7) : 900);
+  const resultsMax = () => (workspaceEl?.clientHeight ?? (browser ? window.innerHeight : 1000)) * 0.75;
+  const tabs = ['Selected', 'Plot', 'Tables', 'Summary', 'Literature', 'Decisions', 'Activity'] as const;
+  let activeTab = $state<(typeof tabs)[number]>('Tables');
+  // A new selection (by you or the agent) brings its details forward.
+  let lastSelection = '';
+  $effect(() => {
+    const ref = workspace.map.selection;
+    const key = ref ? `${ref.table}:${ref.id}` : '';
+    if (key && key !== lastSelection) { activeTab = 'Selected'; resultsOpen = true; }
+    lastSelection = key;
+  });
+  // A new plot (usually the agent's) brings the Plot tab forward.
+  let lastPlot = '';
+  $effect(() => {
+    const key = JSON.stringify(workspace.map.plot ?? null);
+    if (workspace.map.plot && key !== lastPlot) { activeTab = 'Plot'; resultsOpen = true; }
+    lastPlot = key;
+  });
+  onMount(() => {
+    // A shared view link opens once its field is loaded.
+    void workspace.connect().then(() => { if (location.hash) void workspace.openViewLink(location.hash); });
+    if (window.matchMedia('(max-width: 800px)').matches) {
+      layersOpen = false;
+      chatOpen = false;
+    }
+  });
+  async function ask() {
+    chatOpen = true;
+    if (window.matchMedia('(max-width: 800px)').matches) layersOpen = false;
+    workspace.askAboutSelection();
+    await tick();
+    document.getElementById('chat-draft')?.focus();
+  }
+  // One click: the agent checks SIMBAD and the literature at the selected row.
+  async function lookupSelection() {
+    const row = workspace.selectedRow;
+    if (!row) return;
+    workspace.draft = `What is known about ${row.table} ${row.id}? Check SIMBAD near it and summarize the key references.`;
+    chatOpen = true;
+    await workspace.send();
+  }
+  function showResults(open: boolean) {
+    resultsOpen = open;
+    if (open && window.matchMedia('(max-width: 800px)').matches) {
+      layersOpen = false;
+      chatOpen = false;
+    }
+  }
+  function toggleLayers() {
+    layersOpen = !layersOpen;
+    if (layersOpen && window.matchMedia('(max-width: 800px)').matches) chatOpen = false;
+  }
+  function toggleChat() {
+    chatOpen = !chatOpen;
+    if (chatOpen && window.matchMedia('(max-width: 800px)').matches) layersOpen = false;
+  }
+</script>
+
+<svelte:head>
+  <title>SCOOP</title>
+  <meta name="description" content="A sky map you explore together with an agent: archive data, literature and chat around a field." />
+</svelte:head>
+
+<div class="app-shell">
+  <a class="skip-link" href="#workspace">Skip to atlas workspace</a>
+  <header class="app-header">
+    <h1 class="wordmark">◉ SCOOP <span>Sky atlas</span></h1>
+    <nav aria-label="Workspace panels">
+      <button aria-expanded={layersOpen} aria-controls="layers-drawer" onclick={toggleLayers}>Layers</button>
+      <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>
+      <button aria-expanded={chatOpen} aria-controls="chat-drawer" onclick={toggleChat}>Chat</button>
+    </nav>
+    <span class="demo-label">
+      {workspace.field?.target.name ?? ''}
+      <span class="dot" class:on={workspace.services.chat} title={workspace.services.chat ? 'Agent connected' : 'No agent'} aria-label={workspace.services.chat ? 'Agent connected' : 'No agent'}></span>agent
+      <span class="dot" class:on={workspace.services.literature} title={workspace.services.literature ? 'ADS connected' : 'ADS not configured'} aria-label={workspace.services.literature ? 'ADS connected' : 'ADS not configured'}></span>ADS
+    </span>
+  </header>
+  <main id="workspace" tabindex="-1" class="atlas-workspace" style:--chat-width={`${chatWidth}px`} bind:this={workspaceEl}>
+    <!-- Drawers stay mounted and animate their size; inert keeps a closed one out of focus and reading order. -->
+    <aside id="layers-drawer" class="left-drawer" class:collapsed={!layersOpen} inert={!layersOpen} aria-hidden={!layersOpen}>
+      <div class="drawer-inner">
+        <button class="drawer-close" aria-label="Close layers" title="Close layers" onclick={() => layersOpen = false}>×</button>
+        <LayersPanel {workspace} />
+      </div>
+    </aside>
+    <div class="map-column">
+      <!-- Never conditionally mount the renderer: panel changes preserve Aladin. -->
+      <SkyPanel {workspace} />
+      <section id="results-drawer" class="results-drawer" aria-label="Workspace results">
+        {#if resultsOpen}<Splitter bind:value={resultsHeight} min={120} max={resultsMax} grow="up" label="Results height" initial={RESULTS_HEIGHT} />{/if}
+        <div class="results-bar">
+          <button aria-expanded={resultsOpen} aria-controls="results-content" onclick={() => showResults(!resultsOpen)}>{resultsOpen ? '▾' : '▴'} <span class="sr-only">Toggle results drawer</span></button>
+          <div class="result-tabs" role="tablist" aria-label="Results">
+            {#each tabs as tab, i}
+              <button id={`result-tab-${i}`} role="tab" aria-selected={activeTab === tab} aria-controls="results-content" tabindex={activeTab === tab ? 0 : -1} onclick={() => { activeTab = tab; showResults(true); }} onkeydown={(event) => {
+                if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                  event.preventDefault();
+                  const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (i + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+                  activeTab = tabs[next]; showResults(true);
+                  document.getElementById(`result-tab-${next}`)?.focus();
+                }
+              }}>{tab}</button>
+            {/each}
+          </div>
+        </div>
+        <div id="results-content" role="tabpanel" aria-labelledby={`result-tab-${tabs.indexOf(activeTab)}`} tabindex="0" class:collapsed={!resultsOpen} inert={!resultsOpen} style:height={`${resultsOpen ? resultsHeight : 0}px`}>
+          <div class="results-body">
+            {#if activeTab === 'Selected'}
+              <SelectedPanel {workspace} onask={ask} onlookup={lookupSelection} />
+            {:else if activeTab === 'Plot'}
+              <PlotPanel {workspace} />
+            {:else if activeTab === 'Tables'}
+              <TablePanel {workspace} />
+            {:else if activeTab === 'Summary'}
+              <FieldNotesPanel {workspace} view="summary" />
+            {:else if activeTab === 'Literature'}
+              <LiteraturePanel {workspace} onask={ask} />
+            {:else if activeTab === 'Decisions'}
+              <FieldNotesPanel {workspace} view="decisions" />
+            {:else}
+              <FieldNotesPanel {workspace} view="activity" />
+            {/if}
+          </div>
+        </div>
+      </section>
+    </div>
+    <aside id="chat-drawer" class="right-drawer" class:collapsed={!chatOpen} inert={!chatOpen} aria-hidden={!chatOpen}>
+      <Splitter bind:value={chatWidth} min={260} max={chatMax} grow="left" label="Chat width" initial={CHAT_WIDTH} />
+      <div class="drawer-inner">
+        <ChatPanel {workspace} onclose={() => (chatOpen = false)} />
+      </div>
+    </aside>
+  </main>
+</div>

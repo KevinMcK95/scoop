@@ -87,6 +87,9 @@ def load_lvdb_target(key: str, cache: Path) -> dict:
         "distance_kpc": float(row["distance"]),
         "pmra": float(row["pmra"]), "pmdec": float(row["pmdec"]),
         "ref_proper_motion": str(row["ref_proper_motion"]),
+        # LVDB's reference for each property ("AuthorYYYY" + ADS bibcode), for the literature.
+        "references": {c[4:]: str(row[c]) for c in row.colnames
+                       if c.startswith("ref_") and str(row[c]) not in ("--", "", "None")},
     }
 
 
@@ -320,6 +323,19 @@ def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
     return out
 
 
+# Columns read downstream, so an empty cone (VizieR returns no table) still has them.
+QSO_EMPTY_COLUMNS = {
+    "milliquas": {"RAJ2000": float, "DEJ2000": float, "Name": str, "Type": str, "z": float, "Rmag": float},
+    "quaia": {"GaiaDR3": np.int64},
+}
+
+
+def _with_columns(t: Table, name: str) -> Table:
+    if len(t) == 0 and not set(QSO_EMPTY_COLUMNS[name]) <= set(t.colnames):
+        return Table({c: np.array([], dtype=d) for c, d in QSO_EMPTY_COLUMNS[name].items()})
+    return t
+
+
 def query_qso_catalogs(tgt, radius_deg: float, cache: Path):
     """MILLIQUAS v8 (VII/294) and Quaia G<20.0 (J/ApJ/964/69) cone searches on VizieR."""
     from astroquery.vizier import Vizier
@@ -328,11 +344,11 @@ def query_qso_catalogs(tgt, radius_deg: float, cache: Path):
     for name, cat in (("milliquas", "VII/294"), ("quaia", "J/ApJ/964/69")):
         path = cache / f"{name}.ecsv"
         if path.exists():
-            out[name] = Table.read(path)
+            out[name] = _with_columns(Table.read(path), name)
             continue
         res = with_retries(lambda: Vizier(columns=["**"], row_limit=-1).query_region(
             center, radius=radius_deg * u.deg, catalog=cat), f"VizieR {cat}")
-        t = res[0] if len(res) else Table()
+        t = _with_columns(res[0] if len(res) else Table(), name)
         for c in t.colnames:
             if t[c].dtype == object:
                 t[c] = t[c].astype(str)
@@ -407,7 +423,8 @@ def query_spectra(tgt, radius_deg: float, cache: Path):
         f"dbo.fGetNearbySpAllEq({tgt['ra']}, {tgt['dec']}, {r_arcmin}) AS n "
         "JOIN spAll AS s ON s.specobjid = n.specobjid WHERE s.gaia_id > 0")
     gmap = {_int(a): _int(b) for a, b in zip(spall["sdss_id"], spall["gaia_id"])} if len(spall) else {}
-    sdss["survey_gaia_id"] = [gmap.get(_int(x), 0) for x in sdss["sdss_id"]]
+    # Explicit int64: an empty list would otherwise become a float column (see ids.py).
+    sdss["survey_gaia_id"] = np.array([gmap.get(_int(x), 0) for x in sdss["sdss_id"]], dtype=np.int64)
     sdss["survey_gaia_release"] = "unknown"   # not documented in the pages we checked
 
     import pyvo
@@ -431,10 +448,11 @@ def query_spectra(tgt, radius_deg: float, cache: Path):
         desi = join(desi, mws, keys="targetid", join_type="left")
     # DESI's ref_cat 'G2' means the ID is a Gaia DR2 source_id.
     desi["survey_gaia_release"] = "DR2"
-    desi["survey_gaia_id"] = [
+    desi["survey_gaia_id"] = np.array([
         _int(sid) if "ref_cat" in desi.colnames and str(rc) == "G2" else 0
         for sid, rc in zip(desi["source_id"] if "source_id" in desi.colnames else [0] * len(desi),
-                           desi["ref_cat"] if "ref_cat" in desi.colnames else [""] * len(desi))]
+                           desi["ref_cat"] if "ref_cat" in desi.colnames else [""] * len(desi))],
+        dtype=np.int64)
     for t, p in ((sdss, p_sdss), (desi, p_desi)):
         for c in t.colnames:
             if t[c].dtype == object:
@@ -821,12 +839,25 @@ def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def cone_target(name: str, ra: float, dec: float, radius_arcmin: float, key: str) -> dict:
+    """A circular region around any position, shaped like an LVDB target so the
+    rest of the pipeline runs unchanged (r_half = radius, round, n_rhalf = 1)."""
+    return {"key": key, "name": name, "ra": ra, "dec": dec, "rhalf_arcmin": radius_arcmin,
+            # mocpy needs the minor axis strictly shorter; 1e-6 is round to < 1 µas on a degree.
+            "ellipticity": 1e-6, "pa_deg": 0.0, "ref_structure": "cone search", "distance_kpc": None,
+            "pmra": None, "pmdec": None, "ref_proper_motion": None, "kind": "cone"}
+
+
 def main():
     global N_RHALF
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--lvdb-key", default="draco_1")
     p.add_argument("--n-rhalf", type=float, default=2.0)
+    p.add_argument("--ra", type=float, help="cone search instead of an LVDB object: center RA (deg)")
+    p.add_argument("--dec", type=float, help="cone center Dec (deg)")
+    p.add_argument("--radius-arcmin", type=float, help="cone radius (arcmin)")
+    p.add_argument("--name", help="label for the cone (and output key)")
     p.add_argument("--show-qso-candidates", action="store_true",
                    help="also plot the (impure) Gaia DR3 QSO candidate table")
     p.add_argument("--serve", action="store_true",
@@ -837,10 +868,20 @@ def main():
     cache = args.out / "cache"
     cache.mkdir(parents=True, exist_ok=True)
 
-    tgt = load_lvdb_target(args.lvdb_key, cache)
-    print(f"{tgt['name']}: {json.dumps(tgt)}")
-    note(f"Took {tgt['name']}'s center and structure from the Local Volume Database "
-         f"(v1.1.1; structure ref {tgt['ref_structure']}); r_half is the semi-major axis.")
+    if args.ra is not None:
+        if args.dec is None or not args.radius_arcmin:
+            p.error("a cone needs --ra, --dec and --radius-arcmin")
+        key = re.sub(r"[^a-z0-9]+", "_", (args.name or f"cone {args.ra:.4f} {args.dec:+.4f}").lower()).strip("_")
+        tgt = cone_target(args.name or key, args.ra, args.dec, args.radius_arcmin, key)
+        N_RHALF = 1.0
+        print(f"{tgt['name']}: {json.dumps(tgt)}")
+        note(f"Searched a circular cone of radius {args.radius_arcmin:g}′ around RA {args.ra:.5f}, "
+             f"Dec {args.dec:+.5f} (not a Local Volume Database object).")
+    else:
+        tgt = load_lvdb_target(args.lvdb_key, cache)
+        print(f"{tgt['name']}: {json.dumps(tgt)}")
+        note(f"Took {tgt['name']}'s center and structure from the Local Volume Database "
+             f"(v1.1.1; structure ref {tgt['ref_structure']}); r_half is the semi-major axis.")
     a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
     query_radius = 1.02 * a_deg            # circle enclosing the ellipse
 

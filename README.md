@@ -25,8 +25,12 @@ literature-and-summary half of the tool.
 > working on a source (through papers, proposals and telegrams) is meant to
 > help people find related work and collaborators, and to credit that work.
 
-> **Status:** early development. This README describes the project's goals and
-> planned design; interfaces below are provisional.
+> **Status:** early development. Core data models and an optional LangGraph
+> chat/tool-loop scaffold are implemented, alongside a fixture-backed SvelteKit
+> workspace sketch. Live archive tools and the end-user Python/CLI examples below
+> remain planned. Start with the [web workspace](docs/web_workspace.md),
+> [LangGraph chat layout](docs/langgraph_chat.md), and
+> [core data model](docs/core_data_model.md).
 
 SCOOP is being built as part of the
 [Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
@@ -153,8 +157,19 @@ module so new archives can be added without touching the core.
 
 ## Installation
 
-SCOOP is developed against Python 3.11. `requirements.txt` pins every package
-to the exact versions in the development environment:
+SCOOP targets Python 3.11+. The core has no runtime dependencies. Install the
+optional LangGraph chat layer from the repository root with:
+
+```bash
+pip install -e '.[chat]'
+```
+
+Supply a tool-calling model and application tools; no provider or live archive
+connection is configured by this extra. See the
+[chat layout and invocation example](docs/langgraph_chat.md).
+
+For the broader astronomy workshop environment, `requirements.txt` pins the
+packages from the original development environment:
 
 ```bash
 conda create -n scoop python=3.11
@@ -162,13 +177,30 @@ conda activate scoop
 pip install -r requirements.txt
 ```
 
-To try what exists so far, run a smoke test: it builds an interactive sky view
-of HST/JWST imaging, Gaia, QSOs and spectra around a nearby galaxy. See
+To try the data side, run a smoke test: it queries HST/JWST imaging, Gaia,
+QSOs and spectra around a nearby galaxy. See
 [smoke_tests/README.md](smoke_tests/README.md):
 
 ```bash
 python smoke_tests/lvdb_field.py --out out/draco --serve
 ```
+
+## Web workspace
+
+The SvelteKit frontend lives in [`web/`](web/README.md): an Aladin Lite sky map
+with layer, chat and results panels sharing one selection context. The Python
+API server streams agent turns to it and serves ADS searches:
+
+```bash
+pip install -e '.[server]'
+python -m scoop.server          # 127.0.0.1:8787; model and keys: ⚙ Settings tab or env vars
+cd web && npm ci && npm run dev -- --host 127.0.0.1
+```
+
+See the [workspace architecture](docs/web_workspace.md), the
+[map and agent interaction design](docs/map_interaction.md), the
+[shared ADS service](docs/ads_service.md), and the
+[changes made to teammates' code](docs/changes_to_team_code.md).
 
 ## Planned usage
 
@@ -203,9 +235,15 @@ scoop chat   # interactive session
 
 ## Agent architecture
 
-SCOOP splits the work across many specialized agents rather than one large
-one. An orchestrator hands out tasks, the data agents search archives in
-parallel, and a compiler agent assembles their results into one answer.
+The initial implementation is a **LangGraph chat agent with typed tools**:
+`START → agent → tools → agent → END`, or a direct answer/clarification when no
+tool call is needed. Conversation messages and tool-published result snapshots
+are checkpointed separately; archive access stays in deterministic tools and
+data-source modules. See the [implemented layout](docs/langgraph_chat.md).
+
+The specialized-agent diagram below is a longer-term sketch, not the current
+runtime. We will add separate agent roles only when a concrete workflow needs
+them, rather than requiring a planner/compiler pipeline for every chat turn.
 
 ```mermaid
 flowchart TD
@@ -295,7 +333,7 @@ Splitting the work this way means:
 
 ## Roadmap
 
-- [ ] Core query object and result schema
+- [x] Initial query and result models ([scope and limitations](docs/core_data_model.md))
 - [ ] Orchestrator and a shared message format for passing tasks and results between agents
 - [ ] Natural-language query parsing into structured query plans
 - [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
