@@ -5,20 +5,24 @@ from a source fetched in the session, never from the model's memory. ADS tells
 the scout a dataset exists; only the archive's own pages say what is in it, so
 the scout needs to read them.
 
-This is the only part of the scout that touches the open web, so the controls
-from ``SAFETY_CHECKLIST_TODO.md`` live here and nowhere else: an allowlist of
-archive and publisher domains, robots.txt, a per-host rate limit, a response
-size cap, a content-type cap, and scripts and styles stripped before any text
-reaches the model. Everything refused is refused with a message the model can
-act on, so it asks for a different page instead of inventing the answer.
+This is a deliberately narrower thing than ``scoop/web.py``, which gives the
+chat agent the open web (any public host, on a user's request, with a person
+reading the answer). The scout runs unattended on a schedule, so the controls
+from ``SAFETY_CHECKLIST_TODO.md`` apply in full: an allowlist of archive and
+publisher domains, robots.txt, a per-host rate limit, a response size cap and a
+content-type cap. HTML becomes text through ``scoop.web.html_to_text``, so there
+is one such parser in the repository and not two. Everything refused is refused
+with a message the model can act on, so it asks for a different page instead of
+inventing the answer.
 """
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
+
+from ..web import check_url, html_to_text
 
 USER_AGENT = "SCOOP-dataset-scout/0.1 (+https://github.com/KevinMcK95/scoop)"
 MAX_BYTES = 400_000
@@ -47,7 +51,15 @@ class FetchError(Exception):
 
 
 def allowed(url: str) -> bool:
-    parsed = urlparse(url)
+    """Whether the scout may read ``url``: https, on an allowlisted domain.
+
+    The allowlist is also what keeps the scout off private networks, since no
+    private address can match one of these names.
+    """
+    try:
+        parsed = urlparse(check_url(url))
+    except ValueError:
+        return False
     if parsed.scheme != "https":
         return False
     host = (parsed.hostname or "").lower()
@@ -55,14 +67,15 @@ def allowed(url: str) -> bool:
 
 
 def to_text(body: str, content_type: str) -> str:
-    """Readable text: scripts, styles and markup removed, whitespace collapsed."""
-    if "json" in content_type:
-        return body
-    without_code = re.sub(r"(?is)<(script|style|noscript)\b.*?</\1>", " ", body)
-    without_tags = re.sub(r"(?s)<[^>]+>", " ", re.sub(r"(?s)<!--.*?-->", " ", without_code))
-    unescaped = (without_tags.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
-                 .replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'"))
-    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]{2,}", " ", unescaped)).strip()
+    """Readable text for the model.
+
+    JSON and XML pass through: a VOTable or a ``TAP_SCHEMA`` reply is only useful
+    with its tags. Anything else, including a page that declared no type, goes
+    through the HTML reader, which is harmless on plain text.
+    """
+    if "json" in content_type or "xml" in content_type:
+        return body.strip()
+    return html_to_text(body)
 
 
 @dataclass

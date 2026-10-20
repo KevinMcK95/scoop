@@ -93,6 +93,16 @@ Every control is code, not prompt text, following `agentbook.guardrails`:
 | Too much to review | `--max-proposals` (default 3) | `propose_dataset` |
 | Facts from memory | `sources_checked` must be URLs fetched this scan | `propose_dataset` |
 | The open web | https only, archive-domain allowlist, robots.txt, per-host rate limit, 400 kB and MIME caps, scripts stripped | `scout/fetch.py` |
+
+`scout/fetch.py` is deliberately narrower than
+[`scoop/web.py`](../scoop/web.py), which gives the chat agent the open web: that
+is the right call there, because a person asked for the page and is reading the
+answer. The scout runs unattended once a month, so it may only read archive and
+publisher domains, and only pages their robots.txt allows. It shares
+`scoop.web.html_to_text` and `check_url`, so there is one HTML reader in the
+repository rather than two, and passes JSON and XML through untouched — a
+VOTable or `TAP_SCHEMA` reply is only useful with its tags.
+
 | Clobbering the repo | nothing overwritten, nothing outside the checkout, nothing written partially | `scaffold.py` |
 | SQL assembled from model output | table and column names must match an identifier pattern | `Service.__post_init__` |
 | Silent truncation | a generated source treats a result exactly at `MAX_ROWS` as truncated | the source template |

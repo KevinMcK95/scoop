@@ -267,6 +267,9 @@ class FetchTests(unittest.TestCase):
         text = to_text("<html><script>alert('x')</script><p>Gaia DR4 &amp; more</p></html>", "text/html")
         self.assertEqual(text, "Gaia DR4 & more")
         self.assertEqual(to_text('{"a": 1}', "application/json"), '{"a": 1}')
+        # A VOTable or TAP_SCHEMA reply is only useful with its tags.
+        votable = "<TABLE><FIELD name='ra'/></TABLE>"
+        self.assertEqual(to_text(votable, "application/x-votable+xml"), votable)
 
     def test_a_refusal_explains_itself_and_is_recorded(self):
         fetcher = Fetcher(client=FakeTransport({}))
