@@ -23,7 +23,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ..chat import build_chat_graph
@@ -156,6 +156,7 @@ def create_app(
     fetch_image: Any = None,
     web: tuple[Any, Any] | None = None,
     python: Any = None,
+    figure_store: Any = None,
     settings: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
@@ -164,7 +165,8 @@ def create_app(
 
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
-    a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox. With
+    a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
+    ``figure_store`` keeps tool images so the browser gets URLs instead of the images. With
     ``audit_path``, each turn appends one JSON line (no message text).
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -228,6 +230,21 @@ def create_app(
             return Response(gzip.compress(body, compresslevel=5), media_type="application/json",
                             headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         return Response(body, media_type="application/json")
+
+    async def get_figure(request: Request) -> Response:
+        found = figure_store.path(request.path_params["thread"], request.path_params["name"]) if figure_store else None
+        if found is None:
+            return JSONResponse({"error": "No such figure."}, status_code=404)
+        path, media_type = found
+        # Each tool call's figure has its own name and never changes.
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+    async def delete_figures(request: Request) -> JSONResponse:
+        if not same_site(request):
+            return JSONResponse({"error": "Figures can only be deleted from the workspace."}, status_code=403)
+        if figure_store is None or not figure_store.delete(request.path_params["thread"]):
+            return JSONResponse({"error": "No such conversation."}, status_code=404)
+        return JSONResponse({"deleted": True})
 
     async def start_job(request: Request) -> JSONResponse:
         if jobs is None:
@@ -359,6 +376,8 @@ def create_app(
                                 usage["cache_read"] = usage.get("cache_read", 0) + cached
                             usage["model_calls"] = usage.get("model_calls", 0) + 1
                         for event in _events(update, seen, names):
+                            if figure_store is not None and isinstance(event.get("image"), str):
+                                event["image"] = figure_store.save(thread_id, event["id"], event["image"]) or event["image"]
                             sent.append(event)
                             yield _sse(event)
                             if event["type"] == "tool_result":
@@ -401,6 +420,8 @@ def create_app(
         Route("/api/jobs/{id}", get_job),
         Route("/api/literature/search", literature_search, methods=["POST"]),
         Route("/api/chat", chat, methods=["POST"]),
+        Route("/api/figures/{thread}/{name}", get_figure),
+        Route("/api/figures/{thread}", delete_figures, methods=["DELETE"]),
     ])
 
 

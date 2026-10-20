@@ -2,7 +2,9 @@
   import type { Workspace } from '../workspace/state.svelte';
   import { boxFilter, histogram, presets as fieldPresets, scatter } from '../field/plot';
   import type { PlotSpec } from '../field/types';
-  let { workspace }: { workspace: Workspace } = $props();
+  import { figureFileName } from '../chat/figures';
+  let { workspace, onreveal }: { workspace: Workspace; onreveal?: (stepId: number) => void } = $props();
+  const figures = $derived(workspace.figures);
   const W = 640, H = 300, L = 48, R = 12, T = 10, B = 34;
   const spec = $derived(workspace.map.plot ?? null);
   const field = $derived(workspace.field);
@@ -110,5 +112,25 @@
       {/if}
       {#if drag}<rect class="brush" x={Math.min(drag.x0, drag.x1)} y={spec.y ? Math.min(drag.y0, drag.y1) : T} width={Math.abs(drag.x1 - drag.x0)} height={spec.y ? Math.abs(drag.y1 - drag.y0) : H - T - B} />{/if}
     </svg>
+  {/if}
+
+  {#if figures.length}
+    <!-- Figures SCOOP made in this conversation (run_python plots, sky images), newest first. -->
+    <h4 class="eyebrow figures-heading">FIGURES FROM THIS CONVERSATION ({figures.length})</h4>
+    <div class="figures">
+      {#each figures as figure, i (figure.stepId)}
+        <div class="figure-card" role="group" aria-label={figure.question || figure.label}>
+          <a href={figure.image} target="_blank" rel="noreferrer" title="Open full size"><img src={figure.image} alt={`${figure.label} for: ${figure.question}`} loading="lazy" /></a>
+          <div class="figure-caption">
+            <span class="figure-question" title={figure.question}>{figure.question || figure.label}</span>
+            <span class="figure-actions">
+              {#if onreveal}<button class="text-button icon" title="Show where it was made in the chat" aria-label="Show in chat" onclick={() => onreveal(figure.stepId)}>↩</button>{/if}
+              <a class="text-button icon" href={figure.image} download={figureFileName(figure, figures.length - i)} title="Download" aria-label="Download figure">⤓</a>
+            </span>
+          </div>
+          {#if figure.code}<details class="figure-code"><summary>code</summary><pre>{figure.code}</pre></details>{/if}
+        </div>
+      {/each}
+    </div>
   {/if}
 </section>

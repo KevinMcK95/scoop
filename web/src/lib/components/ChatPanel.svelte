@@ -83,7 +83,7 @@
             {#if open}
               <ol class="steps">
                 {#each entry.steps as step (step.id)}
-                  <li class="step" class:running={step.status === 'running'} class:failed={step.status === 'error'}
+                  <li id={`step-${step.id}`} class="step" class:running={step.status === 'running'} class:failed={step.status === 'error'}
                     title={step.status === 'error' ? 'This step did not succeed; SCOOP was told and can retry.' : ''}>
                     <span aria-hidden="true">{step.status === 'running' ? '◌' : step.status === 'error' ? '✗' : '✓'}</span> {stepLabel(step.text)}{step.status === 'running' ? '…' : ''}
                     {#if step.detail?.code}

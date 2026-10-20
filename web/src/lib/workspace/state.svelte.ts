@@ -3,6 +3,7 @@ import type { Camera, Field, MapAction, MapState, Origin, Row, RowRef } from '..
 import type { ADSPayload, ActionAcknowledgment, Backend, ChatEvent, JobView, SourceInfo } from '../api/client';
 import { contextSummary } from '../chat/activity';
 import { deleteConversation, loadConversations, saveConversation, titleOf, type Conversation } from '../chat/history';
+import { figuresOf } from '../chat/figures';
 import { DEFAULT_SURVEY, initialViewport } from './contracts';
 import { decodeView, encodeView } from './viewlink';
 import type { ActionRequest, ChatMessage, Publication, Scene, SkyViewport } from './contracts';
@@ -325,6 +326,8 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     get canUndo() { return undoStack.length > 0; },
     get selectedRow() { return selectedRow(); },
     get messages() { return messages; },
+    /** Figures and sky images from this conversation's tools, newest first. */
+    get figures() { return figuresOf(messages); },
     get draft() { return draft; },
     set draft(value: string) { draft = value; },
     get services() { return services; },
@@ -439,6 +442,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     },
     deleteConversation(id: string) {
       conversations = deleteConversation(id);
+      void backend?.deleteFigures?.(id);
       if (id === threadId && !busy) { threadId = globalThis.crypto.randomUUID(); messages = []; }
     },
     selectRow(ref: RowRef | null) {

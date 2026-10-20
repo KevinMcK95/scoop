@@ -56,6 +56,7 @@ export interface Backend {
   addSource(field: string, source: string): Promise<{ rows: number }>;
   saveSettings(changes: Partial<Record<'model' | 'base_url' | 'api_key' | 'ads_token', string>>): Promise<SettingsView>;
   getJob(id: string): Promise<JobView>;
+  deleteFigures?(thread: string): Promise<void>;
 }
 
 // A data source the server knows; queryable ones can be added to a field on demand.
@@ -158,6 +159,9 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
       const response = await fetcher(`${base}/fields/${encodeURIComponent(field)}/sources/${encodeURIComponent(source)}`, { method: 'POST' });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
+    },
+    async deleteFigures(thread) {
+      await fetcher(`${base}/figures/${encodeURIComponent(thread)}`, { method: 'DELETE' }).catch(() => undefined);
     },
     async getSettings() {
       const response = await fetcher(`${base}/settings`);
