@@ -37,7 +37,7 @@ archive.
 
 | Skill | Use it for |
 |---|---|
-| [cost-checking](cost-checking.skill.md) | Estimating a request's cost, checking it against a budget, and calibrating estimates from actual usage (`cost_checker.py`) |
+| [cost-checking](cost-checking.skill.md) | Estimating a request's cost, checking it against a budget, and calibrating estimates from actual usage (`scoop/cost.py`) |
 | [metrics-scorecard](metrics-scorecard.skill.md) | Pipeline metrics and the weekly scorecard (`scripts/metrics_scorecard.py`) |
 
 ## Writing new skills (`meta/`)

@@ -121,7 +121,7 @@ mostly what natural-language requests need:
       the same thread; edits ("make it 1 degree", "skip JWST") change the
       request instead of starting over.
 - [ ] Guardrails: a recursion/step limit, cost limits (see Radha's
-      `cost_checker.py`), and number provenance on proposed regions and the
+      `scoop/cost.py`), and number provenance on proposed regions and the
       final answer.
 - [ ] Conversations and artifacts are checkpointed, so decisions can be
       reviewed afterwards.

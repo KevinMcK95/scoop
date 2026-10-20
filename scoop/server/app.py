@@ -33,6 +33,7 @@ from ..chat.pm_tools import build_pm_tools
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
 from ..chat.web_tools import build_web_tools
+from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
@@ -120,7 +121,7 @@ def _reason(text: str) -> str:
 
 
 def _audit_record(request_id: str, thread_id: str, started: float, events: list[dict],
-                  usage: dict[str, int], error: str | None) -> dict:
+                  usage: dict[str, int], error: str | None, cost: dict | None = None) -> dict:
     """One line per turn, named after the metrics_schema.json fields on origin/radha.
 
     Judgment fields (task_success, user_accepted, citations_valid) are left for
@@ -142,6 +143,9 @@ def _audit_record(request_id: str, thread_id: str, started: float, events: list[
         "cached_input_tokens": usage.get("cache_read", 0),
         "model_calls": usage.get("model_calls", 0),
         "output_tokens": usage.get("output_tokens", 0),
+        # What this turn was estimated at before it ran, and what its tokens actually priced at.
+        "estimated_cost_usd": (cost or {}).get("estimated_cost_usd"),
+        "actual_cost_usd": (cost or {}).get("actual_cost_usd"),
         "error": error,
     }
 
@@ -164,6 +168,7 @@ def create_app(
     figure_store: Any = None,
     trace_store: Any = None,
     settings: Any = None,
+    costs: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
 ) -> Starlette:
@@ -174,9 +179,12 @@ def create_app(
     a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
     ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
     ``trace_store`` keeps developer traces of each turn for the Debug tab. With
-    ``audit_path``, each turn appends one JSON line (no message text).
+    ``audit_path``, each turn appends one JSON line (no message text). ``costs`` is a
+    scoop.cost.CostTracker: it estimates each turn before it runs, holds each
+    conversation's budget, and learns from the tokens the turn actually used.
     """
     checkpointer = checkpointer or InMemorySaver()
+    costs = costs if costs is not None else CostTracker()
     locks: dict[str, asyncio.Lock] = {}
     # The model and ADS client can be replaced from the Settings tab while running.
     live = {"model": model, "ads": ads_client}
@@ -223,6 +231,39 @@ def create_app(
                 problems.append(f"{name}: {type(exc).__name__}: {exc}")
         return JSONResponse({**settings.public(), "chat": live["model"] is not None,
                              "literature": live["ads"] is not None, "problems": problems})
+
+    def model_id() -> str:
+        """The model id turns are priced against: what Settings holds, else what the client reports."""
+        name = settings.get("model") if settings is not None else None
+        if not name:
+            for attribute in ("model_name", "model"):
+                value = getattr(live["model"], attribute, None)
+                if isinstance(value, str) and value:
+                    name = value
+                    break
+        return name or "unknown"
+
+    async def get_budget(request: Request) -> JSONResponse:
+        """What this conversation may spend, has spent, and has left (null until it sets one)."""
+        thread = request.path_params["thread"]
+        if not THREAD_ID.fullmatch(thread):
+            return _bad_request("thread_id must be 8-64 letters, digits, '-' or '_'")
+        model = model_id()
+        return JSONResponse({"budget": costs.budget(thread), "default_budget_usd": round(costs.budget_usd, 6),
+                             "model": model, "priced": price_for(model) is not None})
+
+    async def put_budget(request: Request) -> JSONResponse:
+        """Set this conversation's budget. What it has already spent is kept."""
+        thread = request.path_params["thread"]
+        if not same_site(request):
+            return JSONResponse({"error": "Budgets can only be set from the SCOOP workspace."}, status_code=403)
+        try:
+            if not THREAD_ID.fullmatch(thread):
+                raise ValueError("thread_id must be 8-64 letters, digits, '-' or '_'")
+            body = await request.json()
+            return JSONResponse({"budget": costs.set_budget(thread, body["budget_usd"])})
+        except (KeyError, TypeError, ValueError) as exc:
+            return _bad_request(f"Invalid budget: {exc}")
 
     async def list_fields(request: Request) -> JSONResponse:
         return JSONResponse({"fields": fields.keys() if fields else []})
@@ -343,6 +384,11 @@ def create_app(
             if not isinstance(context, dict):
                 raise ValueError("context must be an object")
             field_key, layers = _context_layers(context)
+            budget = body.get("budget_usd")
+            if budget is not None:
+                if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not budget > 0:
+                    raise ValueError("budget_usd must be a number greater than zero")
+                costs.set_budget(thread_id, float(budget))
         except (KeyError, ValueError, TypeError) as exc:
             return _bad_request(f"Invalid chat request: {exc}")
 
@@ -384,6 +430,12 @@ def create_app(
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
+        # What rides along with the user's text on every model call this turn, and so has to be
+        # costed with it: the system prompt, every tool's schema, and the workspace context.
+        overhead = (estimate_tokens(WORKSPACE_PROMPT) + estimate_tokens(json.dumps(context, default=str))
+                    + sum(estimate_tokens(f"{getattr(tool, 'name', '')}{getattr(tool, 'description', '') or ''}"
+                                          f"{json.dumps(getattr(tool, 'args', {}), default=str)}")
+                          for tool in tools))
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
         lock = locks.setdefault(thread_id, asyncio.Lock())
 
@@ -393,6 +445,23 @@ def create_app(
                 return
             async with lock:
                 request_id, started = uuid.uuid4().hex, time.monotonic()
+                # Before anything runs: what this command should cost, against what is left to spend.
+                estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
+                                          overhead_tokens=overhead, request_id=request_id)
+                yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
+                # An unpriced model cannot be held to a budget; the note says so instead.
+                over_budget = (estimate["priced"] and estimate["budget_scope"] == "conversation"
+                               and not estimate["within_budget"])
+                if over_budget:
+                    costs.forget(request_id)
+                    left = estimate["budget"]["remaining_usd"]
+                    yield _sse({"type": "error", "message":
+                                f"This command is estimated at ${estimate['estimated_cost_usd']:.4f} but only "
+                                f"${max(0.0, left):.4f} is left of this conversation's "
+                                f"${estimate['budget']['budget_usd']:.2f} budget. Raise the budget to continue."})
+                    yield _sse({"type": "done", "request_id": request_id})
+                    return
+                actual: dict | None = None
                 tracer = TurnTracer(request_id, thread_id, text) if trace_store is not None else None
                 turn_config = {**config, "callbacks": [tracer]} if tracer else config
                 seen: set[str] = set()
@@ -446,9 +515,15 @@ def create_app(
                 except Exception as exc:  # surface to the UI; keep the server alive
                     error = f"{type(exc).__name__}: {exc}"
                 finally:
+                    # However the turn ends, its tokens are what it cost: charge them to the
+                    # conversation's budget and let the next estimate learn from them.
+                    actual = costs.confirm_usage(request_id, model_id(), usage) if usage else None
+                    if actual is None:
+                        costs.forget(request_id)
                     # Written however the turn ends, so failures are always diagnosable.
                     if audit_path is not None:
-                        record = _audit_record(request_id, thread_id, started, sent, usage, error)
+                        record = _audit_record(request_id, thread_id, started, sent, usage, error,
+                                               cost={**estimate, **(actual or {})})
                         with audit_path.open("a", encoding="utf-8") as log:
                             log.write(json.dumps(record) + "\n")
                     if tracer is not None:
@@ -458,6 +533,9 @@ def create_app(
                             pass  # a trace is a convenience; never fail the turn over it
                 if error:
                     yield _sse({"type": "error", "message": error})
+                if actual is not None:
+                    yield _sse({"type": "cost", "phase": "actual",
+                                "note": describe_cost(estimate, actual), **actual})
                 yield _sse({"type": "done", "request_id": request_id})
 
         return StreamingResponse(stream(), media_type="text/event-stream",
@@ -467,6 +545,8 @@ def create_app(
         Route("/api/health", health),
         Route("/api/settings", get_settings),
         Route("/api/settings", put_settings, methods=["POST"]),
+        Route("/api/budget/{thread}", get_budget),
+        Route("/api/budget/{thread}", put_budget, methods=["POST"]),
         Route("/api/fields", list_fields),
         Route("/api/fields/{key}", get_field),
         Route("/api/fields/{key}/sources/{name}", query_source, methods=["POST"]),

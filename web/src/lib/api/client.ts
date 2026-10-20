@@ -8,6 +8,40 @@ export interface ActionAcknowledgment {
   error?: string;
 }
 
+// What a conversation may spend, has spent, and has left (scoop/cost.py).
+export interface BudgetView {
+  thread_id: string;
+  budget_usd: number;
+  spent_usd: number;
+  remaining_usd: number;
+  turns: number;
+}
+
+export interface BudgetReport {
+  budget: BudgetView | null;
+  default_budget_usd: number;
+  model: string;
+  // False when the server has no price for the model: turns cannot be costed.
+  priced: boolean;
+}
+
+// What a turn is expected to cost ('estimate', before it runs) and what it did
+// cost ('actual', once its tokens are known). `note` is the line to show.
+export interface CostEvent {
+  type: 'cost';
+  phase: 'estimate' | 'actual';
+  request_id: string;
+  model: string;
+  note: string;
+  budget: BudgetView | null;
+  estimated_cost_usd?: number | null;
+  actual_cost_usd?: number | null;
+  budget_usd?: number;
+  budget_scope?: 'conversation' | 'default';
+  within_budget?: boolean;
+  priced?: boolean;
+}
+
 export type ChatEvent =
   | { type: 'assistant'; id: string | null; text: string }
   | { type: 'assistant_delta'; id: string | null; text: string }
@@ -15,6 +49,7 @@ export type ChatEvent =
   | { type: 'tool_result'; id: string; name: string | null; status: 'success' | 'error'; summary: string;
       image?: string; code?: string; output?: string; error?: string }
   | { type: 'artifact'; id: string; payload: Record<string, unknown> }
+  | CostEvent
   | { type: 'error'; message: string }
   | { type: 'done'; request_id?: string };
 
@@ -22,6 +57,8 @@ export interface ChatRequest {
   thread_id: string;
   message: string;
   context: Record<string, unknown>;
+  // Sent with the first message of a conversation, once the user has set one.
+  budget_usd?: number;
 }
 
 // Subset of scoop/literature/serialization.py:result_payload used by the panel.
@@ -57,6 +94,9 @@ export interface Backend {
   addSource(field: string, source: string): Promise<{ rows: number }>;
   saveSettings(changes: Partial<Record<'model' | 'base_url' | 'api_key' | 'ads_token', string>>): Promise<SettingsView>;
   getJob(id: string): Promise<JobView>;
+  // Budgets: present whenever the server supports them (a test double may leave them out).
+  getBudget?(thread: string): Promise<BudgetReport>;
+  setBudget?(thread: string, budgetUsd: number): Promise<BudgetView>;
   deleteFigures?(thread: string): Promise<void>;
   getTraces?(thread: string): Promise<Trace[]>;
   deleteTraces?(thread: string): Promise<void>;
@@ -192,6 +232,18 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
       });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
+    },
+    async getBudget(thread) {
+      const response = await fetcher(`${base}/budget/${encodeURIComponent(thread)}`);
+      if (!response.ok) throw new Error(await errorText(response));
+      return response.json();
+    },
+    async setBudget(thread, budgetUsd) {
+      const response = await fetcher(`${base}/budget/${encodeURIComponent(thread)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ budget_usd: budgetUsd })
+      });
+      if (!response.ok) throw new Error(await errorText(response));
+      return (await response.json()).budget;
     },
     async getJob(id) {
       const response = await fetcher(`${base}/jobs/${encodeURIComponent(id)}`);
