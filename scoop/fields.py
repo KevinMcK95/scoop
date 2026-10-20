@@ -160,6 +160,13 @@ def field_from_viewer_data(data: dict) -> dict:
              "summaries": [{"source": s.name, **summary} for s in present for summary in s.summaries(rows[s.name], data)],
              "decisions": data["decisions"], "surveys": data["surveys"]}
     layers = [layer for source in present for layer in source.layers(rows[source.name], data)]
+    for i, (name, stored) in enumerate(sorted((data.get("extra") or {}).items())):
+        meta = stored.get("meta") if isinstance(stored, dict) else None
+        if not meta or name in tables:
+            continue
+        tables[name], table_layer = discovered_table(name, stored["rows"], meta, i)
+        layers.append(table_layer)
+        link_to_gaia(tables, name)
     layers.sort(key=lambda layer: layer.pop("order"))
     for layer in layers:
         layer["count"] = layer_count(field, layer)
@@ -167,6 +174,106 @@ def field_from_viewer_data(data: dict) -> dict:
         layer["added"] = layer["visible"]
     field["layers"] = layers
     return field
+
+
+# Colours for tables the data agent adds (dark-surface palette steps not used by sources).
+DISCOVERED_COLORS = ("#e66767", "#c98500", "#9085e9", "#008300", "#d55181", "#3987e5")
+
+
+def discovered_table(name: str, rows: list[dict], meta: dict, index: int = 0) -> tuple[dict, dict]:
+    """A table and its default layer for data found at run time (no source plug-in)."""
+    from .sources import layer
+
+    if meta.get("kind") == "footprints":  # also tables stored before these columns existed
+        from .observations import OBS_COLUMNS, add_observation_columns
+        rows = [add_observation_columns(r) for r in rows]
+        meta = {**meta, "columns": {**OBS_COLUMNS, **(meta.get("columns") or {})}}
+    columns = _columns(rows)
+    info = meta.get("columns") or {}
+    style = meta.get("style") or {}
+    table = {"label": meta["label"], "provenance": meta["provenance"], "kind": meta.get("kind", "catalog"),
+             "columns": columns,
+             "units": {c: info[c]["unit"] for c in columns if (info.get(c) or {}).get("unit")},
+             "descriptions": {c: info[c]["description"] for c in columns if (info.get(c) or {}).get("description")},
+             "presets": [], "browse": columns[:8], "rows": rows, "query": meta.get("query"),
+             "origin": "agent"}
+    lay = layer(f"agent-data:{name}", name, [], "Added by the data agent", meta["label"],
+                style.get("color") or DISCOVERED_COLORS[index % len(DISCOVERED_COLORS)], order=90 + index,
+                shape=style.get("shape", "circle"), size=int(style.get("size", 10)),
+                hollow=bool(style.get("hollow", meta.get("kind") == "footprints")))
+    lay["origin"] = "agent"
+    return table, lay
+
+
+GAIA_ID = re.compile(r"\d{15,19}")
+LINK_RADIUS_ARCSEC = 1.0
+
+
+def _gaia_id_column(rows: list[dict]) -> str | None:
+    """A column holding Gaia source IDs as exact integers or digit strings (never floats,
+    which would already have lost digits)."""
+    names = {c for r in rows[:50] for c in r if not c.startswith("_")}
+    for c in sorted(names):
+        if "gaia" not in c.lower() and c.lower() != "source_id":
+            continue
+        values = [r.get(c) for r in rows[:50] if r.get(c) not in (None, "")]
+        if values and all(isinstance(v, (int, str)) and not isinstance(v, bool)
+                          and GAIA_ID.fullmatch(str(v)) for v in values):
+            return c
+    return None
+
+
+def link_to_gaia(tables: dict, name: str, radius_arcsec: float = LINK_RADIUS_ARCSEC) -> None:
+    """Match a discovered catalog to the field's Gaia sources, by a Gaia ID column if it has
+    one, else by position. Matched rows get gaia_id / gaia_match; Gaia rows get in_<name>
+    and a details group, so clicking a star shows its entries in the new catalog."""
+    import bisect
+    import math
+
+    gaia, table = tables.get("gaia"), tables[name]
+    if not gaia or table["kind"] != "catalog":
+        return
+    by_id = {str(r["id"]): r for r in gaia["rows"]}
+    ordered = sorted((r for r in gaia["rows"] if r.get("ra") is not None and r.get("dec") is not None),
+                     key=lambda r: r["dec"])
+    decs = [r["dec"] for r in ordered]
+    radius = radius_arcsec / 3600
+    id_col = _gaia_id_column(table["rows"])
+
+    def nearby(ra, dec):
+        lo, hi = bisect.bisect_left(decs, dec - radius), bisect.bisect_right(decs, dec + radius)
+        found = []
+        for g in ordered[lo:hi]:
+            dx = (g["ra"] - ra + 540) % 360 - 180
+            sep = math.hypot(dx * math.cos(math.radians(dec)), g["dec"] - dec) * 3600
+            if sep <= radius_arcsec:
+                found.append((sep, g))
+        return sorted(found, key=lambda x: x[0])
+
+    shown = [c for c in table["columns"] if c not in ("gaia_id", "gaia_match")][:6]
+    for row in table["rows"]:
+        star, how = None, None
+        if id_col and str(row.get(id_col)) in by_id:
+            star, how = by_id[str(row[id_col])], f"Gaia ID ({id_col})"
+        elif row.get("ra") is not None and row.get("dec") is not None:
+            found = nearby(row["ra"], row["dec"])
+            if found:
+                star = found[0][1]
+                how = f"position, {found[0][0]:.2f}″" + (" (ambiguous)" if len(found) > 1 else "")
+        row["gaia_id"], row["gaia_match"] = (str(star["id"]), how) if star else (None, None)
+        if star:
+            star[f"in_{name}"] = True
+            item = {"title": f"{table['label']} · {row['id']}",
+                    "fields": {c: row[c] for c in shown if row.get(c) not in (None, "")} | {"matched by": how},
+                    "links": [list(link) for link in row.get("_links", [])]}
+            star["_details"] = {**star.get("_details", {}),
+                                table["label"]: [*star.get("_details", {}).get(table["label"], []), item]}
+    for g in gaia["rows"]:
+        g.setdefault(f"in_{name}", False)
+    table["columns"] = _columns(table["rows"])
+    gaia["columns"] = _columns(gaia["rows"])
+    gaia["descriptions"][f"in_{name}"] = f"has a match in {table['label']}"
+    table["descriptions"].update({"gaia_id": "matched Gaia DR3 source", "gaia_match": "how it was matched"})
 
 
 def default_layers(field: dict) -> list[dict]:
@@ -300,14 +407,18 @@ class FieldStore:
             self._cache[key] = cached
         return cached[1]
 
-    def add_rows(self, key: str, source: str, rows: list[dict]) -> None:
-        """Store an on-demand query's rows for a field (replacing earlier ones)."""
+    def add_rows(self, key: str, source: str, rows: list[dict], meta: dict | None = None) -> None:
+        """Store an on-demand query's rows for a field (replacing earlier ones).
+
+        ``meta`` describes a table found by the data agent (label, provenance,
+        kind, columns, layer style, the query), for sources with no plug-in.
+        """
         path = self._path(key)
         if path is None:
             raise KeyError(key)
         extra = self._extra(path)
         stored = json.loads(extra.read_text()) if extra.exists() else {}
-        stored[source] = {"rows": rows}
+        stored[source] = {"rows": rows, **({"meta": meta} if meta else {})}
         extra.write_text(json.dumps(stored))
 
 

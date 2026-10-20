@@ -28,6 +28,7 @@ from starlette.routing import Route
 
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
+from ..chat.data_agent import build_handoff_tool
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
 from ..chat.web_tools import build_web_tools
@@ -331,7 +332,18 @@ def create_app(
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
-        tools = [*map_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+        async def store_rows(key: str, name: str, rows: list[dict], meta: dict) -> None:
+            fields.add_rows(key, name, rows, meta)
+            # The map tools hold this field object: refresh it in place so the rest of
+            # this turn sees the new table.
+            refreshed = fields.get(key)
+            if field is not None and refreshed is not None and field.get("key") == key:
+                field.clear()
+                field.update(refreshed)
+
+        # The data agent runs on the same model, for data the field doesn't have yet.
+        handoff = build_handoff_tool(model=model, field=field, store_rows=store_rows if fields else None)
+        tools = [*map_tools, handoff, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,

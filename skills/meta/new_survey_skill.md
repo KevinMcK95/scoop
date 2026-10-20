@@ -64,6 +64,16 @@ same way.
 7. **Report back**: what the skill covers, what's unverified, and anything
    surprising found while probing.
 
+## In the workspace (the data agent)
+
+The data agent has tools for each step: `read_skill`, `survey_inventory`
+(what covers the region, radio to gamma rays), `find_catalogs` /
+`describe_catalog` / `query_catalog` (VizieR), and `find_services` /
+`describe_service` / `query_service` (IVOA registry and TAP; ObsCore tables
+give image footprints with `region_col="s_region"`). Queries are bounded to the
+field's region and stored with their provenance. After a new survey works,
+write down what you learned as a draft skill for a person to review.
+
 ## Template
 
 ```markdown

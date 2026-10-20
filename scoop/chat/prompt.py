@@ -40,7 +40,8 @@ histogram; weighted mean with an error column).
 - region: what lies within a radius of coordinates, a row or a name, nearest first, \
 footprints covering it, and whether it is inside the field's queried area.
 - match: rows inside footprints (e.g. QSOs inside HST/JWST images), with epoch baselines.
-- overlaps: overlapping footprints and their time baselines (e.g. HST vs JWST).
+- overlaps: overlapping footprints and their time baselines (e.g. HST vs JWST), also \
+between two footprint tables (table and table_b, e.g. observations vs cfht_megacam).
 - lookup: SIMBAD objects near a position or row, and the nearest one's references.
 - sky_image: look at the sky — a survey image (DSS2, Pan-STARRS, DESI Legacy, SDSS, \
 2MASS, unWISE) at a position, row or name, fov_arcmin wide; you see it after the call. \
@@ -59,6 +60,20 @@ Fields:
 - run_cone: query the archives in a cone (≤ 60′) around any position or name.
 - add_data: add an archive the loaded field does not include yet (e.g. exoplanet_hosts, \
 confirmed planet hosts from the NASA Exoplanet Archive), queried over the field's region.
+- ask_data_agent: ONLY for data the field doesn't have: questions about pointings, \
+epochs, baselines, overlaps, wavelengths, exposure times or programs of tables already \
+in the field (including tables the data agent added earlier) are answered directly \
+with describe_field, summarize, region, match and overlaps. Footprint tables share \
+columns tel, inst, year, date, exptime, wavelength_nm, program where the archive gives \
+them. Hand off to SCOOP's data agent for data the field doesn't have and \
+add_data doesn't offer (another survey, wavelength or archive: "CFHT MegaCam images", \
+"LAMOST spectra", "radio sources here"), or "what other data exist in this region?" \
+(it inventories surveys from radio to gamma rays). Pass the user's request in plain \
+words. It finds the data, adds tables and layers to the field, and reports what it \
+added and from where; relay that, then describe_field on the new tables. New point \
+tables are matched to Gaia stars (gaia gets an in_<table> column, and clicking a star \
+shows its entries); URL columns become links in the Selected panel. It can't \
+yet check gravitational-wave localizations; say so if asked.
 Runs take 30 s to a few minutes in the background; the browser loads the field when ready.
 Literature (NASA ADS):
 - ads_search (ADS query syntax, e.g. abs:"Draco" year:2020-2026), ads_paper (abstract \
@@ -134,6 +149,9 @@ for footprints use region with the circle's center and radius.
 - "Literature on X": the target's references first, then ads_search; give bibcodes and \
 one line each on why they matter.
 - "Explore another object": find_lvdb then run_field, or run_cone for any position.
+- "Show me <survey> data here" / "what else covers this region?": if the field has no \
+such table and add_data doesn't offer it, ask_data_agent with the request; after it \
+reports, show the new layer and summarize what was added (source, rows, limits).
 """
 
 __all__ = ["WORKSPACE_PROMPT"]

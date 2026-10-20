@@ -315,17 +315,23 @@ def _label(row: dict) -> str:
 
 
 def overlap_report(field: dict, table: str, filter_a: list[dict], filter_b: list[dict] | None,
-                   min_years: float, limit: int) -> dict:
-    """Overlapping footprint pairs with their time baselines, longest first."""
+                   min_years: float, limit: int, table_b: str | None = None) -> dict:
+    """Overlapping footprint pairs with their time baselines, longest first. With
+    ``table_b``, pairs between two footprint tables (e.g. HST/JWST vs CFHT)."""
     rows = [r for r in field["tables"][table]["rows"] if r.get("s_region")]
+    rows_b = rows if table_b is None else [r for r in field["tables"][table_b]["rows"] if r.get("s_region")]
     side_a = [(r, Footprint(r["s_region"])) for r in rows if matches(r, filter_a)]
-    side_b = side_a if filter_b is None else [(r, Footprint(r["s_region"])) for r in rows if matches(r, filter_b)]
+    if table_b is None and filter_b is None:
+        side_b = side_a
+    else:
+        side_b = [(r, Footprint(r["s_region"])) for r in rows_b if matches(r, filter_b or [])]
     year = lambda r: r["year"] if isinstance(r.get("year"), (int, float)) else None  # noqa: E731
     pairs, seen = [], set()
+    in_b = table if table_b is None else table_b
     for ra, fa in side_a:
         for rb, fb in side_b:
-            key = tuple(sorted((ra["id"], rb["id"])))
-            if ra["id"] == rb["id"] or key in seen:
+            key = tuple(sorted(((table, ra["id"]), (in_b, rb["id"]))))
+            if (table, ra["id"]) == (in_b, rb["id"]) or key in seen:
                 continue
             seen.add(key)
             if not fa.overlaps(fb):
@@ -334,10 +340,10 @@ def overlap_report(field: dict, table: str, filter_a: list[dict], filter_b: list
             years = round(abs(yb - ya), 2) if ya is not None and yb is not None else None
             if min_years and (years is None or years < min_years):
                 continue
-            first, second = sorted(((ra, ya), (rb, yb)), key=lambda item: (item[1] is None, item[1]))
-            pairs.append({"a": first[0]["id"], "a_label": _label(first[0]), "a_year": first[1],
-                          "b": second[0]["id"], "b_label": _label(second[0]), "b_year": second[1],
-                          "years": years})
+            first, second = sorted(((ra, ya, table), (rb, yb, in_b)), key=lambda item: (item[1] is None, item[1]))
+            pairs.append({"a": first[0]["id"], "a_table": first[2], "a_label": _label(first[0]), "a_year": first[1],
+                          "b": second[0]["id"], "b_table": second[2], "b_label": _label(second[0]),
+                          "b_year": second[1], "years": years})
     pairs.sort(key=lambda p: -(p["years"] or 0))
     groups: dict[str, dict] = {}
     for p in pairs:
@@ -347,10 +353,17 @@ def overlap_report(field: dict, table: str, filter_a: list[dict], filter_b: list
         if p["years"] is not None and (g["max_years"] is None or p["years"] > g["max_years"]):
             g["max_years"], g["longest"] = p["years"], [p["a"], p["b"]]
     shown = pairs[:limit]
-    ids = sorted({i for p in shown for i in (p["a"], p["b"])})
-    return {"table": table, "footprints_a": len(side_a), "footprints_b": len(side_b), "pairs": len(pairs),
-            "by_instruments": groups, "longest": shown,
-            "layer_filter": [{"column": "id", "op": "in", "value": ids}]}
+    by_table: dict[str, set] = {}
+    for p in shown:
+        for side in ("a", "b"):
+            by_table.setdefault(p[f"{side}_table"], set()).add(p[side])
+    filters = {t: [{"column": "id", "op": "in", "value": sorted(ids)}] for t, ids in by_table.items()}
+    out = {"table": table, "footprints_a": len(side_a), "footprints_b": len(side_b), "pairs": len(pairs),
+           "by_instruments": groups, "longest": shown,
+           "layer_filter": filters.get(table, [{"column": "id", "op": "in", "value": []}])}
+    if table_b is not None:
+        out["table_b"], out["layer_filters"] = table_b, filters
+    return out
 
 
 def build_map_tools(
@@ -646,13 +659,16 @@ def build_map_tools(
         filter_b: list[Clause] | None = None,
         min_years: Annotated[float, Field(ge=0, le=100)] = 0.0,
         limit: Annotated[int, Field(ge=1, le=50)] = 15,
+        table_b: str | None = None,
     ):
         """Footprints that overlap each other, with time baselines (years between
         their epochs), longest first, for astrometric proper motions or
         variability. Compare one set with another by filtering each side (e.g.
         filter_a tel == HST, filter_b tel == JWST); without filter_b, pairs
-        within filter_a. Returns per-instrument-pair counts and longest
-        baselines, the longest pairs, and an id filter for update_map.
+        within filter_a. To compare two footprint tables (e.g. observations vs
+        cfht_megacam), give table and table_b; filter_a applies to table and
+        filter_b to table_b. Returns per-instrument-pair counts and longest
+        baselines, the longest pairs, and id filters for update_map.
         """
         def error(text: str) -> ToolMessage:
             return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
@@ -661,17 +677,20 @@ def build_map_tools(
             return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
         if table is None:
             table = next((n for n, t in field["tables"].items() if t.get("kind") == "footprints" and t["rows"]), None)
-        if table not in field["tables"] or not any(r.get("s_region") for r in field["tables"][table]["rows"]):
-            return error(f"No footprints in table {table!r}.")
+        for name in (table, table_b):
+            if name is not None and (name not in field["tables"] or
+                                     not any(r.get("s_region") for r in field["tables"][name]["rows"])):
+                footprint_tables = [n for n, t in field["tables"].items() if any(r.get("s_region") for r in t["rows"])]
+                return error(f"No footprints in table {name!r}. Footprint tables: {footprint_tables}.")
         clauses = []
-        for given in (filter_a, filter_b):
+        for given, name in ((filter_a, table), (filter_b, table_b or table)):
             clause = None if given is None else [c.model_dump(exclude_unset=True) for c in given]
             try:
-                validate_filter(clause or [], {"id", *field["tables"][table]["columns"]})
+                validate_filter(clause or [], {"id", *field["tables"][name]["columns"]})
             except ValueError as exc:
-                return error(f"Invalid filter: {exc}")
+                return error(f"Invalid filter on {name!r}: {exc}")
             clauses.append(clause)
-        report = overlap_report(field, table, clauses[0] or [], clauses[1], min_years, limit)
+        report = overlap_report(field, table, clauses[0] or [], clauses[1], min_years, limit, table_b=table_b)
         return ToolMessage(content=json.dumps(report), tool_call_id=tool_call_id)
 
     @tool

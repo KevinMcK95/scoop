@@ -26,8 +26,15 @@ scout = [
     "anthropic>=0.49,<1",
     "pyvo>=1.5,<2",
 ]
+# The data agent (scoop/discovery.py): VO registry, TAP, VizieR, MOC server.
+discovery = [
+    "pyvo>=1.9,<2",
+    "astroquery>=0.4.11",
+    "astropy>=7",
+    "requests>=2.32,<3",
+]
 server = [
-    "scoop-sky[chat,literature]",
+    "scoop-sky[chat,literature,discovery]",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",

@@ -17,6 +17,8 @@ archive.
 |---|---|
 | [gaia](surveys/gaia.md) | Astrometry (positions, parallaxes, proper motions), G/BP/RP photometry, radial velocities, XP/RVS spectra, Gaia QSO and galaxy candidates |
 | [mast_hst_jwst](surveys/mast_hst_jwst.md) | HST and JWST images and spectra, footprints, epochs and baselines, exclusive-access and planned observations, Hubble Source Catalog, HAP mosaics, HLSPs |
+| [cadc_cfht](surveys/cadc_cfht.md) | CFHT observations (MegaCam images etc.) at CADC, as footprints via ObsCore (draft) |
+| [lamost](surveys/lamost.md) | LAMOST spectroscopic catalogs via VizieR, up to DR11 (draft) |
 | [sdss_spectra](surveys/sdss_spectra.md) | SDSS optical and APOGEE infrared spectra (SDSS-I through V, DR20), MaNGA, redshifts and classifications |
 
 ## Astrometry (`astrometry/`)

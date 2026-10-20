@@ -44,3 +44,35 @@ framework. They are split, without changing behavior:
 - `exoplanets/tools.py`: the agentbook `Tool` wrappers as before, importing the
   functions from `archive.py`; `_as_tool_error` turns an `ArchiveError` into the
   `ToolError` the model sees. `from exoplanets.tools import ...` keeps working.
+
+## Yilun's chat agent and server (data agent integration)
+
+Changes made to connect the data agent (`scoop/chat/data_agent.py`,
+`scoop/discovery.py`, `scoop/observations.py`); all additive.
+
+- `scoop/server/app.py`: each chat turn also gets `ask_data_agent` (the hand-off
+  to the data agent, on the same model). Its `store_rows` saves a table with
+  `FieldStore.add_rows(..., meta)` and then refreshes the turn's field object in
+  place, so the map tools see a table the data agent added in the same turn
+  (before, `describe_field` answered "Unknown table").
+- `scoop/fields.py`: `FieldStore.add_rows` takes an optional `meta` (label,
+  provenance, kind, columns, style, query) for tables with no source plug-in;
+  `field_from_viewer_data` turns stored entries with `meta` into tables
+  (`origin: "agent"`) and layers (group "Added by the data agent"). Footprint
+  tables get the standard columns (`scoop/observations.py`), and point tables are
+  matched to Gaia (`link_to_gaia`: Gaia ID column first, else 1″), adding
+  `in_<table>` and a details group to Gaia rows.
+- `scoop/chat/visual.py`: `overlaps` / `overlap_report` take `table_b`, to compare
+  footprints in two tables (e.g. `observations` vs `cfht_megacam`); pairs carry
+  `a_table` / `b_table` and the result gives `layer_filters` per table. Calls
+  without `table_b` behave as before.
+- `scoop/chat/prompt.py`: describes `ask_data_agent` and `overlaps` across
+  tables, and says to answer questions about data already in the field directly
+  (not through the data agent).
+- The data agent's `save_skill_draft` follows the dataset scout's convention:
+  `skills/surveys/<name>.md` with `status: draft`, multi-line `sources_checked`,
+  `proposed_by: data agent, <date>`, and a row in the index's surveys table marked
+  *(draft, written by the data agent)*; it never overwrites a skill. So
+  `scoop.scout.coverage.read_coverage` sees its drafts like the scout's own.
+- `run_python` gets the same field object as the map tools, so a table the data
+  agent adds in a turn is available to it in that turn too.
