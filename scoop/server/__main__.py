@@ -12,8 +12,26 @@ import argparse
 import contextlib
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
+
+
+# OpenRouter app attribution (https://openrouter.ai/docs/app-attribution): requests
+# name SCOOP and its repository, so usage shows up as this app in OpenRouter's
+# analytics and public rankings. Sent only to OpenRouter. SCOOP_OPENROUTER_VISIBILITY=hidden
+# keeps a newly created app out of public rankings (a fork running its own copy).
+APP_URL = "https://github.com/KevinMcK95/scoop"
+APP_TITLE = "SCOOP"
+
+
+def attribution_headers(base_url: str | None) -> dict[str, str]:
+    if not base_url or urlsplit(base_url).hostname not in ("openrouter.ai", "www.openrouter.ai"):
+        return {}
+    headers = {"HTTP-Referer": APP_URL, "X-OpenRouter-Title": APP_TITLE, "X-Title": APP_TITLE}
+    if os.environ.get("SCOOP_OPENROUTER_VISIBILITY") == "hidden":
+        headers["X-OpenRouter-App-Visibility"] = "hidden"
+    return headers
 
 
 def make_model(settings):
@@ -23,8 +41,9 @@ def make_model(settings):
         return None
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(model=name, base_url=settings.get("base_url"), api_key=settings.get("api_key") or "unset",
-                      stream_usage=True)
+    base_url = settings.get("base_url")
+    return ChatOpenAI(model=name, base_url=base_url, api_key=settings.get("api_key") or "unset",
+                      stream_usage=True, default_headers=attribution_headers(base_url) or None)
 
 
 def ads_maker(web):
