@@ -93,6 +93,15 @@
                   <li class="step" class:running={step.status === 'running'} class:failed={step.status === 'error'}
                     title={step.status === 'error' ? 'This step did not succeed; SCOOP was told and can retry.' : ''}>
                     <span aria-hidden="true">{step.status === 'running' ? '◌' : step.status === 'error' ? '✗' : '✓'}</span> {stepLabel(step.text)}{step.status === 'running' ? '…' : ''}
+                    {#if step.detail?.code}
+                      <details class="step-detail">
+                        <summary>code and output</summary>
+                        <pre class="code">{step.detail.code}</pre>
+                        {#if step.detail.output}<pre class="output">{step.detail.output}</pre>{/if}
+                        {#if step.detail.error}<pre class="output failed">{step.detail.error}</pre>{/if}
+                      </details>
+                    {/if}
+                    {#if step.detail?.image}<img class="step-image" src={step.detail.image} alt={`Image from ${stepLabel(step.text)}`} />{/if}
                   </li>
                 {/each}
               </ol>

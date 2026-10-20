@@ -257,11 +257,15 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         if (turn) turn.message = message;
         break;
       }
-      // The chat records which tool ran and how it went, never its arguments or output.
+      // The chat records which tool ran and how it went; only run_python's code and output, and images, are shown.
       case 'tool_call': tools.set(event.id, push({ role: 'tool', text: event.name, status: 'running' })); break;
       case 'tool_result': {
         const message = tools.get(event.id);
-        if (message) message.status = event.status;
+        if (message) {
+          message.status = event.status;
+          const { code, output, error, image } = event;
+          if (code || image) message.detail = { code, output, error, image };
+        }
         break;
       }
       case 'artifact': {

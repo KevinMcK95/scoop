@@ -11,7 +11,8 @@ export type ChatEvent =
   | { type: 'assistant'; id: string | null; text: string }
   | { type: 'assistant_delta'; id: string | null; text: string }
   | { type: 'tool_call'; id: string; name: string; args: unknown }
-  | { type: 'tool_result'; id: string; name: string | null; status: 'success' | 'error'; summary: string }
+  | { type: 'tool_result'; id: string; name: string | null; status: 'success' | 'error'; summary: string;
+      image?: string; code?: string; output?: string; error?: string }
   | { type: 'artifact'; id: string; payload: Record<string, unknown> }
   | { type: 'error'; message: string }
   | { type: 'done'; request_id?: string };

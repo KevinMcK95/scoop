@@ -180,6 +180,27 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(image.content[1]["image_url"]["url"], "data:image/jpeg;base64,anBlZw==")
         self.assertEqual((stream[-2]["type"], stream[-2]["text"]), ("assistant", "An edge-on galaxy."))
 
+    def test_run_python_code_output_and_figure_reach_the_browser(self):
+        ask = AIMessage(content="", tool_calls=[{"name": "run_python", "args": {"code": "print(gaia.G.median())", "tables": ["gaia"]},
+                                                 "id": "py-1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="Median G is 19.1."))
+
+        class Sandbox:
+            async def run(self, code, tables):
+                self.tables = tables
+                return {"output": "19.1\n", "error": None, "figures": ["iVBOR"], "figure_count": 1}
+
+        sandbox = Sandbox()
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(model=model, fields=field_store(tmp), python=sandbox))
+            stream = events(self.post_chat(client))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual((result["name"], result["status"]), ("run_python", "success"))
+        self.assertEqual((result["code"], result["output"]), ("print(gaia.G.median())", "19.1\n"))
+        self.assertEqual(result["image"], "data:image/png;base64,iVBOR")
+        self.assertEqual(list(sandbox.tables), ["gaia"])
+        self.assertEqual(model.calls[1][-1].content[1]["image_url"]["url"], "data:image/png;base64,iVBOR")
+
     def test_model_failure_is_reported_in_stream(self):
         class Broken(ScriptedModel):
             async def ainvoke(self, messages, config=None):

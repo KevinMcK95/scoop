@@ -29,6 +29,8 @@ export interface ChatMessage {
   scene?: Scene;
   // One line about what travelled with a message ("with draco_1 · 1 drawn region …").
   contextNote?: string;
+  // For a tool step: what run_python ran and printed, and an image the tool returned (not saved in History).
+  detail?: { code?: string; output?: string; error?: string; image?: string };
 }
 
 // A batch of map actions, applied all-or-nothing once the renderer is ready.
