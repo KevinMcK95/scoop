@@ -348,6 +348,7 @@ def create_app(
         map_tools = build_map_tools(field=field, layers=layers, resolver=resolver, simbad=simbad,
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
+                                    read_field=fields.get if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
         async def store_rows(key: str, name: str, rows: list[dict], meta: dict) -> None:
             fields.add_rows(key, name, rows, meta)

@@ -74,6 +74,7 @@ p {
   display: none !important;
 }
 .app-shell {
+  position: relative;
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -1800,4 +1801,217 @@ body.resizing-y * {
   align-items: center;
   padding: 4px 8px 6px;
   font-size: 11px;
+}
+
+/* Start page: one question box over a quiet sky; the workspace waits beneath. */
+.wordmark-home {
+  all: unset;
+  cursor: pointer;
+}
+.wordmark-home:disabled {
+  cursor: default;
+}
+.wordmark-home:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.landing-layer {
+  position: absolute;
+  inset: 52px 0 0 0;
+  z-index: 50;
+  overflow: auto;
+  background:
+    radial-gradient(1px 1px at 12% 18%, #ffffffb0, transparent),
+    radial-gradient(1px 1px at 28% 72%, #ffffff80, transparent),
+    radial-gradient(1.5px 1.5px at 44% 34%, #ffffffc0, transparent),
+    radial-gradient(1px 1px at 63% 12%, #ffffff90, transparent),
+    radial-gradient(1px 1px at 71% 58%, #ffffff70, transparent),
+    radial-gradient(1.5px 1.5px at 86% 26%, #ffffffa0, transparent),
+    radial-gradient(1px 1px at 92% 82%, #ffffff80, transparent),
+    radial-gradient(1px 1px at 8% 88%, #ffffff70, transparent),
+    radial-gradient(1px 1px at 54% 90%, #ffffff60, transparent),
+    radial-gradient(ellipse 70% 50% at 50% 38%, #12304a 0%, transparent 70%),
+    #080f18;
+}
+.landing {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 32px 16px;
+}
+.landing-inner {
+  width: min(680px, 100%);
+  display: grid;
+  gap: 18px;
+  animation: landing-in 0.5s ease-out both;
+}
+@keyframes landing-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.landing-title {
+  margin: 0;
+  font-size: clamp(32px, 6vw, 46px);
+  letter-spacing: 6px;
+  text-align: center;
+}
+.landing-title span {
+  color: var(--accent);
+}
+.landing-tagline {
+  margin: 0 auto;
+  max-width: 520px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.landing-ask {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid #3b4b60;
+  border-radius: 14px;
+  background: #0d1723e6;
+  box-shadow: 0 8px 30px #0006;
+  transition: border-color 0.2s ease;
+}
+.landing-ask:focus-within {
+  border-color: var(--accent);
+}
+.landing-ask textarea {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.landing-ask .primary {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 16px;
+}
+.landing-note {
+  margin: -8px 0 0;
+  text-align: center;
+  font-size: 12px;
+}
+.landing-examples {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.landing-example {
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #111c29cc;
+  color: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+.landing-example:hover,
+.landing-example:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+.landing-example span {
+  color: var(--accent);
+  margin-right: 2px;
+}
+.landing-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.landing-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+.landing-recent .text-button {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.landing-explore {
+  margin-left: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-inner { animation: none; }
+  .landing-example { transition: none; }
+}
+
+/* Archive queries in progress: a card on the map with a spinner. */
+.job-card {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  max-width: min(460px, calc(100% - 32px));
+  padding: 10px 14px;
+  border: 1px solid #2f4a5c;
+  border-radius: 10px;
+  background: #0d1723f0;
+  box-shadow: 0 6px 24px #0008;
+  font-size: 12px;
+  pointer-events: none;
+}
+.job-card strong {
+  display: block;
+  color: var(--accent);
+  font-weight: 600;
+}
+.job-card small {
+  display: block;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 380px;
+}
+.spinner {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 2.5px solid #2a3848;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.spinner.small {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.5s; }
 }
