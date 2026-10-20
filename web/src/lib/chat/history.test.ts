@@ -29,6 +29,17 @@ describe('conversation history', () => {
     expect(kept[0].id).toBe(`c${MAX_CONVERSATIONS + 4}`);
   });
 
+  it('keeps run_python code, output and stored figure URLs, but not inline images', () => {
+    const messages: ChatMessage[] = [...ask('q'), { id: 3, role: 'tool', text: 'run_python', status: 'success',
+      detail: { code: 'print(1)', output: '1', image: 'data:image/png;base64,AAAA' } },
+      { id: 4, role: 'tool', text: 'run_python', status: 'success', detail: { code: 'plt.plot()', image: '/api/figures/a/b.png' } }];
+    saveConversation({ id: 'a', title: '', field: null, updatedAt: 1, messages });
+    const saved = loadConversations()[0].messages;
+    expect(saved[2].detail).toEqual({ code: 'print(1)', output: '1' });
+    expect(saved[3].detail?.image).toBe('/api/figures/a/b.png');
+    expect(messages[2].detail?.image).toBeDefined();
+  });
+
   it('works without storage and survives garbage', () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } });
     expect(loadConversations()).toEqual([]);

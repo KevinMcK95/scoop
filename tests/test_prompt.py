@@ -4,6 +4,8 @@ import unittest
 try:
     from scoop.chat.prompt import WORKSPACE_PROMPT
     from scoop.chat.visual import build_map_tools
+    from scoop.chat.python_tool import build_python_tools
+    from scoop.chat.web_tools import build_web_tools
     from scoop.literature.tools import build_ads_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "httpx"}:
@@ -19,6 +21,8 @@ class PromptTests(unittest.TestCase):
     def test_every_tool_the_server_provides_is_described(self):
         names = {t.name for t in build_map_tools(jobs=object(), lvdb=object(), resolver=object(), simbad=object())}
         names |= {t.name for t in build_ads_tools(object())}
+        names |= {t.name for t in build_web_tools(object(), object())}
+        names |= {t.name for t in build_python_tools(object())}
         missing = [n for n in sorted(names) if not re.search(rf"\b{n}\b", WORKSPACE_PROMPT)]
         self.assertEqual(missing, [], "describe these tools in scoop/chat/prompt.py")
 

@@ -11,7 +11,8 @@ export type ChatEvent =
   | { type: 'assistant'; id: string | null; text: string }
   | { type: 'assistant_delta'; id: string | null; text: string }
   | { type: 'tool_call'; id: string; name: string; args: unknown }
-  | { type: 'tool_result'; id: string; name: string | null; status: 'success' | 'error'; summary: string }
+  | { type: 'tool_result'; id: string; name: string | null; status: 'success' | 'error'; summary: string;
+      image?: string; code?: string; output?: string; error?: string }
   | { type: 'artifact'; id: string; payload: Record<string, unknown> }
   | { type: 'error'; message: string }
   | { type: 'done'; request_id?: string };
@@ -55,6 +56,7 @@ export interface Backend {
   addSource(field: string, source: string): Promise<{ rows: number }>;
   saveSettings(changes: Partial<Record<'model' | 'base_url' | 'api_key' | 'ads_token', string>>): Promise<SettingsView>;
   getJob(id: string): Promise<JobView>;
+  deleteFigures?(thread: string): Promise<void>;
 }
 
 // A data source the server knows; queryable ones can be added to a field on demand.
@@ -157,6 +159,9 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
       const response = await fetcher(`${base}/fields/${encodeURIComponent(field)}/sources/${encodeURIComponent(source)}`, { method: 'POST' });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
+    },
+    async deleteFigures(thread) {
+      await fetcher(`${base}/figures/${encodeURIComponent(thread)}`, { method: 'DELETE' }).catch(() => undefined);
     },
     async getSettings() {
       const response = await fetcher(`${base}/settings`);

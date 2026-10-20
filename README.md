@@ -197,6 +197,11 @@ python -m scoop.server          # 127.0.0.1:8787; model and keys: ⚙ Settings t
 cd web && npm ci && npm run dev -- --host 127.0.0.1
 ```
 
+The agent can also run its own Python (`run_python`): numpy, pandas, scipy, astropy,
+matplotlib and scikit-learn in Pyodide (Python in WebAssembly), with the field's
+tables and no network or file access. It needs macOS and Node; set it up once with
+`cd sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/sandbox.py`](scoop/sandbox.py).
+
 See the [workspace architecture](docs/web_workspace.md), the
 [map and agent interaction design](docs/map_interaction.md), the
 [shared ADS service](docs/ads_service.md), and the

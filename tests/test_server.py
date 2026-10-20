@@ -180,6 +180,55 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(image.content[1]["image_url"]["url"], "data:image/jpeg;base64,anBlZw==")
         self.assertEqual((stream[-2]["type"], stream[-2]["text"]), ("assistant", "An edge-on galaxy."))
 
+    def test_run_python_code_output_and_figure_reach_the_browser(self):
+        ask = AIMessage(content="", tool_calls=[{"name": "run_python", "args": {"code": "print(gaia.G.median())", "tables": ["gaia"]},
+                                                 "id": "py-1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="Median G is 19.1."))
+
+        class Sandbox:
+            async def run(self, code, tables):
+                self.tables = tables
+                return {"output": "19.1\n", "error": None, "figures": ["iVBOR"], "figure_count": 1}
+
+        sandbox = Sandbox()
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(model=model, fields=field_store(tmp), python=sandbox))
+            stream = events(self.post_chat(client))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual((result["name"], result["status"]), ("run_python", "success"))
+        self.assertEqual((result["code"], result["output"]), ("print(gaia.G.median())", "19.1\n"))
+        self.assertEqual(result["image"], "data:image/png;base64,iVBOR")
+        self.assertEqual(list(sandbox.tables), ["gaia"])
+        self.assertEqual(model.calls[1][-1].content[1]["image_url"]["url"], "data:image/png;base64,iVBOR")
+
+    def test_figures_are_stored_and_served_by_url(self):
+        from scoop.server.figures import FigureStore
+
+        ask = AIMessage(content="", tool_calls=[{"name": "run_python", "args": {"code": "plt.plot([1])"},
+                                                 "id": "call_py/../1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="Plotted."))
+
+        class Sandbox:
+            async def run(self, code, tables):
+                return {"output": "", "error": None, "figures": ["iVBORw0KGgo="], "figure_count": 1}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(model=model, python=Sandbox(), figure_store=FigureStore(Path(tmp))))
+            stream = events(self.post_chat(client))
+            url = next(e for e in stream if e["type"] == "tool_result")["image"]
+            self.assertEqual(url, "/api/figures/thread-0001/call_py1.png")
+            figure = client.get(url)
+            self.assertEqual((figure.status_code, figure.headers["content-type"]), (200, "image/png"))
+            self.assertEqual(figure.content, bytes.fromhex("89504e470d0a1a0a"))
+            self.assertEqual((Path(tmp) / "thread-0001" / "call_py1.png").stat().st_mode & 0o777, 0o600)
+            # The model still saw the image itself.
+            self.assertTrue(model.calls[1][-1].content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
+            for bad in ("/api/figures/thread-0001/..%2Fx.png", "/api/figures/short/a.png", "/api/figures/thread-0001/a.gif"):
+                self.assertEqual(client.get(bad).status_code, 404)
+            self.assertEqual(client.delete("/api/figures/thread-0001", headers={"origin": "https://evil.example"}).status_code, 403)
+            self.assertEqual(client.delete("/api/figures/thread-0001").status_code, 200)
+            self.assertEqual(client.get(url).status_code, 404)
+
     def test_model_failure_is_reported_in_stream(self):
         class Broken(ScriptedModel):
             async def ainvoke(self, messages, config=None):

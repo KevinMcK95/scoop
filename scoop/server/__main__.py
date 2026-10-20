@@ -47,10 +47,13 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
 
     from ..fields import FieldStore
     from ..images import cutout_fetcher
+    from ..sandbox import PythonSandbox
+    from ..web import page_reader, web_searcher
     from ..lookup import simbad_query
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
     from . import create_app
+    from .figures import FigureStore
     from .jobs import JobManager
     from .settings import Settings
 
@@ -68,12 +71,21 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         checkpointer = await stack.enter_async_context(AsyncSqliteSaver.from_conn_string(str(threads_path)))
         os.chmod(threads_path, 0o600)
         fields = FieldStore(fields_dir)
+        python = PythonSandbox()
+        if python.problem():
+            print(f"python: off ({python.problem()})")
+            python = None
+        else:
+            print("python: on (Pyodide sandbox, no network)")
+            stack.push_async_callback(python.close)
         script = Path(__file__).resolve().parents[2] / "smoke_tests" / "lvdb_field.py"
         jobs = JobManager(fields_dir, script) if script.exists() else None
         app = create_app(audit_path=audit_path, fields=fields, settings=settings, make_model=make_model,
                          checkpointer=checkpointer,
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
-                         jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web))
+                         jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
+                         web=(web_searcher(web), page_reader(web)), python=python,
+                         figure_store=FigureStore(settings_path.parent / "figures"))
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")

@@ -23,12 +23,14 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from ..chat.visual import build_map_tools
+from ..chat.python_tool import build_python_tools
+from ..chat.web_tools import build_web_tools
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
@@ -90,9 +92,15 @@ def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> li
                     events.append({"type": "tool_call", "id": call["id"], "name": call["name"],
                                    "args": call["args"]})
             elif isinstance(message, ToolMessage):
-                events.append({"type": "tool_result", "id": message.tool_call_id,
-                               "name": message.name or names.get(message.tool_call_id), "status": message.status,
-                               "summary": message.content})
+                event = {"type": "tool_result", "id": message.tool_call_id,
+                         "name": message.name or names.get(message.tool_call_id), "status": message.status,
+                         "summary": message.content}
+                # Shown with the step: what run_python ran and printed, and any image a tool returned.
+                artifact = message.artifact if isinstance(message.artifact, dict) else {}
+                for key in ("image", "code", "output", "error"):
+                    if isinstance(artifact.get(key), str):
+                        event[key] = artifact[key]
+                events.append(event)
         for artifact_id, payload in node_update.get("artifacts", {}).items():
             if artifact_id not in artifacts_seen:
                 artifacts_seen.add(artifact_id)
@@ -146,6 +154,9 @@ def create_app(
     jobs: Any = None,
     lvdb: Any = None,
     fetch_image: Any = None,
+    web: tuple[Any, Any] | None = None,
+    python: Any = None,
+    figure_store: Any = None,
     settings: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
@@ -153,7 +164,9 @@ def create_app(
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
     The ADS client must already be active (entered) for the app's lifetime.
-    Map tools are rebuilt per turn for the field and layers the browser reports. With
+    Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
+    a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
+    ``figure_store`` keeps tool images so the browser gets URLs instead of the images. With
     ``audit_path``, each turn appends one JSON line (no message text).
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -217,6 +230,21 @@ def create_app(
             return Response(gzip.compress(body, compresslevel=5), media_type="application/json",
                             headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         return Response(body, media_type="application/json")
+
+    async def get_figure(request: Request) -> Response:
+        found = figure_store.path(request.path_params["thread"], request.path_params["name"]) if figure_store else None
+        if found is None:
+            return JSONResponse({"error": "No such figure."}, status_code=404)
+        path, media_type = found
+        # Each tool call's figure has its own name and never changes.
+        return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+    async def delete_figures(request: Request) -> JSONResponse:
+        if not same_site(request):
+            return JSONResponse({"error": "Figures can only be deleted from the workspace."}, status_code=403)
+        if figure_store is None or not figure_store.delete(request.path_params["thread"]):
+            return JSONResponse({"error": "No such conversation."}, status_code=404)
+        return JSONResponse({"deleted": True})
 
     async def start_job(request: Request) -> JSONResponse:
         if jobs is None:
@@ -303,7 +331,8 @@ def create_app(
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
-        tools = [*map_tools, *ads_tools(),
+        tools = [*map_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+                 *(build_python_tools(python, field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
@@ -347,6 +376,8 @@ def create_app(
                                 usage["cache_read"] = usage.get("cache_read", 0) + cached
                             usage["model_calls"] = usage.get("model_calls", 0) + 1
                         for event in _events(update, seen, names):
+                            if figure_store is not None and isinstance(event.get("image"), str):
+                                event["image"] = figure_store.save(thread_id, event["id"], event["image"]) or event["image"]
                             sent.append(event)
                             yield _sse(event)
                             if event["type"] == "tool_result":
@@ -389,6 +420,8 @@ def create_app(
         Route("/api/jobs/{id}", get_job),
         Route("/api/literature/search", literature_search, methods=["POST"]),
         Route("/api/chat", chat, methods=["POST"]),
+        Route("/api/figures/{thread}/{name}", get_figure),
+        Route("/api/figures/{thread}", delete_figures, methods=["DELETE"]),
     ])
 
 

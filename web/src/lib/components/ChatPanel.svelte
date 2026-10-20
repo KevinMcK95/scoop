@@ -3,12 +3,15 @@
   import { activitySummary, groupMessages, stepLabel } from '../chat/activity';
   import { renderMarkdown } from '../chat/markdown';
   import SettingsPanel from './SettingsPanel.svelte';
+  import { follow } from '../chat/follow';
   let { workspace, onclose }: { workspace: Workspace; onclose?: () => void } = $props();
   const row = $derived(workspace.selectedRow);
   const paper = $derived(workspace.papers.find((p) => p.id === workspace.publicationId));
   const live = $derived(workspace.services.chat);
   // Tool-call groups: open while any step runs; once done, collapsed unless the user opens them.
   let opened = $state<Record<string, boolean>>({});
+  // Figures shown at full width, by step id.
+  let wide = $state<Record<number, boolean>>({});
   let tab = $state<'chat' | 'history' | 'settings'>('chat');
   const when = (t: number) => {
     const minutes = Math.round((Date.now() - t) / 60000);
@@ -24,16 +27,6 @@
   const status = (message: { role: string; status?: string }) => !message.status ? ''
     : message.role === 'assistant' ? (message.status === 'running' ? ' ···' : ' ⚠')
     : ` · ${message.status}`;
-  // Follow streaming text unless the reader has scrolled up.
-  let scroller = $state<HTMLDivElement>();
-  $effect(() => {
-    const last = workspace.messages.at(-1);
-    // Follow new text, new messages and the Scooping line.
-    void [last?.text, last?.status, workspace.messages.length, workspace.busy];
-    if (!scroller) return;
-    const nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
-    if (nearBottom) scroller.scrollTop = scroller.scrollHeight;
-  });
 </script>
 
 <section class="panel chat-panel" aria-labelledby="chat-heading">
@@ -68,7 +61,7 @@
       <p class="muted">Saved in this browser only. SCOOP remembers a reopened conversation until its server restarts.</p>
     </div>
   {:else}
-  <div class="chat-scroll" bind:this={scroller}>
+  <div class="chat-scroll" use:follow={`${workspace.conversationId}:${turnStart}`}>
     <div class="intro-card">
       <h3>Ask about this patch of sky.</h3>
       <p>SCOOP sees the map as you do: the field, visible layers, what you selected. It answers on the map too, turning layers on or off, highlighting and labelling what it talks about. Undo reverts any change.</p>
@@ -90,13 +83,28 @@
             {#if open}
               <ol class="steps">
                 {#each entry.steps as step (step.id)}
-                  <li class="step" class:running={step.status === 'running'} class:failed={step.status === 'error'}
+                  <li id={`step-${step.id}`} class="step" class:running={step.status === 'running'} class:failed={step.status === 'error'}
                     title={step.status === 'error' ? 'This step did not succeed; SCOOP was told and can retry.' : ''}>
                     <span aria-hidden="true">{step.status === 'running' ? '◌' : step.status === 'error' ? '✗' : '✓'}</span> {stepLabel(step.text)}{step.status === 'running' ? '…' : ''}
+                    {#if step.detail?.code}
+                      <details class="step-detail">
+                        <summary>code and output</summary>
+                        <pre class="code">{step.detail.code}</pre>
+                        {#if step.detail.output}<pre class="output">{step.detail.output}</pre>{/if}
+                        {#if step.detail.error}<pre class="output failed">{step.detail.error}</pre>{/if}
+                      </details>
+                    {/if}
                   </li>
                 {/each}
               </ol>
             {/if}
+            <!-- Figures and sky images stay in view when the steps collapse. -->
+            {#each entry.steps.filter((step) => step.detail?.image) as step (step.id)}
+              <button class="step-image" class:wide={!!wide[step.id]} title={wide[step.id] ? 'Show smaller' : 'Show larger'}
+                onclick={() => (wide = { ...wide, [step.id]: !wide[step.id] })}>
+                <img src={step.detail!.image} alt={`Image from ${stepLabel(step.text)}`} />
+              </button>
+            {/each}
           </div>
         {:else}
           {@const message = entry.message}
