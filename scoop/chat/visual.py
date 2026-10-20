@@ -387,9 +387,14 @@ def build_map_tools(
     fetch_image: Callable[[float, float, float, str], Awaitable[bytes]] | None = None,
     add_source: Callable[[str, str], Awaitable[int]] | None = None,
     read_field: Callable[[str], dict | None] | None = None,
+    known_layers: dict | None = None,
 ) -> list[BaseTool]:
-    """Tools bound to the field and layers the browser reports for this turn."""
-    current = {layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer}
+    """Tools bound to the field and layers the browser reports for this turn.
+
+    ``known_layers`` (optional) is a dict shared with other tools that add layers in
+    the same turn (e.g. auto_members), so update_map can update those layers too."""
+    current = known_layers if known_layers is not None else {}
+    current.update({layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer})
 
     @tool
     async def update_map(

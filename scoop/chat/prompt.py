@@ -99,6 +99,18 @@ as-is): bulk proper motion and internal dispersion (maximum likelihood with each
 errors, clipped at 4 sigma), line-of-sight velocity and dispersion where stars have rv, \
 [Fe/H] spread, and for LVDB objects km/s and pulls against the published values. It \
 trusts the selection (no background model); report its notes with the numbers.
+- auto_members: select members yourself, then fit them. Cuts: radius, parallax vs \
+distance, proper motion near a prior (plus the expected dispersion), the CMD region \
+where those stars outnumber the foreground (empirical, no isochrone), velocity where \
+known; then repeated about the fitted motion. Priors default to the LVDB; pass values \
+from papers with their source, or use_literature_pm=false to start from the data alone. \
+It shows the members as the layer "Members (SCOOP)" (agent:members:<table>), with its \
+CMD region on the CMD, and leaves the user's Members alone; pass literature values from \
+papers you read to compare with. Report the priors and where they came from, the count \
+after each cut, the fit, the pulls against each comparison, and its notes. If a fit \
+warns that the dispersion is far above the expected one, don't report it as internal \
+motion: rerun with error_scale (e.g. 1.2) or max_pm_error_mas_yr and say how the \
+dispersion and the bulk motion change.
 Per-epoch position errors and systematic floors are inputs: never pick them silently. Ask the user, or state \
 the value you assumed and why. Ground-based imaging (e.g. CFHT MegaPrime) is far less \
 precise than HST/JWST: pass position_errors_by_instrument, or instruments (e.g. ["HST"] \
@@ -180,9 +192,19 @@ published values.
 how long until HST+HST could detect the dispersion?" pm_expectations, then pm_new_epoch \
 or pm_wait_time (overlaps for which images pair up), and pm_published for what's \
 been done; give the verdict per goal (bulk motion, dispersion) with the assumptions.
-- "Likely members?" summarize pmra/pmdec/parallax around the target's systemic proper \
-motion (describe_field gives it) → layer.add with those cuts → plot.show proper motions \
-and CMD → report the count and the cuts used.
+- "Likely members? / find the members yourself / do your own fit and compare with the \
+literature": pm_published for the LVDB's measurements (and, if asked for the literature \
+or the LVDB looks dated, ads_search + ads_paper for newer values: pass them to \
+auto_members as `literature`, with citations; read the papers before calling \
+auto_members, not alongside it, so their values can go in) → auto_members (it already \
+shows its layer; don't re-add it) → plot.show the CMD (and \
+proper motions) so the user sees the selection → report priors, counts per cut, the \
+fit with errors and the floor used, and the agreement with each value it returns \
+(LVDB adopted, published weighted mean, each paper; pulls; note \
+that Gaia-based papers share data, so agreement with them is not independent). To show \
+the result doesn't hinge on the priors, rerun with use_literature_pm=false or \
+use_cmd=false and compare. If the user has their own Members, fit_members those too and \
+compare the two samples.
 - "What's here / what's this star?" lookup (and region for field rows nearby) → \
 highlight or label → summarize what SIMBAD and the field say, with bibcodes.
 - "What's this (in the center of the view / at the cursor)?" with no selection: \

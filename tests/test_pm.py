@@ -94,6 +94,58 @@ class MemberFitTests(unittest.TestCase):
         self.assertGreater(hi, math.sqrt(8))
 
 
+def synthetic_dwarf(seed=5, n_members=300, n_foreground=600):
+    """Members: a tight proper-motion clump on a red-giant-branch-like sequence near
+    the centre; foreground: broad proper motions, colours and parallaxes everywhere."""
+    import random
+    rng = random.Random(seed)
+    rows = []
+    for i in range(n_members):
+        g = rng.uniform(17.0, 20.5)
+        e = 0.05 + 0.15 * (g - 17)
+        rows.append({"id": str(4295806720000 + i), "member": True, "G": g,
+                     "bp_rp": 1.0 + 0.12 * (20.5 - g) + rng.gauss(0, 0.03), "r_ell": 2 * rng.random() ** 0.5,
+                     "pmra": 0.04 + rng.gauss(0, 0.02) + rng.gauss(0, e), "pmdec": -0.19 + rng.gauss(0, 0.02) + rng.gauss(0, e),
+                     "pmra_error": e, "pmdec_error": e, "parallax": 1 / 80 + rng.gauss(0, e), "parallax_error": e,
+                     "clean": True})
+    for i in range(n_foreground):
+        g = rng.uniform(16.0, 21.0)
+        e = 0.05 + 0.15 * (g - 16)
+        rows.append({"id": str(5295806720000 + i), "member": False, "G": g, "bp_rp": rng.uniform(0.3, 2.8),
+                     "r_ell": 2 * rng.random() ** 0.5, "pmra": rng.gauss(-2, 3) + rng.gauss(0, e),
+                     "pmdec": rng.gauss(-3, 3) + rng.gauss(0, e), "pmra_error": e, "pmdec_error": e,
+                     "parallax": abs(rng.gauss(0.4, 0.3)) + rng.gauss(0, e), "parallax_error": e, "clean": True})
+    return rows
+
+
+@unittest.skipIf(pm is None, "astropy absent")
+class SelectionTests(unittest.TestCase):
+    def test_cells_outline_with_holes_filled(self):
+        from scoop.members import cells_to_polygons
+        from scoop.fields import plane_polygon_contains
+        ring = {(i, j) for i in range(3) for j in range(3)} - {(1, 1)}  # a 3x3 block with a hole
+        polys = cells_to_polygons(ring | {(5, 0)}, 0.0, 0.1, 10.0, 0.5)
+        self.assertEqual(len(polys), 2)
+        self.assertEqual(sorted(map(len, polys)), [4, 4])  # collinear corners dropped
+        self.assertTrue(plane_polygon_contains(polys[0], 0.15, 10.75))  # the hole is filled
+        self.assertFalse(plane_polygon_contains(polys[0], 0.35, 10.75))
+
+    def test_recovers_members_with_and_without_a_prior(self):
+        from scoop.members import fit_pm, select_members
+        rows = synthetic_dwarf()
+        for prior in ((0.04, -0.19), None):
+            sel = select_members(rows, distance_kpc=80.0, pm_prior=prior, sigma_pm=0.02, r_max=2.0)
+            chosen = sel["members"]
+            true = sum(r["member"] for r in chosen)
+            self.assertGreater(true, 0.9 * 300)
+            self.assertLess(len(chosen) - true, 0.03 * len(chosen))
+            self.assertTrue(sel["cmd_polygons"])
+            fit = fit_pm(chosen)
+            self.assertLess(abs(fit["pmra"] - 0.04), 4 * fit["pmra_err"])
+            self.assertLess(abs(fit["pmdec"] + 0.19), 4 * fit["pmdec_err"])
+        self.assertEqual(sel["pm_start"]["from"], "densest proper motion of the central stars")
+
+
 def lvdb_tables():
     from astropy.table import Table
     comb = Table(rows=[{"key": "mini_1", "name": "Mini", "ra": 260.05, "dec": 57.92, "distance": 80.0,
@@ -199,10 +251,47 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["line_of_sight_velocity_kms"]["lvdb"]["vlos_systemic"], -290.0)
         self.assertIn("lvdb_adopted", result["compared_with"])
         self.assertIn("published_weighted_mean", result["compared_with"])
-        self.assertAlmostEqual(result["at_lvdb_distance"]["sigma_int_kms"], pm.K * 80.0 * fit["sigma_int"])
+        self.assertAlmostEqual(result["at_distance"]["sigma_int_kms"], pm.K * 80.0 * fit["sigma_int"])
         self.assertTrue(any("no pmra_pmdec_corr" in n for n in result["notes"]))
         empty = await self.run_tool("fit_members", {"filter": [{"column": "G", "op": ">", "value": 99}]})
         self.assertEqual(empty.status, "error")
+
+    async def test_auto_members_selects_fits_and_shows_a_layer(self):
+        self.field["tables"]["gaia"]["rows"] = synthetic_dwarf()
+        self.field["n_rhalf"] = 2.0
+        literature = [{"citation": "Z et al. 2030", "pmra": 0.05, "pmra_err": 0.01, "pmdec": -0.2, "pmdec_err": 0.01}]
+        command = await self.tools["auto_members"].ainvoke({"type": "tool_call", "name": "auto_members", "id": "c1",
+                                                            "args": {"literature": literature}})
+        action = command.update["artifacts"]["c1"]["actions"][0]
+        self.assertEqual((action["type"], action["id"]), ("layer.add", "agent:members:gaia"))
+        ids = next(c["value"] for c in action["filter"] if c["op"] == "in")
+        self.assertTrue(all(isinstance(i, str) for i in ids))  # Gaia IDs stay exact strings
+        self.assertTrue(any(c["op"] == "lasso" for c in action["filter"]))
+        from scoop.fields import matches, validate_filter
+        validate_filter(action["filter"], {"id", *self.field["tables"]["gaia"]["columns"]})
+        shown = [r for r in self.field["tables"]["gaia"]["rows"] if matches(r, action["filter"])]
+        self.assertEqual(len(shown), len(ids))  # the layer is exactly the members
+        result = json.loads(command.update["messages"][0].content.rsplit("\nArtifact:", 1)[0])
+        self.assertEqual(result["priors"]["distance"], {"value": 80.0, "from": "LVDB", "unit": "kpc"})
+        self.assertIn("LVDB", result["priors"]["pm"]["from"])
+        self.assertIn("Z et al. 2030", result["compared_with"])
+        self.assertNotIn(ids[0], command.update["messages"][0].content)  # no ID list for the model to copy
+        # A second run updates the layer instead of adding another.
+        again = await self.tools["auto_members"].ainvoke({"type": "tool_call", "name": "auto_members", "id": "c2",
+                                                          "args": {"use_literature_pm": False, "show": True}})
+        self.assertEqual(again.update["artifacts"]["c2"]["actions"][0]["type"], "layer.update")
+
+    async def test_map_tools_can_update_the_layer_auto_members_added(self):
+        from scoop.chat.visual import build_map_tools
+        self.field["tables"]["gaia"]["rows"] = synthetic_dwarf()
+        known: dict = {}
+        tools = {t.name: t for t in build_pm_tools(field=self.field, lvdb_cache=None, known_layers=known,
+                                                   loader=lambda cache: lvdb_tables())}
+        update_map = next(t for t in build_map_tools(field=self.field, known_layers=known) if t.name == "update_map")
+        await tools["auto_members"].ainvoke({"type": "tool_call", "name": "auto_members", "id": "c1", "args": {}})
+        result = await update_map.ainvoke({"type": "tool_call", "name": "update_map", "id": "c2", "args": {
+            "actions": [{"type": "layer.update", "layerId": "agent:members:gaia", "visible": True}]}})
+        self.assertIn("agent:members:gaia", result.update["artifacts"]["c2"]["actions"][0]["layerId"])
 
     def test_prompt_names_every_pm_tool(self):
         for name in self.tools:

@@ -85,6 +85,12 @@
   const isPanel = (c: Clause) => spec?.y && c.op === 'lasso' && c.column === spec.x && (c.value as Lasso).y === spec.y;
   const panelPolygons = $derived(members && spec?.y ? members.filter.filter(isPanel).flatMap((c) => (c.value as Lasso).polygons) : []);
 
+  // Other visible layers' regions on this plot (e.g. SCOOP's own member selection), in their colours.
+  const layerRegions = $derived(spec?.y ? workspace.map.layers
+    .filter((l) => l.visible && l.table === spec.table && l.id !== membersId(spec.table))
+    .flatMap((l) => l.filter.filter(isPanel).flatMap((c) => (c.value as Lasso).polygons.map((poly) => ({ poly, color: l.style.color, label: l.label }))))
+    : []);
+
   function setMembers(filter: Clause[]) {
     if (!spec) return;
     const label = `Members (${filter.length} panel${filter.length === 1 ? '' : 's'})`;
@@ -227,6 +233,7 @@
             points={layer.counts.flatMap((c, i) => [`${sx(hist.x.min + i * hist.width)},${sy(c)}`, `${sx(hist.x.min + (i + 1) * hist.width)},${sy(c)}`]).join(' ')} />
         {/each}
       {/if}
+      {#each layerRegions as region}<polygon points={region.poly.map(([x, y]) => `${sx(x)},${sy(y)}`).join(' ')} fill="none" stroke={region.color} stroke-width="1.2" stroke-dasharray="2 3"><title>{region.label}</title></polygon>{/each}
       {#each panelPolygons as poly}<polygon points={poly.map(([x, y]) => `${sx(x)},${sy(y)}`).join(' ')} fill="rgba(255,126,182,0.08)" stroke="#ff7eb6" stroke-width="1.5" stroke-dasharray="4 3" />{/each}
       </g>
       {#if path}<polyline points={path.map(([x, y]) => `${x},${y}`).join(' ')} fill="rgba(255,126,182,0.1)" stroke="#ff7eb6" stroke-width="1.5" />{/if}

@@ -278,7 +278,11 @@ already cover that); it acts on the answers.
       likelihood with each star's errors (4σ clipping), the line-of-sight velocity
       and dispersion from DESI, the [Fe/H] spread, and compares with the LVDB and
       the published values. On Draco it reproduces the LVDB's adopted proper
-      motion within 0.5σ. Still to do: a member/field mixture model (so the fit
+      motion within 0.5σ. `auto_members` lets the agent pick members itself
+      (radius, parallax, PM about a literature or data-driven prior, an empirical
+      CMD region, velocity), fit them and compare with the LVDB, the published
+      values and papers it read; it converges to the same sample on Draco with
+      or without the literature prior. Still to do: a member/field mixture model (so the fit
       doesn't depend on hard lasso edges), membership probabilities to save, and
       fields rebuilt with `pmra_pmdec_corr`. HST+Gaia measurements stay with
       dedicated pipelines, through an export.

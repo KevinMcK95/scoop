@@ -115,9 +115,29 @@ notebook; no bp3m code) and for the proper-motion tools (`scoop/pm.py`,
   `pmra_pmdec_corr` when the pipeline provides it (`smoke_tests/lvdb_field.py`
   queries it, `smoke_tests/sky_viewer.py` writes it); older fields fit with it as 0
   and say so.
+- `auto_members` (same module; selection in `scoop/members.py`): the agent selects
+  members itself (radius, parallax, proper motion about a literature or data-driven
+  prior, an empirical CMD region, velocity) and fits them. It publishes the result
+  as a `map_actions` artifact adding or updating the layer `agent:members:<table>`,
+  whose filter is the exact ID list (plus the readable radius and CMD clauses), so
+  Gaia IDs never pass through the model. `build_pm_tools` takes the browser's
+  `layers` for that, and `build_map_tools` takes an optional `known_layers` dict that
+  `app.py` shares with the PM tools, so `update_map` can restyle a layer
+  `auto_members` added earlier in the same turn. The Plot panel draws any visible layer's lasso regions on the
+  matching plot, and the browser tests long `in` lists through a cached Set.
 - `scoop/server/app.py`: each chat turn also gets the proper-motion tools
-  (`pm_expectations`, `pm_published`, `pm_new_epoch`, `pm_wait_time`, `fit_members`), which read
+  (`pm_expectations`, `pm_published`, `pm_new_epoch`, `pm_wait_time`, `fit_members`,
+  `auto_members`), which read
   the Local Volume Database tables cached under `<fields>/lvdb_cache`.
 - `scoop/chat/prompt.py`: a "Proper motions" section (what each tool is for; position
   errors are inputs, never chosen silently; ground-based imaging needs its own error
   or should be left out with `instruments`), plus how to use the Members layer.
+
+## Parallel tool results in the chat stream
+
+- `scoop/server/app.py` `_events`: when one step runs several tools that return
+  `Command`s in parallel (e.g. `auto_members` next to `ads_paper`), LangGraph's
+  `updates` stream gives the tools node a *list* of updates. `_events` skipped
+  anything that wasn't a dict, so those tools' results and artifacts (including map
+  layers) never reached the browser. It now flattens the list. Test:
+  `tests/test_server.py::ParallelCommandEventTests`.

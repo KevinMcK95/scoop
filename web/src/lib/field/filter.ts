@@ -11,6 +11,14 @@ export function separation(ra1: number, dec1: number, ra2: number, dec2: number)
   return (2 * Math.asin(Math.min(1, Math.sqrt(h)))) / RAD;
 }
 const equal = (a: unknown, b: unknown) => a === b;
+// Long 'in' lists (e.g. a member list of Gaia IDs) are tested through a cached Set.
+const sets = new WeakMap<unknown[], Set<unknown>>();
+function inList(value: unknown, list: unknown[]): boolean {
+  if (list.length < 32) return list.some((item) => equal(value, item));
+  let set = sets.get(list);
+  if (!set) sets.set(list, (set = new Set(list)));
+  return set.has(value);
+}
 
 /** Point-in-polygon on the sky, tested in a tangent plane about the point (as scoop/spatial.py). */
 export function polygonContains(points: [number, number][], ra: number, dec: number): boolean {
@@ -65,7 +73,7 @@ function clause(row: Row, c: Clause): boolean {
     case 'exists': return (value !== null && value !== undefined && value !== '') === ('value' in c ? Boolean(target) : true);
     case '==': return equal(value, target);
     case '!=': return !equal(value, target);
-    case 'in': return Array.isArray(target) && target.some((item) => equal(value, item));
+    case 'in': return Array.isArray(target) && inList(value, target);
   }
   // Ordered comparisons only between two numbers or two strings; missing never matches.
   const comparable = (isNumber(value) && isNumber(target)) || (typeof value === 'string' && typeof target === 'string');

@@ -82,7 +82,9 @@ def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> li
     returns its own ToolMessage leaves the message's ``name`` unset.
     """
     events: list[dict] = []
-    for node_update in update.values():
+    # A node that ran several tools returning Commands in parallel reports a list of updates.
+    node_updates = [u for value in update.values() for u in (value if isinstance(value, list) else [value])]
+    for node_update in node_updates:
         if not isinstance(node_update, dict):
             continue
         for message in node_update.get("messages", []):
@@ -345,7 +347,9 @@ def create_app(
             return _bad_request(f"Invalid chat request: {exc}")
 
         field = fields.get(field_key) if fields and field_key else None
-        map_tools = build_map_tools(field=field, layers=layers, resolver=resolver, simbad=simbad,
+        known_layers: dict = {}  # layers seen or added this turn, shared by the map and PM tools
+        map_tools = build_map_tools(field=field, layers=layers, known_layers=known_layers,
+                                    resolver=resolver, simbad=simbad,
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
                                     read_field=fields.get if fields else None,
@@ -362,7 +366,8 @@ def create_app(
         # The data agent runs on the same model, for data the field doesn't have yet.
         handoff = build_handoff_tool(model=model, field=field, store_rows=store_rows if fields else None)
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
-        pm_tools = build_pm_tools(field=field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None)
+        pm_tools = build_pm_tools(field=field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
+                                  layers=layers, known_layers=known_layers)
         tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, field) if python else []),
                  *(extra_tools() if extra_tools else [])]

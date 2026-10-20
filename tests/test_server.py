@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from typing import Annotated
 from datetime import datetime, timezone
 from pathlib import Path
 
 try:
     from langchain_core.messages import AIMessage
+    from langchain_core.tools import InjectedToolCallId
     from starlette.testclient import TestClient
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "starlette", "httpx"}:
@@ -267,6 +269,39 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(ads.requests[0].page_size, 5)
         bad = client.post("/api/literature/search", json={"query": "M31", "page_size": 500})
         self.assertEqual(bad.status_code, 400)
+
+
+
+@unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
+class ParallelCommandEventTests(unittest.IsolatedAsyncioTestCase):
+    async def test_artifacts_from_parallel_tool_commands_reach_the_browser(self):
+        # Several tools returning Commands in one step stream as a list of updates; the
+        # artifacts (e.g. a map layer next to an ADS lookup) must not be dropped.
+        from langchain_core.messages import HumanMessage
+        from langchain_core.tools import tool
+        from langgraph.graph import START, StateGraph
+        from langgraph.prebuilt import ToolNode
+
+        from scoop.chat import ChatState, publish_result
+        from scoop.server.app import _events
+
+        def make(name):
+            @tool(name)
+            async def publish(tool_call_id: Annotated[str, InjectedToolCallId]):
+                """Publish an artifact."""
+                return publish_result(tool_call_id, tool_call_id, {"kind": name}, f"{name} done")
+            return publish
+
+        graph = StateGraph(ChatState)
+        graph.add_node("tools", ToolNode([make("a"), make("b")]))
+        graph.add_edge(START, "tools")
+        calls = AIMessage(content="", tool_calls=[{"name": "a", "args": {}, "id": "1"}, {"name": "b", "args": {}, "id": "2"}])
+        events, seen = [], set()
+        async for update in graph.compile().astream({"messages": [HumanMessage("hi"), calls], "artifacts": {}},
+                                                    stream_mode="updates"):
+            events += _events(update, seen, {"1": "a", "2": "b"})
+        self.assertEqual(sorted(e["payload"]["kind"] for e in events if e["type"] == "artifact"), ["a", "b"])
+        self.assertEqual(sorted(e["name"] for e in events if e["type"] == "tool_result"), ["a", "b"])
 
 
 if __name__ == "__main__":

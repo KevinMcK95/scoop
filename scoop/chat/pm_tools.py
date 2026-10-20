@@ -17,10 +17,11 @@ from typing import Annotated, Literal
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..fields import matches, validate_filter
 from ..spatial import footprint_contains
+from .tools import publish_result
 from .visual import Clause
 
 ASSUMPTIONS = (
@@ -36,6 +37,19 @@ ByInstrument = Annotated[dict[str, Annotated[float, Field(gt=0, le=1000)]] | Non
                 '{"MegaPrime": 10, "WFPC2": 1}; others use existing_position_error_mas')]
 Instruments = Annotated[list[str] | None, Field(
     description='count only epochs whose "tel inst" contains one of these, e.g. ["HST", "JWST"]')]
+
+
+class LiteraturePM(BaseModel):
+    """A published bulk proper motion to compare with (from a paper you read)."""
+    model_config = ConfigDict(extra="forbid")
+    citation: Annotated[str, Field(max_length=200)]
+    pmra: float
+    pmra_err: Annotated[float, Field(gt=0)]
+    pmdec: float
+    pmdec_err: Annotated[float, Field(gt=0)]
+
+
+LiteratureList = Annotated[list[LiteraturePM] | None, Field(max_length=20)]
 
 
 def _err(text: str, tool_call_id: str) -> ToolMessage:
@@ -116,9 +130,17 @@ def _summary(epochs: list[dict], errors: list[tuple[float, float]]) -> list[dict
     return sorted(groups.values(), key=lambda g: g["first"])
 
 
-def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None) -> list:
+AGENT_MEMBERS = "agent:members:{table}"
+
+
+def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None, layers=(),
+                   known_layers: dict | None = None) -> list:
     """``loader(cache) -> (comb_all, pm_overview)`` reads the LVDB tables (scoop.pm.load_lvdb
-    by default; injectable for tests)."""
+    by default; injectable for tests). ``layers`` are the browser's current layers, so
+    auto_members updates its layer rather than adding it twice; ``known_layers`` is the
+    dict shared with the map tools (build_map_tools), which then see the layer too."""
+    current = known_layers if known_layers is not None else {}
+    current.update({layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer})
     from .. import pm
 
     state: dict = {}
@@ -292,41 +314,16 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None) 
                     "why": None if year else "not within 100 years with these errors"})
         return _ok(_clean(out), tool_call_id)
 
-    @tool
-    async def fit_members(
-        filter: Annotated[list[Clause], Field(min_length=1, description="the member selection, e.g. the "
-                                                                          "Members layer's filter as-is")],
-        tool_call_id: Annotated[str, InjectedToolCallId],
-        table: str = "gaia",
-        floor_mas_yr: Annotated[float, Field(ge=0, le=1)] = 0.0,
-        clip_sigma: Annotated[float | None, Field(ge=2, le=10)] = 4.0,
-        require_clean: bool = True,
-        max_pm_error_mas_yr: Annotated[float | None, Field(gt=0, le=100)] = None,
-    ):
-        """Quick-look fit to a member sample (usually the user's Members layer): the bulk
-        proper motion and internal PM dispersion by maximum likelihood with each star's
-        errors (and pmra-pmdec correlation where known), sigma-clipped at clip_sigma; the
-        line-of-sight velocity and dispersion where stars have rv / rv_err; the [Fe/H]
-        spread. For an LVDB object, also km/s at its distance and comparison with the
-        expected dispersion and the published proper motions. floor_mas_yr is a systematic
-        floor on the mean (an input: ask or state it). Not a mixture model: it trusts the
-        selection."""
+    async def fit_report(selected: list[dict], *, floor: float, clip_sigma: float | None, require_clean: bool,
+                         max_pm_error: float | None, literature: list | None = None,
+                         distance: tuple[float, str] | None = None,
+                         error_scale: float = 1.0) -> tuple[dict | None, str | None]:
+        """Fit a member sample and compare with the LVDB and any literature values given."""
         import numpy as np
 
         from .. import members, pm
 
-        if field is None:
-            return _err("No field is loaded.", tool_call_id)
-        if table not in field["tables"]:
-            return _err(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
-        t = field["tables"][table]
-        clauses = [c.model_dump(exclude_unset=True) for c in filter]
-        try:
-            validate_filter(clauses, {"id", *t["columns"]})
-        except ValueError as exc:
-            return _err(f"Invalid filter: {exc}", tool_call_id)
-        selected = [r for r in t["rows"] if matches(r, clauses)]
-        num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)  # noqa: E731
+        num = members._finite
         dropped = {"no proper motion or error": 0, "not clean": 0, "error above max_pm_error_mas_yr": 0}
         stars = []
         for r in selected:
@@ -335,16 +332,15 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None) 
                 dropped["no proper motion or error"] += 1
             elif require_clean and r.get("clean") is False:
                 dropped["not clean"] += 1
-            elif max_pm_error_mas_yr and max(r["pmra_error"], r["pmdec_error"]) > max_pm_error_mas_yr:
+            elif max_pm_error and max(r["pmra_error"], r["pmdec_error"]) > max_pm_error:
                 dropped["error above max_pm_error_mas_yr"] += 1
             else:
                 stars.append(r)
-        out: dict = {"table": table, "filter": clauses, "n_selected": len(selected), "dropped": dropped,
-                     "notes": list(members.NOTES)}
         if len(stars) < 3:
-            return _err(f"Only {len(stars)} of {len(selected)} selected stars have usable proper motions; "
-                        f"dropped: {dropped}.", tool_call_id)
-        fit = await asyncio.to_thread(members.fit_pm, stars, floor_mas_yr, clip_sigma)
+            return None, (f"Only {len(stars)} of {len(selected)} selected stars have usable proper motions; "
+                          f"dropped: {dropped}.")
+        out: dict = {"n_selected": len(selected), "dropped": dropped, "notes": list(members.NOTES)}
+        fit = await asyncio.to_thread(members.fit_pm, stars, floor, clip_sigma, error_scale)
         out["proper_motion"] = fit
         if fit["correlations_missing"]:
             out["notes"].append(f"{fit['correlations_missing']} stars have no pmra_pmdec_corr in this field; "
@@ -358,22 +354,35 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None) 
             q = [float(v) for v in np.percentile(feh, [16, 50, 84])]
             out["feh"] = {"n": len(feh), "median": q[1], "p16_p84": [q[0], q[2]],
                           "note": "spread of the values; no [Fe/H] errors are stored, so not an intrinsic spread"}
+        compare: dict = {}
         found, _ = await target_row()
-        if found:
-            row, pms = found
-            d = row["distance"]
-            if math.isfinite(d):
-                kms = lambda mu: None if mu is None or not math.isfinite(mu) else pm.K * d * mu  # noqa: E731
-                expected = pm.internal_pm_dispersion(row["vlos_sigma"], d) if math.isfinite(row["vlos_sigma"]) else None
-                out["at_lvdb_distance"] = {
-                    "distance_kpc": d, "sigma_int_kms": kms(fit["sigma_int"]),
-                    "sigma_int_68_kms": [kms(v) for v in fit["sigma_int_68"]],
-                    "expected_sigma_int_mas_yr": expected, "lvdb_vlos_sigma_kms": row["vlos_sigma"],
-                    "note": "the PM dispersion at the LVDB distance; distance errors are not propagated"}
-            compare = {"lvdb_adopted": {"pmra": row["pmra"], "pmdec": row["pmdec"],
-                                        "pmra_err": pm._sym(row["pmra_em"], row["pmra_ep"]),
-                                        "pmdec_err": pm._sym(row["pmdec_em"], row["pmdec_ep"]),
-                                        "ref": row["ref_proper_motion"]}}
+        row = found[0] if found else None
+        if distance is None and row and math.isfinite(row["distance"]):
+            distance = (row["distance"], "LVDB")
+        if distance:
+            d, source = distance
+            kms = lambda mu: None if mu is None or not math.isfinite(mu) else pm.K * d * mu  # noqa: E731
+            expected = (pm.internal_pm_dispersion(row["vlos_sigma"], d)
+                        if row and math.isfinite(row["vlos_sigma"]) else None)
+            out["at_distance"] = {
+                "distance_kpc": d, "distance_from": source, "sigma_int_kms": kms(fit["sigma_int"]),
+                "sigma_int_68_kms": [kms(v) for v in fit["sigma_int_68"]],
+                "expected_sigma_int_mas_yr": expected, "lvdb_vlos_sigma_kms": row["vlos_sigma"] if row else None,
+                "note": "the PM dispersion at that distance; distance errors are not propagated"}
+            low = fit["sigma_int_68"][0]
+            if expected and low and low > 3 * expected:
+                out["notes"].insert(0, (
+                    f"WARNING: the fitted PM dispersion ({fit['sigma_int']:.3f} mas/yr, "
+                    f"{kms(fit['sigma_int']):.0f} km/s) is far above the {expected:.4f} mas/yr expected from the "
+                    "velocity dispersion: read it as unmodelled error (underestimated Gaia errors, e.g. from "
+                    "crowding; systematics; binaries or contaminants), not internal motion. Try error_scale "
+                    "(e.g. 1.1-1.3) or brighter stars (max_pm_error_mas_yr) to see how the result depends on it."))
+        if row:
+            pms = found[1]
+            compare["lvdb_adopted"] = {"pmra": row["pmra"], "pmdec": row["pmdec"],
+                                       "pmra_err": pm._sym(row["pmra_em"], row["pmra_ep"]),
+                                       "pmdec_err": pm._sym(row["pmdec_em"], row["pmdec_ep"]),
+                                       "ref": row["ref_proper_motion"]}
             published = pm.published(pms, row["key"])
             if len(published) >= 2:
                 agree = pm.reconcile(published)
@@ -381,17 +390,176 @@ def build_pm_tools(*, field: dict | None, lvdb_cache: Path | None, loader=None) 
                     compare["published_weighted_mean"] = {
                         "pmra": agree["pmra"]["weighted_mean"], "pmra_err": agree["pmra"]["weighted_mean_err"],
                         "pmdec": agree["pmdec"]["weighted_mean"], "pmdec_err": agree["pmdec"]["weighted_mean_err"],
-                        "n": len(published)}
-            for ref in compare.values():
-                ref["pull_pmra"] = members.pull(fit["pmra"], fit["pmra_err"], ref["pmra"], ref["pmra_err"])
-                ref["pull_pmdec"] = members.pull(fit["pmdec"], fit["pmdec_err"], ref["pmdec"], ref["pmdec_err"])
-            out["compared_with"] = compare
+                        "n": len(published), "note": "independent errors assumed; the papers share Gaia data"}
             if "line_of_sight_velocity_kms" in out and math.isfinite(row["vlos_systemic"]):
                 out["line_of_sight_velocity_kms"]["lvdb"] = {"vlos_systemic": row["vlos_systemic"],
                                                              "vlos_sigma": row["vlos_sigma"], "ref": row["ref_vlos"]}
-        return _ok(_clean(out), tool_call_id)
+        for lit in literature or []:
+            compare[lit.citation] = lit.model_dump()
+        for ref in compare.values():
+            ref["pull_pmra"] = members.pull(fit["pmra"], fit["pmra_err"], ref["pmra"], ref["pmra_err"])
+            ref["pull_pmdec"] = members.pull(fit["pmdec"], fit["pmdec_err"], ref["pmdec"], ref["pmdec_err"])
+        if compare:
+            out["compared_with"] = compare
+        return out, None
 
-    return [pm_expectations, pm_published, pm_new_epoch, pm_wait_time, fit_members]
+    @tool
+    async def fit_members(
+        filter: Annotated[list[Clause], Field(min_length=1, description="the member selection, e.g. the "
+                                                                          "Members layer's filter as-is")],
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        table: str = "gaia",
+        floor_mas_yr: Annotated[float, Field(ge=0, le=1)] = 0.0,
+        clip_sigma: Annotated[float | None, Field(ge=2, le=10)] = 4.0,
+        require_clean: bool = True,
+        max_pm_error_mas_yr: Annotated[float | None, Field(gt=0, le=100)] = None,
+        literature: LiteratureList = None,
+        error_scale: Annotated[float, Field(ge=0.5, le=3)] = 1.0,
+    ):
+        """Quick-look fit to a member sample (usually the user's Members layer): the bulk
+        proper motion and internal PM dispersion by maximum likelihood with each star's
+        errors (and pmra-pmdec correlation where known), sigma-clipped at clip_sigma; the
+        line-of-sight velocity and dispersion where stars have rv / rv_err; the [Fe/H]
+        spread. For an LVDB object, also km/s at its distance and comparison with the
+        expected dispersion and the published proper motions. floor_mas_yr is a systematic
+        floor on the mean (an input: ask or state it). literature adds values from papers
+        you read (ads_paper) to the comparison. Not a mixture model: it trusts the
+        selection. error_scale multiplies every star's PM errors (a sensitivity test for
+        underestimated errors)."""
+        if field is None:
+            return _err("No field is loaded.", tool_call_id)
+        if table not in field["tables"]:
+            return _err(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
+        t = field["tables"][table]
+        clauses = [c.model_dump(exclude_unset=True) for c in filter]
+        try:
+            validate_filter(clauses, {"id", *t["columns"]})
+        except ValueError as exc:
+            return _err(f"Invalid filter: {exc}", tool_call_id)
+        selected = [r for r in t["rows"] if matches(r, clauses)]
+        out, problem = await fit_report(selected, floor=floor_mas_yr, clip_sigma=clip_sigma,
+                                        require_clean=require_clean, max_pm_error=max_pm_error_mas_yr,
+                                        literature=literature, error_scale=error_scale)
+        if problem:
+            return _err(problem, tool_call_id)
+        return _ok(_clean({"table": table, "filter": clauses, **out}), tool_call_id)
+
+    @tool
+    async def auto_members(
+        tool_call_id: Annotated[str, InjectedToolCallId],
+        table: str = "gaia",
+        r_max: Annotated[float | None, Field(gt=0, le=20, description="half-light radii (default: the whole field)")] = None,
+        pm_prior: Annotated[list[float] | None, Field(min_length=2, max_length=2, description=(
+            "starting [pmra, pmdec] (mas/yr); default the LVDB's adopted value, else the densest "
+            "point of the central stars"))] = None,
+        pm_prior_source: Annotated[str | None, Field(max_length=200)] = None,
+        use_literature_pm: bool = True,
+        distance_kpc: Annotated[float | None, Field(gt=0, le=10000)] = None,
+        distance_source: Annotated[str | None, Field(max_length=200)] = None,
+        vlos_kms: Annotated[float | None, Field(ge=-3000, le=3000)] = None,
+        vlos_sigma_kms: Annotated[float | None, Field(gt=0, le=500)] = None,
+        sigma_pm_mas_yr: Annotated[float | None, Field(ge=0, le=5, description=(
+            "expected internal PM dispersion; default from the LVDB velocity dispersion and distance"))] = None,
+        use_cmd: bool = True,
+        use_rv: bool = True,
+        require_clean: bool = True,
+        floor_mas_yr: Annotated[float, Field(ge=0, le=1)] = 0.0,
+        literature: LiteratureList = None,
+        error_scale: Annotated[float, Field(ge=0.5, le=3)] = 1.0,
+        max_pm_error_mas_yr: Annotated[float | None, Field(gt=0, le=100)] = None,
+        show: bool = True,
+    ):
+        """Select likely members of the target yourself and fit them: stars within r_max
+        half-light radii, parallax consistent with the distance, proper motion within 3
+        sigma of a prior (each star's errors plus the expected internal dispersion), in
+        the CMD region where those stars outnumber the foreground (found from the data,
+        no isochrone), and with a velocity, within 3 sigma of the systemic velocity; then
+        once more about the fitted proper motion. Priors default to the LVDB (distance,
+        proper motion, velocity and dispersion); pass values from papers (with their
+        source) to use those instead, or use_literature_pm=false to start from the data
+        alone. Then fits the members like fit_members and compares with the LVDB, the
+        published values and `literature`. With show, the members appear on the map as
+        the layer "Members (SCOOP)", with its CMD region drawn on the CMD; the user's own
+        Members layer is not changed."""
+        from .. import members, pm
+
+        if field is None:
+            return _err("No field is loaded.", tool_call_id)
+        if table not in field["tables"]:
+            return _err(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
+        rows = field["tables"][table]["rows"]
+        found, _ = await target_row()
+        row = found[0] if found else None
+        priors = {}
+
+        def prior(name, given, source, lvdb_value, unit):
+            if given is not None:
+                priors[name] = {"value": given, "from": source or "given by the agent (say where it came from)",
+                                "unit": unit}
+                return given
+            if row is not None and lvdb_value is not None and math.isfinite(lvdb_value):
+                priors[name] = {"value": lvdb_value, "from": "LVDB", "unit": unit}
+                return lvdb_value
+            return None
+
+        d = prior("distance", distance_kpc, distance_source, row and row["distance"], "kpc")
+        lit_pm = (row["pmra"], row["pmdec"]) if row and use_literature_pm and math.isfinite(row["pmra"]) else None
+        pm0 = tuple(pm_prior) if pm_prior else lit_pm
+        if pm_prior:
+            priors["pm"] = {"value": list(pm_prior), "from": pm_prior_source or "given by the agent", "unit": "mas/yr"}
+        elif lit_pm:
+            priors["pm"] = {"value": list(lit_pm), "from": f"LVDB ({row['ref_proper_motion']})", "unit": "mas/yr"}
+        v0 = prior("vlos", vlos_kms, None, row and row["vlos_systemic"], "km/s") if use_rv else None
+        sv = prior("vlos_sigma", vlos_sigma_kms, None, row and row["vlos_sigma"], "km/s") if use_rv else None
+        if sigma_pm_mas_yr is None:
+            sigma_pm_mas_yr = pm.internal_pm_dispersion(sv, d) if sv and d else 0.0
+        priors["sigma_pm"] = {"value": sigma_pm_mas_yr, "unit": "mas/yr",
+                              "from": "vlos_sigma / (4.74 d)" if sv and d else "given or 0"}
+        if not any(members._finite(r.get("r_ell")) for r in rows):
+            return _err("This table has no r_ell (elliptical radius) column, so stars can't be ordered by "
+                        "distance from the target; select members by hand on the plots.", tool_call_id)
+        try:
+            sel = await asyncio.to_thread(
+                members.select_members, rows, distance_kpc=d, pm_prior=pm0, sigma_pm=sigma_pm_mas_yr,
+                r_max=r_max or float(field.get("n_rhalf") or 3.0), vlos=v0, vlos_sigma=sv,
+                require_clean=require_clean, use_cmd=use_cmd)
+        except ValueError as exc:
+            return _err(f"Selection failed: {exc}.", tool_call_id)
+        chosen = sel.pop("members")
+        out, problem = await fit_report(chosen, floor=floor_mas_yr, clip_sigma=4.0, require_clean=require_clean,
+                                        max_pm_error=max_pm_error_mas_yr, literature=literature,
+                                        distance=(d, priors["distance"]["from"]) if d else None,
+                                        error_scale=error_scale)
+        if problem:
+            return _err(problem, tool_call_id)
+        polygons = sel.pop("cmd_polygons")
+        result = {"table": table, "priors": priors, "selection": {**sel, "n_members": len(chosen),
+                                                                  "cmd_polygons": len(polygons)},
+                  **out, "notes": [*members.SELECTION_NOTES, *out["notes"]]}
+        if not show:
+            return _ok(_clean(result), tool_call_id)
+        layer_id = AGENT_MEMBERS.format(table=table)
+        filt = [{"column": "r_ell", "op": "<=", "value": sel["r_max"]}]
+        if polygons:
+            filt.append({"column": "bp_rp", "op": "lasso", "value": {"y": "G", "polygons": polygons,
+                                                                    "missing": "reject"}})
+        filt.append({"column": "id", "op": "in", "value": [r["id"] for r in chosen]})  # exact: per-star cuts
+        label = f"Members (SCOOP, {len(chosen)})"
+        note = "SCOOP's own selection: " + "; ".join(f"{k} {v['value']} from {v['from']}" for k, v in priors.items()
+                                                      if k != "sigma_pm")
+        action = ({"type": "layer.update", "layerId": layer_id, "filter": filt, "label": label, "note": note[:300],
+                   "visible": True} if layer_id in current else
+                  {"type": "layer.add", "id": layer_id, "table": table, "filter": filt, "label": label,
+                   "group": "SCOOP layers", "note": note[:300],
+                   "style": {"color": "#ffd84d", "shape": "circle", "size": 14, "hollow": True}})
+        current[layer_id] = {"id": layer_id, "table": table, "origin": "agent"}
+        payload = {"kind": "map_actions", "status": "requested", "actions": [action]}
+        return publish_result(tool_call_id, tool_call_id, payload, json.dumps(
+            _clean({**result, "layer": {"id": layer_id, "label": label,
+                                        "note": "requested; shown once the browser acknowledges it"}}),
+            default=_json_default))
+
+    return [pm_expectations, pm_published, pm_new_epoch, pm_wait_time, fit_members, auto_members]
 
 
 __all__ = ["build_pm_tools", "field_epochs", "visits"]
