@@ -83,11 +83,14 @@ scoop/
   spatial.py         # separations, footprints, regions
   sources/           # one module per data source (rows, query, presentation)
   lookup.py, resolve.py, images.py, lvdb.py   # SIMBAD, Sesame, sky cutouts, LVDB
+  web.py             # web search (Exa) and page reading (Jina Reader, direct fetch)
   literature/        # ADS client and tools
   server/            # HTTP API, settings, background pipeline jobs
   chat/
     state.py         # messages and parallel-safe artifact reducer
     tools.py         # publish a result + matching ToolMessage as one Command
+    visual.py        # field, map, lookup and sky-image tools
+    web_tools.py     # web_search and web_fetch tools
     graph.py         # injected model/tools, routing, checkpointer
     __init__.py      # optional chat API
 ```
