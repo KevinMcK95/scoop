@@ -76,3 +76,48 @@ Changes made to connect the data agent (`scoop/chat/data_agent.py`,
   `scoop.scout.coverage.read_coverage` sees its drafts like the scout's own.
 - `run_python` gets the same field object as the map tools, so a table the data
   agent adds in a turn is available to it in that turn too.
+
+## Member selection (lasso) and proper-motion tools
+
+Changes for selecting members in plots (ideas from bp3m's member-selection
+notebook; no bp3m code) and for the proper-motion tools (`scoop/pm.py`,
+`scoop/chat/pm_tools.py`); all additive.
+
+- Filters gain a `lasso` op, in both `scoop/fields.py` and
+  `web/src/lib/field/filter.ts` (shared cases in `tests/fixtures/filter_cases.json`):
+  `{column: x, op: "lasso", value: {y, polygons: [[[x, y], ...], ...], missing}}`
+  keeps rows whose (x, y) is inside any polygon (planar, in the plot's own units).
+  `missing: "keep"` lets rows without that panel's data pass (lenient), `"reject"`
+  drops them (strict, the default).
+- `scoop/chat/visual.py`: `Clause.value` accepts the lasso value (`LassoValue`), so
+  the chat agent can write lasso filters too.
+- `web/src/lib/components/PlotPanel.svelte`: Box / Lasso tools that draw a selection
+  on the current plot. Each panel's selection is one lasso clause in a user layer
+  (`user:members:<table>`, "Members", group "Your selections"), so panels intersect;
+  a redraw replaces that panel's selection unless Extend is ticked; Strict sets
+  `missing: "reject"`. Clear panel / Clear all, a members count, and a Members CSV.
+  Helpers `simplifyPath` and `boxPolygon` are in `web/src/lib/field/plot.ts`.
+- Sky selection: `field_from_viewer_data` gives every point table `xi` / `eta`
+  (`add_tangent_plane`: gnomonic offsets from the target, arcmin, east / north), and
+  Gaia has a "Sky (ξ, η)" preset. Great circles are straight in that projection, so
+  a lasso on xi/eta is the same polygon on the sky, with no RA wrap. Plot specs (and
+  `PlotShow`) take `invert_x` and `equal` (same scale on both axes).
+- Plot zoom (`PlotPanel.svelte`, `zoomView` / `equalAxes` / `View` in `plot.ts`):
+  scroll to zoom about the cursor, Zoom (drag a box), Pan, ＋/－ and Reset view; a
+  zoomed view replaces the 1–99% axes and changing the plot resets it. Selections
+  are stored in data units, so zooming does not change them.
+- `web/src/lib/workspace/state.svelte.ts`: the field context sent to the chat
+  includes the filter of user layers, so the agent knows what "my members" are.
+- Gaia rows with a DESI spectrum get `rv`, `rv_err` and `feh`
+  (`scoop/sources/spectra.py`), and Gaia has an "RV / G" plot preset.
+- `fit_members` (in the proper-motion tools; maths in `scoop/members.py`): a
+  quick-look maximum-likelihood fit to the Members sample. The Gaia table now carries
+  `pmra_pmdec_corr` when the pipeline provides it (`smoke_tests/lvdb_field.py`
+  queries it, `smoke_tests/sky_viewer.py` writes it); older fields fit with it as 0
+  and say so.
+- `scoop/server/app.py`: each chat turn also gets the proper-motion tools
+  (`pm_expectations`, `pm_published`, `pm_new_epoch`, `pm_wait_time`, `fit_members`), which read
+  the Local Volume Database tables cached under `<fields>/lvdb_cache`.
+- `scoop/chat/prompt.py`: a "Proper motions" section (what each tool is for; position
+  errors are inputs, never chosen silently; ground-based imaging needs its own error
+  or should be left out with `instruments`), plus how to use the Members layer.

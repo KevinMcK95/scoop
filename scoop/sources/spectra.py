@@ -50,6 +50,12 @@ def attach(tables: dict[str, list[dict]], data: dict) -> None:
             key = row["id"] if name == "gaia" else row.get("gaia_id")
             if name == "gaia":
                 row["has_spectra"] = key in details
+                # DESI's line-of-sight velocity on the star itself, for velocity-vs-G and
+                # membership selection in the gaia table (one table for every panel).
+                desi = next((s for s in data["spectra"].get(key, {}).get("spectra", [])
+                             if s.get("kind") == "DESI" and s.get("rv") is not None), None)
+                if desi:
+                    row.update({"rv": desi["rv"], "rv_err": desi.get("rv_err"), "feh": desi.get("feh")})
             if key in details:
                 row["_details"] = {**row.get("_details", {}), "Spectra": details[key]}
 

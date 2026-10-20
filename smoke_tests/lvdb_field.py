@@ -260,7 +260,7 @@ def baselines(sel: Table, mocs) -> dict:
 # ── Gaia ─────────────────────────────────────────────────────────────────────
 
 GAIA_COLS = ("g.source_id, g.ra, g.dec, g.phot_g_mean_mag, g.bp_rp, g.parallax, "
-             "g.parallax_error, g.pmra, g.pmra_error, g.pmdec, g.pmdec_error, g.ruwe, "
+             "g.parallax_error, g.pmra, g.pmra_error, g.pmdec, g.pmdec_error, g.pmra_pmdec_corr, g.ruwe, "
              "g.astrometric_params_solved, g.ipd_gof_harmonic_amplitude, "
              "g.visibility_periods_used, g.astrometric_excess_noise_sig, "
              "g.in_qso_candidates, g.in_galaxy_candidates, "

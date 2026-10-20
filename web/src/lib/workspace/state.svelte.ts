@@ -224,10 +224,12 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       viewport: { ra: viewport.ra, dec: viewport.dec, fov: viewport.fov, status: viewport.status },
       survey,
       // Each layer's look in words, so "the orange triangles" can be matched to a layer.
-      layers: map.layers.map(({ id, table, group, label, visible, added, origin, count, note, style }) =>
+      layers: map.layers.map(({ id, table, group, label, visible, added, origin, count, note, style, filter }) =>
         ({ id, table, group, label, visible, added, origin, count,
            style: describeStyle(style, ['footprints', 'annotation'].includes(field?.tables[table]?.kind ?? '')),
-           ...(note ? { note } : {}) })),
+           ...(note ? { note } : {}),
+           // The user's own selections (boxes, lassos on plots): their filters, so the agent can combine them.
+           ...(origin === 'user' ? { filter } : {}) })),
       highlight: map.highlight && { ...map.highlight, ids: map.highlight.ids.slice(0, 50) },
       annotations: map.annotations.map(({ shape, text, ra, dec, radius, rowId, origin }) => ({ shape, text, ra, dec, radius, rowId, origin })),
       // Shapes the user drew: what they mean by "here" or "this region".

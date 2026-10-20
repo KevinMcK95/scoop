@@ -936,6 +936,14 @@ textarea {
   cursor: crosshair;
   user-select: none;
 }
+.plot.panning {
+  cursor: grab;
+}
+.plot-tools .zoom-tools {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+}
 .plot .grid {
   stroke: #1f2c3a;
 }

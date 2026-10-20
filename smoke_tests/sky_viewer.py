@@ -155,6 +155,8 @@ def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, regi
                           "parallax error (mas)": _f(r["parallax_error"], 3),
                           "pmRA error (mas/yr)": _f(r["pmra_error"], 3),
                           "pmDec error (mas/yr)": _f(r["pmdec_error"], 3),
+                          **({"pmRA-pmDec corr": _f(r["pmra_pmdec_corr"], 3)}
+                             if "pmra_pmdec_corr" in g.colnames else {}),
                           "r_ell (r_half)": _f(r["r_ell"], 3),
                           "RUWE": _f(r["ruwe"], 2), "clean": bool(r["clean"])}}
                 for r in g]

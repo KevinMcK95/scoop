@@ -7,9 +7,12 @@ COLUMNS = {
     "parallax": Column("mas"), "parallax_error": Column("mas"),
     "pmra": Column("mas/yr", "proper motion in RA (×cos dec)"), "pmra_error": Column("mas/yr"),
     "pmdec": Column("mas/yr"), "pmdec_error": Column("mas/yr"),
+    "pmra_pmdec_corr": Column(None, "correlation of the pmra and pmdec errors"),
     "ruwe": Column(None, "renormalised unit weight error; >1.4 suggests a poor astrometric fit"),
     "clean": Column(None, "passes RUWE, IPD, visibility-period and excess-noise cuts"),
     "r_ell": Column("r_half", "elliptical radius from the target center, in half-light radii"),
+    "rv": Column("km/s", "DESI DR1 line-of-sight velocity (Milky Way Survey), where matched"),
+    "rv_err": Column("km/s"), "feh": Column("dex", "DESI [Fe/H], where matched"),
     "gaia_crf": Column(None, "Gaia-CRF3 source (trusted QSO)"), "quaia": Column(None, "in Quaia (G < 20)"),
 }
 # The viewer data lists each Gaia source under the classes it belongs to.
@@ -27,6 +30,7 @@ def rows(data: dict) -> list[dict]:
                 "bp_rp": d["BP-RP"], "parallax": d["parallax (mas)"], "pmra": d["pmRA (mas/yr)"],
                 "pmdec": d["pmDec (mas/yr)"], "parallax_error": d.get("parallax error (mas)"),
                 "pmra_error": d.get("pmRA error (mas/yr)"), "pmdec_error": d.get("pmDec error (mas/yr)"),
+                **({"pmra_pmdec_corr": d["pmRA-pmDec corr"]} if "pmRA-pmDec corr" in d else {}),
                 "r_ell": d.get("r_ell (r_half)"), "ruwe": d["RUWE"], "clean": d["clean"],
                 **{f: False for f in FLAGS.values()}})
             row[flag] = True
@@ -57,4 +61,7 @@ register(Source(
     browse=("G", "bp_rp", "parallax", "pmra", "pmdec", "ruwe", "r_ell", "clean"),
     presets=({"label": "CMD", "x": "bp_rp", "y": "G", "invert_y": True, "title": "Gaia colour–magnitude"},
              {"label": "Proper motion", "x": "pmra", "y": "pmdec", "title": "Gaia proper motions"},
-             {"label": "Parallax / G", "x": "G", "y": "parallax", "title": "Parallax vs G"})))
+             {"label": "Parallax / G", "x": "G", "y": "parallax", "title": "Parallax vs G"},
+             {"label": "RV / G", "x": "G", "y": "rv", "title": "DESI line-of-sight velocity vs G"},
+             {"label": "Sky (ξ, η)", "x": "xi", "y": "eta", "invert_x": True, "equal": True,
+              "title": "Sky position about the target (tangent plane, east to the left)"})))

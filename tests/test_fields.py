@@ -129,6 +129,17 @@ class FieldTests(unittest.TestCase):
         self.assertEqual(summary["columns"]["tel"]["examples"], ["HST", "JWST"])
         self.assertNotIn("s_region", summary["columns"])
 
+    def test_point_tables_get_tangent_plane_offsets(self):
+        from scoop.spatial import project
+        gaia = self.field["tables"]["gaia"]
+        self.assertEqual(gaia["units"]["xi"], "arcmin")
+        target = self.field["target"]
+        for row in gaia["rows"]:
+            xi, eta = project(row["ra"], row["dec"], target["ra"], target["dec"])
+            self.assertAlmostEqual(row["xi"], xi * 60, places=4)
+            self.assertAlmostEqual(row["eta"], eta * 60, places=4)
+        self.assertNotIn("xi", self.field["tables"]["observations"]["columns"])  # footprints have no point position
+
     def test_frontend_fixture_is_current(self):
         # web/ tests render this file; regenerate it if the normalization changes.
         fixture = json.loads((Path(__file__).parent / "fixtures" / "mini_field.json").read_text())

@@ -1,10 +1,12 @@
 // Mirrors scoop/fields.py and scoop/chat/visual.py. See docs/map_interaction.md.
 
 export type Value = string | number | boolean | null;
-export type Op = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'in' | 'exists' | 'within' | 'inside';
+export type Op = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'in' | 'exists' | 'within' | 'inside' | 'lasso';
 // 'within' and 'inside' use column 'position': {ra, dec, radius} or {polygon: [[ra, dec], ...]}, degrees.
+// 'lasso' uses the plot's x column: {y: column, polygons: [[[x, y], ...], ...], missing?: 'keep' | 'reject'}.
 export interface Circle { ra: number; dec: number; radius: number }
-export interface Clause { column: string; op: Op; value?: Value | Value[] | Circle | { polygon: [number, number][] } }
+export interface Lasso { y: string; polygons: [number, number][][]; missing?: 'keep' | 'reject' }
+export interface Clause { column: string; op: Op; value?: Value | Value[] | Circle | { polygon: [number, number][] } | Lasso }
 
 export interface Row {
   id: string;
@@ -20,7 +22,7 @@ export interface Row {
 
 // One display-ready record in the Selected panel, e.g. one spectrum.
 export interface Detail { title: string; fields: Record<string, unknown>; links: [string, string][] }
-export interface Preset { label: string; x: string; y?: string; invert_y?: boolean; title?: string }
+export interface Preset { label: string; x: string; y?: string; invert_x?: boolean; invert_y?: boolean; equal?: boolean; title?: string }
 
 // One data source's table, with the hooks it fills in the interface.
 export interface Table {
@@ -103,7 +105,7 @@ export type MapAction =
   | { type: 'plot.hide' };
 
 // A scatter (x, y) or histogram (x only) of one table, drawn with the map's layers.
-export interface PlotSpec { table: string; x: string; y?: string; invert_y?: boolean; title?: string }
+export interface PlotSpec { table: string; x: string; y?: string; invert_x?: boolean; invert_y?: boolean; equal?: boolean; title?: string }
 
 export interface Camera { ra: number; dec: number; fov: number }
 

@@ -16,9 +16,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .spatial import polygon_contains, separation_deg
+from .spatial import polygon_contains, project, separation_deg
 
-OPS = ("==", "!=", "<", "<=", ">", ">=", "in", "exists", "within", "inside")
+OPS = ("==", "!=", "<", "<=", ">", ">=", "in", "exists", "within", "inside", "lasso")
+MAX_LASSO_VERTICES = 200
 SHAPES = ("circle", "square", "plus", "cross", "rhomb", "triangle")
 FIELD_KEY = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 def _within(value: Any) -> bool:
@@ -35,13 +36,44 @@ def _inside(value: Any) -> bool:
         and 0 <= p[0] < 360 and -90 <= p[1] <= 90 for p in points))
 
 
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _lasso(value: Any) -> bool:
+    if not isinstance(value, dict) or not {"y", "polygons"} <= set(value) <= {"y", "polygons", "missing"}:
+        return False
+    polygons = value["polygons"]
+    return (isinstance(value["y"], str) and value.get("missing", "reject") in ("keep", "reject")
+            and isinstance(polygons, list) and 1 <= len(polygons) <= 10
+            and sum(len(p) if isinstance(p, list) else 0 for p in polygons) <= MAX_LASSO_VERTICES
+            and all(isinstance(poly, list) and len(poly) >= 3 and all(
+                isinstance(p, list) and len(p) == 2 and all(_is_number(v) for v in p) for p in poly)
+                for poly in polygons))
+
+
+def plane_polygon_contains(points: list, x: float, y: float) -> bool:
+    """Point in a polygon drawn on a plot (ray casting in the plot's own units)."""
+    inside = False
+    for i in range(len(points)):
+        x1, y1 = points[i]
+        x2, y2 = points[(i + 1) % len(points)]
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
 def validate_filter(filters: Any, columns: set[str]) -> list[dict]:
     """Return the filter if every clause is well formed and names a known column.
 
     ``{"column": "position", "op": "within", "value": {"ra", "dec", "radius"}}``
     keeps rows within ``radius`` degrees of a point;
     ``{"column": "position", "op": "inside", "value": {"polygon": [[ra, dec], ...]}}``
-    keeps rows inside a polygon (3–64 vertices, e.g. a box drawn on the map).
+    keeps rows inside a polygon (3–64 vertices, e.g. a box drawn on the map);
+    ``{"column": x, "op": "lasso", "value": {"y": y, "polygons": [[[x, y], ...], ...],
+    "missing": "keep" | "reject"}}`` keeps rows whose (x, y) values lie inside any of the
+    polygons drawn on a plot of those columns; rows missing x or y pass with
+    ``missing: "keep"`` (a panel only constrains stars it can plot) and fail otherwise.
     """
     if not isinstance(filters, list):
         raise ValueError("filter must be a list of clauses")
@@ -56,6 +88,15 @@ def validate_filter(filters: Any, columns: set[str]) -> list[dict]:
             if clause.get("column") != "position" or not _inside(clause.get("value")):
                 raise ValueError("'inside' needs column 'position' and value {polygon: [[ra, dec], ...]} "
                                  "with 3-64 vertices in degrees")
+            continue
+        if clause.get("op") == "lasso":
+            if not _lasso(clause.get("value")):
+                raise ValueError("'lasso' needs value {y: column, polygons: [[[x, y], ...], ...], "
+                                 "missing?: 'keep' | 'reject'}: 1-10 polygons of 3+ numeric vertices, "
+                                 f"at most {MAX_LASSO_VERTICES} in all")
+            for name in (clause.get("column"), clause["value"]["y"]):
+                if name not in columns:
+                    raise ValueError(f"unknown column {name!r}; known: {sorted(columns)}")
             continue
         if clause.get("column") not in columns:
             raise ValueError(f"unknown column {clause.get('column')!r}; known: {sorted(columns)}")
@@ -79,6 +120,11 @@ def _clause(row: dict, clause: dict) -> bool:
         ra, dec = row.get("ra"), row.get("dec")
         return (isinstance(ra, (int, float)) and isinstance(dec, (int, float))
                 and polygon_contains(target["polygon"], ra, dec))
+    if op == "lasso":
+        x, y = value, row.get(target["y"])
+        if not (_is_number(x) and _is_number(y)):
+            return target.get("missing", "reject") == "keep"
+        return any(plane_polygon_contains(poly, x, y) for poly in target["polygons"])
     if op == "within":
         ra, dec = row.get("ra"), row.get("dec")
         return (isinstance(ra, (int, float)) and isinstance(dec, (int, float))
@@ -167,6 +213,8 @@ def field_from_viewer_data(data: dict) -> dict:
         tables[name], table_layer = discovered_table(name, stored["rows"], meta, i)
         layers.append(table_layer)
         link_to_gaia(tables, name)
+    for table in tables.values():
+        add_tangent_plane(table, data["target"])
     layers.sort(key=lambda layer: layer.pop("order"))
     for layer in layers:
         layer["count"] = layer_count(field, layer)
@@ -174,6 +222,30 @@ def field_from_viewer_data(data: dict) -> dict:
         layer["added"] = layer["visible"]
     field["layers"] = layers
     return field
+
+
+def add_tangent_plane(table: dict, target: dict) -> None:
+    """Give a point table ``xi`` / ``eta``: gnomonic coordinates about the target, in
+    arcmin (xi east, eta north). Great circles are straight lines in this projection,
+    so a lasso drawn on xi/eta selects the same stars as that polygon on the sky, with
+    no RA wrap at 0/360 and no cos(dec) stretch."""
+    if table.get("kind") in ("footprints", "annotation"):
+        return
+    added = False
+    for row in table["rows"]:
+        ra, dec = row.get("ra"), row.get("dec")
+        if not (_is_number(ra) and _is_number(dec)):
+            continue
+        xy = project(ra, dec, target["ra"], target["dec"])
+        if xy is not None:
+            row["xi"], row["eta"] = round(xy[0] * 60, 5), round(xy[1] * 60, 5)
+            added = True
+    if not added:
+        return
+    table["columns"] += [c for c in ("xi", "eta") if c not in table["columns"]]
+    table.setdefault("units", {}).update(xi="arcmin", eta="arcmin")
+    table.setdefault("descriptions", {}).update(
+        xi="tangent-plane offset east of the target", eta="tangent-plane offset north of the target")
 
 
 # Colours for tables the data agent adds (dark-surface palette steps not used by sources).

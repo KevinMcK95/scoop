@@ -41,7 +41,7 @@ class Source:
     order: int = 50
     columns: Mapping[str, Column] = field(default_factory=dict)
     layers: Callable[[list[Row], dict], list[dict]] = lambda rows, data: []
-    presets: tuple[dict, ...] = ()  # plot presets: {label, x, y?, invert_y?, title?}
+    presets: tuple[dict, ...] = ()  # plot presets: {label, x, y?, invert_x?, invert_y?, equal?, title?}
     browse: tuple[str, ...] = ()  # columns for the table browser; empty = not listed there
     links: Callable[[Row], list[Link]] | None = None
     # Fetch rows for a field's region on demand ({"ra", "dec", "radius_deg"}), for data

@@ -48,15 +48,26 @@ class PolygonValue(Strict):
         min_length=3, max_length=64, description="vertices [[ra, dec], ...] in degrees")
 
 
+class LassoValue(Strict):
+    """Value of a `lasso` clause: polygons drawn on a plot of `column` (x) against `y`."""
+    y: str = Field(description="the plot's y column")
+    polygons: list[list[Annotated[list[float], Field(min_length=2, max_length=2)]]] = Field(
+        min_length=1, max_length=10,
+        description="one or more polygons [[[x, y], ...], ...] in the plotted columns' units; inside any counts")
+    missing: Literal["keep", "reject"] = Field(
+        default="reject", description='"keep": rows without x or y pass (as in the user\'s Members selection)')
+
+
 class Clause(Strict):
     """One condition; all clauses of a filter must hold."""
-    column: str = Field(description='a column name, or "position" for within/inside')
+    column: str = Field(description='a column name ("lasso": the x column), or "position" for within/inside')
     op: Literal[OPS]
     # Explicit models (not a bare dict) so the schema shows the model the keys it needs.
     value: (str | float | int | bool | list[str | float | int | bool] | CircleValue | PolygonValue
-            | None) = Field(default=None, description=(
+            | LassoValue | None) = Field(default=None, description=(
                 'compared value; a list for "in"; {"ra", "dec", "radius"} for "within"; '
-                '{"polygon": [[ra, dec], ...]} for "inside"; omit for "exists"'))
+                '{"polygon": [[ra, dec], ...]} for "inside"; {"y", "polygons", "missing"} for '
+                '"lasso"; omit for "exists"'))
 
 
 # Names models reach for that Aladin draws under another name.
@@ -152,7 +163,9 @@ class PlotShow(Strict):
     table: str
     x: str
     y: str | None = None
+    invert_x: bool = False
     invert_y: bool = False
+    equal: bool = False  # same scale on both axes (sky positions)
     title: Text | None = None
 
 

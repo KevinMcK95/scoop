@@ -1,391 +1,581 @@
 {
- "rows": [
-  {
-   "id": "a",
-   "G": 18.2,
-   "tel": "HST",
-   "clean": true,
-   "z": null,
-   "date": "2015-03-01",
-   "ra": 10.0,
-   "dec": 0.0
-  },
-  {
-   "id": "b",
-   "G": 20.5,
-   "tel": "JWST",
-   "clean": false,
-   "z": 1.2,
-   "date": "2023-07-15",
-   "ra": 10.1,
-   "dec": 0.0
-  },
-  {
-   "id": "c",
-   "G": null,
-   "tel": "HST",
-   "clean": true,
-   "z": "",
-   "date": "2024-01-02",
-   "ra": null,
-   "dec": null
-  },
-  {
-   "id": "d",
-   "ra": 359.99,
-   "dec": 0.0,
-   "G": 19.0,
-   "tel": "JWST",
-   "clean": true,
-   "z": null,
-   "date": "2025-01-01"
-  }
- ],
- "cases": [
-  {
-   "filter": [],
-   "ids": [
-    "a",
-    "b",
-    "c",
-    "d"
-   ]
-  },
-  {
-   "filter": [
+  "rows": [
     {
-     "column": "tel",
-     "op": "==",
-     "value": "HST"
-    }
-   ],
-   "ids": [
-    "a",
-    "c"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "tel",
-     "op": "!=",
-     "value": "HST"
-    }
-   ],
-   "ids": [
-    "b",
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "G",
-     "op": "<",
-     "value": 20
-    }
-   ],
-   "ids": [
-    "a",
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "G",
-     "op": ">=",
-     "value": 18.2
-    }
-   ],
-   "ids": [
-    "a",
-    "b",
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "date",
-     "op": ">",
-     "value": "2020"
-    }
-   ],
-   "ids": [
-    "b",
-    "c",
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "G",
-     "op": "<",
-     "value": "20"
-    }
-   ],
-   "ids": []
-  },
-  {
-   "filter": [
-    {
-     "column": "clean",
-     "op": "==",
-     "value": true
+      "id": "a",
+      "G": 18.2,
+      "tel": "HST",
+      "clean": true,
+      "z": null,
+      "date": "2015-03-01",
+      "ra": 10.0,
+      "dec": 0.0
     },
     {
-     "column": "tel",
-     "op": "==",
-     "value": "HST"
-    }
-   ],
-   "ids": [
-    "a",
-    "c"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "id",
-     "op": "in",
-     "value": [
-      "a",
-      "c",
-      "x"
-     ]
-    }
-   ],
-   "ids": [
-    "a",
-    "c"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "z",
-     "op": "exists"
-    }
-   ],
-   "ids": [
-    "b"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "z",
-     "op": "exists",
-     "value": false
-    }
-   ],
-   "ids": [
-    "a",
-    "c",
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "clean",
-     "op": "==",
-     "value": 1
-    }
-   ],
-   "ids": []
-  },
-  {
-   "filter": [
-    {
-     "column": "position",
-     "op": "within",
-     "value": {
-      "ra": 10.0,
-      "dec": 0.0,
-      "radius": 0.05
-     }
-    }
-   ],
-   "ids": [
-    "a"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "position",
-     "op": "within",
-     "value": {
-      "ra": 10.05,
-      "dec": 0.0,
-      "radius": 0.0501
-     }
-    }
-   ],
-   "ids": [
-    "a",
-    "b"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "position",
-     "op": "within",
-     "value": {
-      "ra": 0.005,
-      "dec": 0.0,
-      "radius": 0.02
-     }
-    }
-   ],
-   "ids": [
-    "d"
-   ]
-  },
-  {
-   "filter": [
-    {
-     "column": "position",
-     "op": "within",
-     "value": {
-      "ra": 10.0,
-      "dec": 0.0,
-      "radius": 1
-     }
+      "id": "b",
+      "G": 20.5,
+      "tel": "JWST",
+      "clean": false,
+      "z": 1.2,
+      "date": "2023-07-15",
+      "ra": 10.1,
+      "dec": 0.0
     },
     {
-     "column": "tel",
-     "op": "==",
-     "value": "JWST"
-    }
-   ],
-   "ids": [
-    "b"
-   ]
-  },
-  {
-   "filter": [
+      "id": "c",
+      "G": null,
+      "tel": "HST",
+      "clean": true,
+      "z": "",
+      "date": "2024-01-02",
+      "ra": null,
+      "dec": null
+    },
     {
-     "column": "position",
-     "op": "inside",
-     "value": {
-      "polygon": [
-       [
-        9.95,
-        -0.05
-       ],
-       [
-        10.05,
-        -0.05
-       ],
-       [
-        10.05,
-        0.05
-       ],
-       [
-        9.95,
-        0.05
-       ]
-      ]
-     }
+      "id": "d",
+      "ra": 359.99,
+      "dec": 0.0,
+      "G": 19.0,
+      "tel": "JWST",
+      "clean": true,
+      "z": null,
+      "date": "2025-01-01"
     }
-   ],
-   "ids": [
-    "a"
-   ]
-  },
-  {
-   "filter": [
+  ],
+  "cases": [
     {
-     "column": "position",
-     "op": "inside",
-     "value": {
-      "polygon": [
-       [
-        9.95,
-        -0.05
-       ],
-       [
-        10.15,
-        -0.05
-       ],
-       [
-        10.15,
-        0.05
-       ],
-       [
-        9.95,
-        0.05
-       ]
+      "filter": [],
+      "ids": [
+        "a",
+        "b",
+        "c",
+        "d"
       ]
-     }
-    }
-   ],
-   "ids": [
-    "a",
-    "b"
-   ]
-  },
-  {
-   "filter": [
+    },
     {
-     "column": "position",
-     "op": "inside",
-     "value": {
-      "polygon": [
-       [
-        359.95,
-        -0.05
-       ],
-       [
-        0.05,
-        -0.05
-       ],
-       [
-        0.05,
-        0.05
-       ],
-       [
-        359.95,
-        0.05
-       ]
+      "filter": [
+        {
+          "column": "tel",
+          "op": "==",
+          "value": "HST"
+        }
+      ],
+      "ids": [
+        "a",
+        "c"
       ]
-     }
-    }
-   ],
-   "ids": [
-    "d"
-   ]
-  },
-  {
-   "filter": [
+    },
     {
-     "column": "position",
-     "op": "inside",
-     "value": {
-      "polygon": [
-       [
-        9.95,
-        0.01
-       ],
-       [
-        10.15,
-        0.01
-       ],
-       [
-        10.15,
-        0.05
-       ]
+      "filter": [
+        {
+          "column": "tel",
+          "op": "!=",
+          "value": "HST"
+        }
+      ],
+      "ids": [
+        "b",
+        "d"
       ]
-     }
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "<",
+          "value": 20
+        }
+      ],
+      "ids": [
+        "a",
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": ">=",
+          "value": 18.2
+        }
+      ],
+      "ids": [
+        "a",
+        "b",
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "date",
+          "op": ">",
+          "value": "2020"
+        }
+      ],
+      "ids": [
+        "b",
+        "c",
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "<",
+          "value": "20"
+        }
+      ],
+      "ids": []
+    },
+    {
+      "filter": [
+        {
+          "column": "clean",
+          "op": "==",
+          "value": true
+        },
+        {
+          "column": "tel",
+          "op": "==",
+          "value": "HST"
+        }
+      ],
+      "ids": [
+        "a",
+        "c"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "id",
+          "op": "in",
+          "value": [
+            "a",
+            "c",
+            "x"
+          ]
+        }
+      ],
+      "ids": [
+        "a",
+        "c"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "z",
+          "op": "exists"
+        }
+      ],
+      "ids": [
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "z",
+          "op": "exists",
+          "value": false
+        }
+      ],
+      "ids": [
+        "a",
+        "c",
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "clean",
+          "op": "==",
+          "value": 1
+        }
+      ],
+      "ids": []
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "within",
+          "value": {
+            "ra": 10.0,
+            "dec": 0.0,
+            "radius": 0.05
+          }
+        }
+      ],
+      "ids": [
+        "a"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "within",
+          "value": {
+            "ra": 10.05,
+            "dec": 0.0,
+            "radius": 0.0501
+          }
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "within",
+          "value": {
+            "ra": 0.005,
+            "dec": 0.0,
+            "radius": 0.02
+          }
+        }
+      ],
+      "ids": [
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "within",
+          "value": {
+            "ra": 10.0,
+            "dec": 0.0,
+            "radius": 1
+          }
+        },
+        {
+          "column": "tel",
+          "op": "==",
+          "value": "JWST"
+        }
+      ],
+      "ids": [
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "inside",
+          "value": {
+            "polygon": [
+              [
+                9.95,
+                -0.05
+              ],
+              [
+                10.05,
+                -0.05
+              ],
+              [
+                10.05,
+                0.05
+              ],
+              [
+                9.95,
+                0.05
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "a"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "inside",
+          "value": {
+            "polygon": [
+              [
+                9.95,
+                -0.05
+              ],
+              [
+                10.15,
+                -0.05
+              ],
+              [
+                10.15,
+                0.05
+              ],
+              [
+                9.95,
+                0.05
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "inside",
+          "value": {
+            "polygon": [
+              [
+                359.95,
+                -0.05
+              ],
+              [
+                0.05,
+                -0.05
+              ],
+              [
+                0.05,
+                0.05
+              ],
+              [
+                359.95,
+                0.05
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "d"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "position",
+          "op": "inside",
+          "value": {
+            "polygon": [
+              [
+                9.95,
+                0.01
+              ],
+              [
+                10.15,
+                0.01
+              ],
+              [
+                10.15,
+                0.05
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": []
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "lasso",
+          "value": {
+            "y": "ra",
+            "polygons": [
+              [
+                [
+                  18,
+                  9.9
+                ],
+                [
+                  21,
+                  9.9
+                ],
+                [
+                  21,
+                  10.2
+                ],
+                [
+                  18,
+                  10.2
+                ]
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "lasso",
+          "value": {
+            "y": "ra",
+            "polygons": [
+              [
+                [
+                  20,
+                  10.05
+                ],
+                [
+                  21,
+                  10.05
+                ],
+                [
+                  20.5,
+                  10.3
+                ]
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "lasso",
+          "value": {
+            "y": "ra",
+            "polygons": [
+              [
+                [
+                  18,
+                  9.95
+                ],
+                [
+                  18.5,
+                  9.95
+                ],
+                [
+                  18.5,
+                  10.05
+                ],
+                [
+                  18,
+                  10.05
+                ]
+              ],
+              [
+                [
+                  20,
+                  10.05
+                ],
+                [
+                  21,
+                  10.05
+                ],
+                [
+                  20.5,
+                  10.3
+                ]
+              ]
+            ]
+          }
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "lasso",
+          "value": {
+            "y": "ra",
+            "polygons": [
+              [
+                [
+                  18,
+                  9.9
+                ],
+                [
+                  21,
+                  9.9
+                ],
+                [
+                  21,
+                  10.2
+                ],
+                [
+                  18,
+                  10.2
+                ]
+              ]
+            ],
+            "missing": "keep"
+          }
+        }
+      ],
+      "ids": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "filter": [
+        {
+          "column": "G",
+          "op": "lasso",
+          "value": {
+            "y": "ra",
+            "polygons": [
+              [
+                [
+                  18,
+                  9.9
+                ],
+                [
+                  21,
+                  9.9
+                ],
+                [
+                  21,
+                  10.2
+                ],
+                [
+                  18,
+                  10.2
+                ]
+              ]
+            ]
+          }
+        },
+        {
+          "column": "tel",
+          "op": "==",
+          "value": "HST"
+        }
+      ],
+      "ids": [
+        "a"
+      ]
     }
-   ],
-   "ids": []
-  }
- ]
+  ]
 }

@@ -34,7 +34,9 @@ class SourceRegistryTests(unittest.TestCase):
             SOURCES.pop("variable_stars")
         table = after["tables"].pop("variable_stars")
         self.assertEqual(table["descriptions"], {"n_planets": "confirmed planets", "ra": "ICRS right ascension",
-                                                 "dec": "ICRS declination"})
+                                                 "dec": "ICRS declination",  # and every point table's sky offsets
+                                                 "xi": "tangent-plane offset east of the target",
+                                                 "eta": "tangent-plane offset north of the target"})
         self.assertEqual(table["presets"], [{"label": "Planets", "x": "n_planets"}])
         new_layer = next(layer for layer in after["layers"] if layer["id"] == "var:stars")
         self.assertEqual(new_layer["count"], 1)

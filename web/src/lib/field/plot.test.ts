@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { axis, boxFilter, histogram, niceTicks, presets, scatter } from './plot';
+import { axis, boxFilter, equalAxes, histogram, niceTicks, presets, scatter, zoomView } from './plot';
 import { applyAction, checkAction, layerRows } from './actions';
 import { miniFieldAllOn as miniField } from './fixtures';
 import type { MapState } from './types';
@@ -54,10 +54,29 @@ describe('plot data', () => {
     const field = miniField();
     const offered = presets(field);
     expect(offered.map((p) => `${p.table}:${p.label}`)).toEqual([
-      'gaia:CMD', 'gaia:Proper motion', 'gaia:Parallax / G', 'spectra:RV histogram', 'spectra:RV vs [Fe/H]']);
+      'gaia:CMD', 'gaia:Proper motion', 'gaia:Parallax / G', 'gaia:RV / G', 'gaia:Sky (ξ, η)',
+      'spectra:RV histogram', 'spectra:RV vs [Fe/H]']);
     field.tables.gaia.columns = field.tables.gaia.columns.filter((c) => c !== 'pmdec');
     expect(presets(field).some((p) => p.label === 'Proper motion')).toBe(false);
     expect(presets(null)).toEqual([]);
+  });
+
+  it('zooms: a view replaces the automatic range, and zoomView scales about a point', () => {
+    const spec = { table: 'gaia', x: 'G', y: 'bp_rp' };
+    const all = scatter(miniField(), state(), spec);
+    const zoomed = scatter(miniField(), state(), spec, { view: { x: [all.x.min, (all.x.min + all.x.max) / 2], y: [all.y.min, all.y.max] } });
+    expect(zoomed.zoomed).toBe(true);
+    expect(zoomed.x.max).toBeCloseTo((all.x.min + all.x.max) / 2);
+    expect(new Set(zoomed.points.map((p) => p.id)).size + zoomed.outside).toBe(all.total);
+    expect(zoomView({ x: [0, 10], y: [0, 4] }, 0.5, 2, 1)).toEqual({ x: [1, 6], y: [0.5, 2.5] });
+    expect(zoomView({ x: [0, 10] }, 2, 5)).toEqual({ x: [-5, 15] });
+  });
+
+  it('equal axes give one data unit the same pixels on both axes', () => {
+    const [x, y] = equalAxes({ min: 0, max: 10, ticks: [] }, { min: 0, max: 1, ticks: [] }, 500, 250);
+    expect((x.max - x.min) / 500).toBeCloseTo((y.max - y.min) / 250);
+    expect([x.min, x.max]).toEqual([0, 10]);
+    expect((y.min + y.max) / 2).toBeCloseTo(0.5);
   });
 });
 

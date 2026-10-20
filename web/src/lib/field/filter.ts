@@ -32,6 +32,17 @@ export function polygonContains(points: [number, number][], ra: number, dec: num
   return inside;
 }
 
+/** Point in a polygon drawn on a plot (ray casting in the plot's own units), as scoop/fields.py. */
+export function planePolygonContains(points: [number, number][], x: number, y: number): boolean {
+  let inside = false;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    if ((y1 > y) !== (y2 > y) && x < x1 + (y - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
+  }
+  return inside;
+}
+
 function clause(row: Row, c: Clause): boolean {
   const value = row[c.column];
   const target = c.value;
@@ -39,6 +50,13 @@ function clause(row: Row, c: Clause): boolean {
     case 'inside': {
       const poly = (target as unknown as { polygon: [number, number][] }).polygon;
       return isNumber(row.ra) && isNumber(row.dec) && polygonContains(poly, row.ra, row.dec);
+    }
+    case 'lasso': {
+      // Rows missing x or y pass only with missing: 'keep' (a panel constrains only what it can plot).
+      const lasso = target as unknown as { y: string; polygons: [number, number][][]; missing?: string };
+      const y = row[lasso.y];
+      if (!(isNumber(value) && Number.isFinite(value) && isNumber(y) && Number.isFinite(y))) return lasso.missing === 'keep';
+      return lasso.polygons.some((poly) => planePolygonContains(poly, value, y));
     }
     case 'within': {
       const w = target as unknown as { ra: number; dec: number; radius: number };

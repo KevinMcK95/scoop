@@ -230,7 +230,92 @@ precision should be in line with what those papers achieved, and its
 literature summary should find them. Picking the specific papers is part of
 building the benchmark, checked against ADS, not taken from memory.
 
-### 6. Evaluation
+**What the agent does, in priority order.** It is more than an expert answering
+"which catalog comes from which data" (the LVDB's `pm_overview` and the skill
+already cover that); it acts on the answers.
+
+*First:*
+
+- [ ] **(1) A feasibility planner that keeps looking.** Combine the overlaps and
+      baselines (across HST, JWST, CFHT and any footprint table the data agent
+      adds), depths and exposure times, the Gaia reference epoch and
+      `pm_expectations.py` into a verdict per science goal (bulk motion better
+      than published, internal dispersion, rotation). If the verdict is
+      "marginal", don't stop: ask the data agent for more epochs (other archives,
+      planned JWST observations, approved programs) and re-assess. End with the
+      smallest addition that would change the verdict.
+- [ ] **(2) Reconcile the published proper motions.** Collect every value (the
+      LVDB's `pm_overview` plus newer ADS papers), put them in one frame (the
+      same solar-reflex correction, a stated treatment of secular aberration),
+      test whether they agree (χ²), and record which data each used (program
+      IDs, epochs). Output a "state of the measurement" table and plot, and flag
+      long-baseline overlaps no published work seems to use.
+- [ ] **(3) Forward planning: what would new data get us?** Two questions:
+      - *"What would a new JWST/HST observation give us here?"* For a proposed
+        instrument, filter, exposure time (or depth) and date: the baseline to
+        every existing overlapping image and to Gaia, the per-star and bulk
+        precision it reaches, which science goals become feasible, and how that
+        compares with the best published value.
+      - *"How long until HST+HST (or HST+JWST) could constrain a given signal?"*
+        Invert the precision estimate: the baseline needed is
+        Δt = √(σ₁² + σ₂²) / σ_μ,needed per star; for a bulk motion or a
+        dispersion, σ_μ,needed per star follows from the target precision and
+        the number of members (the formulas in the proper-motion skill). Report
+        the year it is reached from the existing epoch, or say it never is
+        (when the systematic floor is above the target).
+      Deterministic functions for both go into `pm_expectations.py`; the agent
+      chooses the inputs and explains the result. Telescope scheduling and
+      visibility windows are not modelled; say so.
+
+*Next:*
+
+- [x] **(5) Member samples:** lasso/box selection panels in the Plot tab (CMD,
+      proper motion, parallax vs G, RV vs G, sky ξ/η), after the BP3M
+      member-selection notebook: panels intersect, Extend / Strict, zoom, a
+      Members layer the agent can read, and a Members CSV. N feeds the planners.
+- [~] **(4) Quick-look measurements:** `fit_members` (`scoop/members.py`) fits
+      the Members sample's bulk proper motion and internal dispersion by maximum
+      likelihood with each star's errors (4σ clipping), the line-of-sight velocity
+      and dispersion from DESI, the [Fe/H] spread, and compares with the LVDB and
+      the published values. On Draco it reproduces the LVDB's adopted proper
+      motion within 0.5σ. Still to do: a member/field mixture model (so the fit
+      doesn't depend on hard lasso edges), membership probabilities to save, and
+      fields rebuilt with `pmra_pmdec_corr`. HST+Gaia measurements stay with
+      dedicated pipelines, through an export.
+- [ ] **(6) A critic for claimed proper motions:** check a number from the user
+      or a paper for physical plausibility (implied speed against escape speed,
+      solar reflex), systematic floors (e.g. the 0.026 mas/yr floor in the Gaia
+      skill, after Vasiliev & Baumgardt 2021) and whether secular aberration is handled.
+
+*Later:*
+
+- [ ] **Release watching:** when Gaia DR4 arrives (2 December 2026), or a new
+      JWST program overlaps a field of interest, re-run (1)–(3) and report what
+      changed.
+- [ ] **Spotting unusual objects:** high-proper-motion foreground stars in a
+      dwarf's field, "QSOs" that move, members with discrepant velocities; often
+      the interesting objects, or the systematics.
+
+### 6. Making the data side more agentic
+
+- [ ] **Checking in the loop:** after the data agent adds a table, run
+      [Duo's verifier](duo_xu.md) on it (are the rows real, in the field,
+      complete?) and let the data agent fix what fails (re-query, change cuts)
+      before it reports. Evaluation becomes self-correction, not only a score.
+- [ ] **A skill-review agent:** draft skills now come from two places (the
+      monthly dataset scout and the data agent's `save_skill_draft`). A reviewer
+      agent re-runs each draft's probe, compares row counts, checks citations on
+      Crossref and table/column names against the service, and recommends accept
+      or reject. A person still sets `status: reviewed`.
+- [ ] **Learning from failures:** the server logs every failed tool call with its
+      reason (`out/turns.jsonl`). A periodic agent reads them and proposes prompt
+      or skill fixes as pull requests, like the scout. (The first data-agent test
+      alone showed two: a `tel` filter on a CADC table, and a stale field.)
+- [ ] **Budget negotiation:** before anything heavy, the data agent quotes counts,
+      sizes and expected time ("419 MegaCam images, 33 s to count; level 2 only
+      gives 209") and asks, using Radha's cost checking for model costs.
+
+### 7. Evaluation
 
 - [ ] **Deterministic tests** with a scripted model (like `ScriptedModel` in
       `tests/test_chat_graph.py`): scripted responses exercise the agent →
@@ -244,6 +329,13 @@ building the benchmark, checked against ADS, not taken from memory.
       - "Could we measure better proper motions than Gaia in Draco?" →
         overlap baselines, precision estimate, and the published proper-motion
         work, with methods and the data each paper used;
+      - "Do the published proper motions of Leo I agree?" → every value in one
+        frame, a χ² test, and the data each used;
+      - "What would a new JWST NIRCam epoch of Draco in 2027 give us?" →
+        baselines to existing images, per-star and bulk precision, which goals
+        become feasible;
+      - "How long until HST+HST could measure Leo I's internal dispersion to
+        30%?" → the year, or "never" with the reason;
       - ambiguous requests ("the spur", with no stream named) → the agent asks
         instead of guessing.
 - [ ] Results go through Duo's verifier (real, in the field, complete,
@@ -273,9 +365,11 @@ building the benchmark, checked against ADS, not taken from memory.
 2. Tools registered; `scoop ask "Draco to 2 half-light radii"` reproduces the smoke test
 3. Plan approval and edits on the command line
 4. galstreams and literature lookup; the GD-1 spur request works end to end
-5. Proper-motion agent: precision estimates from overlaps, then the literature
-   comparison; checked on Draco and Leo I
-6. Benchmark with scores; chat box in the viewer
+5. Proper-motion agent, first priorities: the feasibility planner (1), the
+   literature reconciliation (2) and forward planning (3); checked on Draco and Leo I
+6. Proper-motion agent, next: quick-look measurements, member samples, the critic
+7. Data side: checking in the loop, then the skill-review agent and learning from failures
+8. Benchmark with scores
 
 ## Open questions
 
@@ -288,3 +382,6 @@ building the benchmark, checked against ADS, not taken from memory.
   (Radha is working on cost checking and the pricing it uses.)
 - What systematic floor to assume per instrument in the precision estimates,
   and how to show that the numbers are estimates?
+- Forward planning ignores scheduling and visibility (when HST/JWST can point
+  at a target, guide-star and orientation constraints). Is a note enough, or
+  should the planner check visibility windows?

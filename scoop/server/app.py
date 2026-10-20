@@ -29,6 +29,7 @@ from starlette.routing import Route
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from ..chat.data_agent import build_handoff_tool
+from ..chat.pm_tools import build_pm_tools
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
 from ..chat.web_tools import build_web_tools
@@ -359,7 +360,9 @@ def create_app(
 
         # The data agent runs on the same model, for data the field doesn't have yet.
         handoff = build_handoff_tool(model=model, field=field, store_rows=store_rows if fields else None)
-        tools = [*map_tools, handoff, *ads_tools(), *(build_web_tools(*web) if web else []),
+        # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
+        pm_tools = build_pm_tools(field=field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None)
+        tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
