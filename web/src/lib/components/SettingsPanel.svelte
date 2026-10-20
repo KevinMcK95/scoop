@@ -89,3 +89,9 @@
     <button class="primary" type="submit" disabled={saving || !view}>Save</button>
   </div>
 </form>
+
+<div class="settings developer">
+  <label class="check"><input type="checkbox" checked={workspace.debug} onchange={(e) => (workspace.debug = e.currentTarget.checked)} />
+    Developer: show the Debug tab</label>
+  <p class="muted">Each turn's model calls and tool calls, with what was sent, timings and tokens. Traces stay on this machine.</p>
+</div>

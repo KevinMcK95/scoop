@@ -1638,3 +1638,158 @@ body.resizing-y * {
   border-radius: 3px;
   transition: background 0.4s ease;
 }
+
+/* Developer settings and the Debug tab. */
+.settings.developer {
+  margin-top: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.settings label.check {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: inherit;
+  font-size: 12px;
+}
+.settings label.check input {
+  width: auto;
+}
+.debug-panel {
+  font-size: 12px;
+}
+.debug-tools {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.trace {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--panel);
+}
+.trace.failed {
+  border-color: #8a4b3a;
+}
+.trace-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trace-question {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-stats {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.trace-error,
+.debug-panel pre.failed,
+.waterfall li.failed .step-name {
+  color: #d08770;
+}
+.trace-error {
+  margin: 0 8px 6px;
+}
+.waterfall {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px;
+}
+.step-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 34%) 1fr 64px;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--line);
+  color: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.step-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-bar {
+  position: relative;
+  height: 8px;
+  background: #0d1723;
+  border-radius: 2px;
+}
+.step-bar span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.waterfall li.tool .step-bar span {
+  background: #f1cb82;
+}
+.waterfall li.failed .step-bar span {
+  background: #d08770;
+}
+.step-time {
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.step-body {
+  padding: 4px 0 8px 12px;
+}
+.step-body h5 {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.debug-panel pre {
+  margin: 2px 0;
+  padding: 6px 8px;
+  max-height: 260px;
+  overflow: auto;
+  background: #080f18;
+  border-radius: 4px;
+  font: 11px/1.4 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.trace-message summary {
+  cursor: pointer;
+  font: 11px/1.5 var(--mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trace-message .role {
+  display: inline-block;
+  min-width: 52px;
+  color: var(--accent);
+}
+.trace-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px 6px;
+  font-size: 11px;
+}

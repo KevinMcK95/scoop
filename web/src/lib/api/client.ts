@@ -1,4 +1,5 @@
 // Browser side of scoop/server/app.py. Credentials stay on the server.
+import type { Trace } from '../chat/trace';
 import type { Field } from '../field/types';
 
 export interface ActionAcknowledgment {
@@ -57,6 +58,8 @@ export interface Backend {
   saveSettings(changes: Partial<Record<'model' | 'base_url' | 'api_key' | 'ads_token', string>>): Promise<SettingsView>;
   getJob(id: string): Promise<JobView>;
   deleteFigures?(thread: string): Promise<void>;
+  getTraces?(thread: string): Promise<Trace[]>;
+  deleteTraces?(thread: string): Promise<void>;
 }
 
 // A data source the server knows; queryable ones can be added to a field on demand.
@@ -159,6 +162,14 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
       const response = await fetcher(`${base}/fields/${encodeURIComponent(field)}/sources/${encodeURIComponent(source)}`, { method: 'POST' });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
+    },
+    async getTraces(thread) {
+      const response = await fetcher(`${base}/traces/${encodeURIComponent(thread)}`);
+      if (!response.ok) throw new Error(await errorText(response));
+      return (await response.json()).traces;
+    },
+    async deleteTraces(thread) {
+      await fetcher(`${base}/traces/${encodeURIComponent(thread)}`, { method: 'DELETE' }).catch(() => undefined);
     },
     async deleteFigures(thread) {
       await fetcher(`${base}/figures/${encodeURIComponent(thread)}`, { method: 'DELETE' }).catch(() => undefined);
