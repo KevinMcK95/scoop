@@ -19,6 +19,12 @@ archive.
 | [mast_hst_jwst](surveys/mast_hst_jwst.md) | HST and JWST images and spectra, footprints, epochs and baselines, exclusive-access and planned observations, Hubble Source Catalog, HAP mosaics, HLSPs |
 | [sdss_spectra](surveys/sdss_spectra.md) | SDSS optical and APOGEE infrared spectra (SDSS-I through V, DR20), MaNGA, redshifts and classifications |
 
+## Astrometry (`astrometry/`)
+
+| Skill | Use it for |
+|---|---|
+| [proper_motions](astrometry/proper_motions.md) | Where existing proper motions are (LVDB for galaxies and clusters, Gaia for stars, none beyond the Local Group) and whether better-than-Gaia ones could be measured |
+
 ## Literature (`literature/`)
 
 | Skill | Use it for |

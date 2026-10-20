@@ -357,6 +357,14 @@ estimated precision, epochs and time baselines), and toggleable sky overlays
 of nearby structures. Full plan:
 [plans/kevin_mckinnon.md](plans/kevin_mckinnon.md).
 
+## Natural-language layer (shared)
+
+Several team members are working on the **natural-language layer**: an LLM
+(on the `agentbook` harness) that turns requests like "display data within 2
+degrees of the GD-1 spur feature" into a query plan for the user to approve,
+then runs the data tools. It includes a proper-motion agent. Shared plan:
+[plans/natural_language_queries.md](plans/natural_language_queries.md).
+
 ## Yilun's idea
 - [ ] orchastration of literature, data agents.
 

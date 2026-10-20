@@ -108,5 +108,10 @@ Lab (DESI DR1). See `skills/` for what each service holds and its quirks.
 
 ## Other files
 
+- `pm_expectations.py`: proper-motion expectations for an LVDB object
+  (expected sizes, solar reflex, Galactocentric velocities, internal
+  dispersion, how reflex, perspective and secular aberration change across
+  the region, and the precision a measurement needs). Example:
+  `python smoke_tests/pm_expectations.py --lvdb-key leo_1 --n-stars 200 --star-error 0.03`
 - `sky_viewer.py`: writes the interactive viewer page.
 - `ids.py`: exact handling of Gaia and other 64-bit IDs.

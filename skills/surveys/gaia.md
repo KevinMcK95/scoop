@@ -200,7 +200,10 @@ Before using any of them as **reference sources**, check the astrometry: a 3σ
 cut on (pmra, pmdec, parallax) against zero parallax and the **secular
 aberration** proper motion (~5 µas/yr toward the Galactic center; κ = 5.05
 µas/yr from Klioner et al. 2021). Against zero is a fine approximation for a
-quick look at DR3 precision.
+quick look at DR3 precision. Gaia's published proper motions are **not**
+corrected for this glide ("the published source parameters are never corrected
+for the (assumed or estimated) glide in proper motion", Gaia-CRF3 paper,
+Gaia Collaboration, Klioner et al. 2022), so Gaia QSOs really do show it.
 
 **Why the candidate table is untrustworthy, measured (Draco, 2026-10-19):** of
 427 Gaia QSO candidates within 2 r_half, 227 are Gaia RR Lyrae (Draco members:
