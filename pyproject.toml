@@ -16,11 +16,14 @@ chat = [
     "langgraph>=1.2.16,<2",
     "langchain-core>=1.6.12,<2",
 ]
+# The exoplanet data source runs Xuan Ji's exoplanets/archive.py (plain requests).
+exoplanets = ["requests>=2.32,<3"]
 server = [
     "scoop-sky[chat,literature]",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",
+    "langgraph-checkpoint-sqlite>=3,<4",
 ]
 
 [tool.setuptools.packages.find]

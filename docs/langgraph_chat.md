@@ -12,7 +12,7 @@ flowchart TD
     A -->|tool calls| T[ToolNode\nvalidate arguments and execute tools]
     T -->|ToolMessages + artifact updates| A
     A -->|answer or clarification question| END([Return to user])
-    T --> H[Deterministic handlers and adapters]
+    T --> H[Deterministic tools and data sources]
     H --> S[(Archive services)]
 ```
 
@@ -40,10 +40,8 @@ A result handle is not an astronomical object ID. A native `EntityRef` identifie
 an archive entity; a result ID identifies one retrieval snapshot. Re-querying an
 archive should create a new snapshot, not replace old evidence.
 
-`QueryResult` is still useful as a typed Python aggregate/export view. Its plan
-is now optional. `QueryPlan` can describe an agent's proposed work, but it is
-neither a gate before each tool call nor the source of authoritative results.
-No automatic conversion between JSON artifacts and domain models exists yet.
+`QueryPlan` can describe an agent's proposed work, but it is neither a gate
+before each tool call nor the source of authoritative results.
 
 ## Scientific tools
 
@@ -79,11 +77,14 @@ propagate from the initial ToolNode so they are visible during development.
 
 ```text
 scoop/
-  models.py          # archive requests, records, provenance, execution reports
+  models.py          # records, provenance, search status
   domain.py          # native entities and scientific assertions
-  adapters.py        # service-specific I/O + normalization contract
-  handlers.py        # pagination, timeouts, partial results
-  results.py         # optional typed aggregate
+  fields.py          # field tables, layers, filters, statistics
+  spatial.py         # separations, footprints, regions
+  sources/           # one module per data source (rows, query, presentation)
+  lookup.py, resolve.py, images.py, lvdb.py   # SIMBAD, Sesame, sky cutouts, LVDB
+  literature/        # ADS client and tools
+  server/            # HTTP API, settings, background pipeline jobs
   chat/
     state.py         # messages and parallel-safe artifact reducer
     tools.py         # publish a result + matching ToolMessage as one Command

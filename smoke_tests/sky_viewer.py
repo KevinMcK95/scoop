@@ -126,8 +126,9 @@ def _ellipse_radec(tgt, n_rhalf, ellipse_outline):
     return [[round(float(a), 6), round(float(d), 6)] for a, d in zip(pts.ra.deg, pts.dec.deg)]
 
 
-def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
-                 decisions, ellipse_outline):
+def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
+                decisions, ellipse_outline) -> dict:
+    """The field as JSON: what the standalone page and the SCOOP workspace both render."""
     obs = []
     for r in sel:
         t0, t1 = float(r["t_min"]), float(r["t_max"])
@@ -151,6 +152,10 @@ def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, des
                  "data": {"Gaia DR3": str(to_int_id(r["source_id"])), "G": _f(r["phot_g_mean_mag"], 2),
                           "BP-RP": _f(r["bp_rp"], 2), "parallax (mas)": _f(r["parallax"], 3),
                           "pmRA (mas/yr)": _f(r["pmra"], 3), "pmDec (mas/yr)": _f(r["pmdec"], 3),
+                          "parallax error (mas)": _f(r["parallax_error"], 3),
+                          "pmRA error (mas/yr)": _f(r["pmra_error"], 3),
+                          "pmDec error (mas/yr)": _f(r["pmdec_error"], 3),
+                          "r_ell (r_half)": _f(r["r_ell"], 3),
                           "RUWE": _f(r["ruwe"], 2), "clean": bool(r["clean"])}}
                 for r in g]
 
@@ -184,7 +189,9 @@ def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, des
 
     data = {
         "target": {k: tgt[k] for k in ("name", "ra", "dec", "rhalf_arcmin", "ellipticity",
-                                       "pa_deg", "ref_structure", "distance_kpc")},
+                                       "pa_deg", "ref_structure", "distance_kpc", "pmra",
+                                       "pmdec", "ref_proper_motion")} | {"kind": tgt.get("kind", "lvdb"),
+                                                                           "references": tgt.get("references", {})},
         "n_rhalf": n_rhalf,
         "ellipses": {"1": _ellipse_radec(tgt, 1, ellipse_outline),
                      "n": _ellipse_radec(tgt, n_rhalf, ellipse_outline)},
@@ -211,6 +218,16 @@ def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, des
     if bad:
         raise ValueError(f"{len(bad)} Gaia IDs in the viewer don't match the Gaia table "
                          f"exactly (e.g. {sorted(bad)[:3]}); refusing to write the page")
+    return data
+
+
+def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
+                 decisions, ellipse_outline):
+    data = viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
+                       decisions, ellipse_outline)
+    # The workspace (web/) loads this file; the page below embeds the same data.
+    path.with_name(path.name.replace("_viewer.html", "_field.json")).write_text(
+        json.dumps({**data, "key": tgt["key"]}, separators=(",", ":")))
     title = f"{tgt['name']}: SCOOP sky view"
     page = (TEMPLATE.replace("__TITLE__", html.escape(title))
             .replace("__ALADIN_JS__", ALADIN_JS)
@@ -349,8 +366,8 @@ $("#target").innerHTML = [
   ["Center", `${T.ra.toFixed(4)}, ${T.dec >= 0 ? "+" : ""}${T.dec.toFixed(4)}`],
   ["r_half", `${T.rhalf_arcmin.toFixed(2)}′ (semi-major)`],
   ["Ellipticity / PA", `${T.ellipticity.toFixed(2)} / ${T.pa_deg.toFixed(0)}° E of N`],
-  ["Distance", `${T.distance_kpc.toFixed(1)} kpc`],
-  ["Source", `Local Volume Database; structure ${esc(T.ref_structure)}`],
+  ["Distance", T.distance_kpc != null ? `${T.distance_kpc.toFixed(1)} kpc` : "—"],
+  ["Source", T.kind === "cone" ? "Cone search" : `Local Volume Database; structure ${esc(T.ref_structure)}`],
 ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("");
 
 const layerDefs = [];   // {group, label, color, count, obj, on, hollow}

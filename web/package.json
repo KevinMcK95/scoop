@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
@@ -15,6 +17,8 @@
   "dependencies": {
     "@sveltejs/kit": "^3.1.0",
     "aladin-lite": "3.9.2-beta",
+    "katex": "^0.16.22",
+    "marked": "^15.0.12",
     "svelte": "^5.57.2"
   },
   "devDependencies": {

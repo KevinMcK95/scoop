@@ -1,6 +1,5 @@
-"""Core interfaces for SCOOP's archive handlers and adapters."""
+"""SCOOP: provenance-bearing astronomical records, fields, data sources and the workspace agent."""
 
-from .adapters import Adapter, AdapterError, FetchPage, NormalizeRecord
 from .domain import (
     DataProduct,
     EntityRef,
@@ -10,40 +9,19 @@ from .domain import (
     Publication,
     QueryPlan,
 )
-from .results import QueryResult, SearchOutcome
-from .handlers import make_handler
-from .models import (
-    AdapterPage,
-    Cone,
-    HandlerReport,
-    Provenance,
-    Record,
-    RecordPayload,
-    SearchRequest,
-    SearchStatus,
-)
+from .models import Cone, Provenance, Record, RecordPayload, SearchStatus
 
 __all__ = [
-    "Adapter",
+    "Cone",
     "DataProduct",
     "EntityRef",
     "Measurement",
     "ObjectProfile",
     "Observation",
+    "Provenance",
     "Publication",
     "QueryPlan",
-    "QueryResult",
-    "SearchOutcome",
-    "AdapterError",
-    "AdapterPage",
-    "FetchPage",
-    "Cone",
-    "HandlerReport",
-    "Provenance",
     "Record",
     "RecordPayload",
-    "NormalizeRecord",
-    "make_handler",
-    "SearchRequest",
     "SearchStatus",
 ]

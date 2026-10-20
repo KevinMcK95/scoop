@@ -1,5 +1,13 @@
 # Core data model: first implementation
 
+> **Update (2026-10-20):** the archive execution layer described here
+> (`SearchRequest`, `AdapterPage`, `HandlerReport`, `SearchOutcome`,
+> `QueryResult`, and `scoop/adapters.py`, `handlers.py`, `results.py`) was removed:
+> nothing used it beyond its own tests. Archive access now lives in data-source
+> modules (`scoop/sources/`, see [map_interaction.md](map_interaction.md)). The
+> provenance and domain values (`Provenance`, `Record`, `SearchStatus`,
+> `EntityRef`, `Publication`, ...) remain; the ADS client uses them.
+
 ## Review of the initial idea
 
 The useful core of SCOOP is a **provenance-bearing inventory**, not the number
@@ -29,10 +37,9 @@ Three changes to the initial sketch guide this implementation:
 | Layer | Types | Responsibility |
 | --- | --- | --- |
 | Scientific intent | `QueryPlan` | Original text, target labels, optional cone, literature topics, requested capabilities |
-| Archive execution | `SearchRequest`, `AdapterPage`, `HandlerReport`, `SearchOutcome` | Request, native pages, normalized records, status, and request/report association |
+| Archive execution | *(removed; see the update above)* | Now: data-source modules with `rows` / `query` |
 | Identity and evidence | `EntityRef`, `Provenance`, `Measurement` | Exact native identity, retrieval context, separate scalar assertions |
 | Inventory | `ObjectProfile`, `Observation`, `DataProduct`, `Publication` | Distinct domain entities and explicit product-to-observation links |
-| Collected result | `QueryResult` | Typed inventory alongside all supplied execution reports |
 
 The existing generic `Record` is the adapter boundary. It is not silently
 converted into a domain entity: a service-specific mapper must understand the
@@ -46,10 +53,7 @@ point to a metadata page. `downloadable` signals a candidate URL, not verified
 reachability, permission, or successful transfer.
 
 ```python
-from scoop import (
-    Cone, HandlerReport, QueryPlan, QueryResult,
-    SearchOutcome, SearchRequest, SearchStatus,
-)
+from scoop import Cone, QueryPlan
 
 plan = QueryPlan(
     original_text="Find spectra near M87",
@@ -57,11 +61,6 @@ plan = QueryPlan(
     region=Cone(187.7059, 12.3911, 2 / 60),
     capabilities=("spectra",),
 )
-request = SearchRequest("spectra", region=plan.region)
-# Illustrative empty response, not a real archive lookup:
-report = HandlerReport(status=SearchStatus.EMPTY, archive="EXAMPLE")
-result = QueryResult(plan, searches=(SearchOutcome(request, report),))
-assert result.searches[0].report.status == SearchStatus.EMPTY
 
 literature_plan = QueryPlan(
     original_text="Papers on dwarf galaxy internal velocities",
@@ -96,14 +95,13 @@ assert literature_plan.region is None
   versioned serialization remain future work. Avoid encoding these as vaguely
   named dictionaries in the public domain model before one real use case exists.
 
-## Next vertical slice
+## What happened next
 
-Implement one resolver plus one real archive adapter, with saved native-response
-fixtures. Map observations and products explicitly into this inventory, retain
-failed/empty searches, and test archive IDs, pagination, provenance, and product
-links end to end. That will expose schema omissions more reliably than adding
-more agent roles now. Agent planning and synthesis can then sit above this
-verified, deterministic path.
+The vertical slice went through data-source modules instead of an adapter
+contract: the smoke-test pipeline's archives (MAST, Gaia, QSO catalogs, SIMBAD,
+SDSS/DESI) and an on-demand NASA Exoplanet Archive query, each declaring its
+table, columns, provenance and presentation. See
+[map_interaction.md](map_interaction.md).
 
 Run the offline checks from the repository root:
 

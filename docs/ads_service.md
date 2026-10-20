@@ -132,8 +132,8 @@ coverage, or PDF availability is inferred.
 ## Layer boundaries and future adapters
 
 The service depends only on the existing domain values, standard library, and
-optional httpx. It does not change the archive handler contract, `QueryResult`,
-chat state, tool registry, frontend, or package root exports. The separate
+optional httpx. It does not change chat state, the tool registry, the frontend,
+or package root exports. The separate
 `serialization.result_payload` function projects records into strict JSON,
 omitting raw documents and encoding timestamps explicitly. The optional
 `literature.tools.build_ads_tools` wrapper registers `ads_search`, `ads_paper`,

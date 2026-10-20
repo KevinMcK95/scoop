@@ -28,9 +28,9 @@ literature-and-summary half of the tool.
 > **Status:** early development. Core data models and an optional LangGraph
 > chat/tool-loop scaffold are implemented, alongside a fixture-backed SvelteKit
 > workspace sketch. Live archive tools and the end-user Python/CLI examples below
-> remain planned. Start with the [web workspace](plans/web_workspace.md),
-> [LangGraph chat layout](plans/langgraph_chat.md), and
-> [core data model](plans/core_data_model.md).
+> remain planned. Start with the [web workspace](docs/web_workspace.md),
+> [LangGraph chat layout](docs/langgraph_chat.md), and
+> [core data model](docs/core_data_model.md).
 
 SCOOP is being built as part of the
 [Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
@@ -166,7 +166,7 @@ pip install -e '.[chat]'
 
 Supply a tool-calling model and application tools; no provider or live archive
 connection is configured by this extra. See the
-[chat layout and invocation example](plans/langgraph_chat.md).
+[chat layout and invocation example](docs/langgraph_chat.md).
 
 For the broader astronomy workshop environment, `requirements.txt` pins the
 packages from the original development environment:
@@ -193,12 +193,14 @@ API server streams agent turns to it and serves ADS searches:
 
 ```bash
 pip install -e '.[server]'
-python -m scoop.server          # 127.0.0.1:8787; set SCOOP_MODEL and ADS_API_TOKEN
+python -m scoop.server          # 127.0.0.1:8787; model and keys: ⚙ Settings tab or env vars
 cd web && npm ci && npm run dev -- --host 127.0.0.1
 ```
 
-See the [workspace architecture](plans/web_workspace.md) and the
-[shared ADS service](plans/ads_service.md).
+See the [workspace architecture](docs/web_workspace.md), the
+[map and agent interaction design](docs/map_interaction.md), the
+[shared ADS service](docs/ads_service.md), and the
+[changes made to teammates' code](docs/changes_to_team_code.md).
 
 ## Planned usage
 
@@ -236,8 +238,8 @@ scoop chat   # interactive session
 The initial implementation is a **LangGraph chat agent with typed tools**:
 `START → agent → tools → agent → END`, or a direct answer/clarification when no
 tool call is needed. Conversation messages and tool-published result snapshots
-are checkpointed separately; archive access stays in deterministic handlers and
-adapters. See the [implemented layout](plans/langgraph_chat.md).
+are checkpointed separately; archive access stays in deterministic tools and
+data-source modules. See the [implemented layout](docs/langgraph_chat.md).
 
 The specialized-agent diagram below is a longer-term sketch, not the current
 runtime. We will add separate agent roles only when a concrete workflow needs
@@ -331,7 +333,7 @@ Splitting the work this way means:
 
 ## Roadmap
 
-- [x] Initial query and result models ([scope and limitations](plans/core_data_model.md))
+- [x] Initial query and result models ([scope and limitations](docs/core_data_model.md))
 - [ ] Orchestrator and a shared message format for passing tasks and results between agents
 - [ ] Natural-language query parsing into structured query plans
 - [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)

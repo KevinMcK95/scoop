@@ -17,12 +17,14 @@ else:
     HAS_SERVER_DEPS = True
     from scoop.literature.models import ADSResult
     from scoop.models import SearchStatus
+    from scoop.fields import FieldStore
     from scoop.server import create_app
+    from tests.field_fixture import viewer_data
 
 CONTEXT = {
-    "viewport": {"ra": 10.68, "dec": 41.27, "fov": 1.2},
-    "sourceIds": ["fx-src-a7"],
-    "map": {"layers": [{"id": "annotations", "visible": True}]},
+    "viewport": {"ra": 260.05, "dec": 57.92, "fov": 1.2},
+    "field": "mini_1",
+    "layers": [{"id": "gaia:stars", "table": "gaia", "origin": "pipeline", "visible": True}],
 }
 
 
@@ -51,10 +53,16 @@ class FakeADS:
                          papers=(), total_count=0, next_start=None)
 
 
-def view_call(command, call_id="call-1"):
+def map_call(*actions, call_id="call-1"):
     return AIMessage(content="", tool_calls=[{
-        "name": "update_sky_view", "args": {"command": command}, "id": call_id, "type": "tool_call",
+        "name": "update_map", "args": {"actions": list(actions)}, "id": call_id, "type": "tool_call",
     }])
+
+
+def field_store(tmp):
+    (Path(tmp) / "mini").mkdir()
+    (Path(tmp) / "mini" / "mini_1_field.json").write_text(json.dumps(viewer_data()))
+    return FieldStore(Path(tmp))
 
 
 def events(response):
@@ -74,12 +82,12 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.post_chat(client).status_code, 503)
         self.assertEqual(client.post("/api/literature/search", json={"query": "M31"}).status_code, 503)
 
-    def test_chat_streams_view_request_artifact_and_writes_audit(self):
-        circle = {"type": "annotation.circle", "ra": 10.68, "dec": 41.27, "radius": 1.0, "label": "1 deg"}
-        model = ScriptedModel(view_call(circle), AIMessage(content="Requested a circle."))
+    def test_chat_streams_map_action_artifact_and_writes_audit(self):
+        highlight = {"type": "highlight", "table": "gaia", "ids": ["1004"], "reason": "Gaia-CRF3 QSO"}
+        model = ScriptedModel(map_call(highlight), AIMessage(content="Highlighted the QSO."))
         with tempfile.TemporaryDirectory() as tmp:
             audit = Path(tmp) / "turns.jsonl"
-            client = TestClient(create_app(model=model, audit_path=audit))
+            client = TestClient(create_app(model=model, audit_path=audit, fields=field_store(tmp)))
             stream = events(self.post_chat(client))
             record = json.loads(audit.read_text())
 
@@ -87,17 +95,26 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(kinds, ["tool_call", "tool_result", "artifact", "assistant", "done"])
         artifact = stream[2]
         self.assertEqual(artifact["payload"]["status"], "requested")
-        self.assertEqual(artifact["payload"]["command"], circle)
+        self.assertEqual(artifact["payload"]["actions"], [highlight])
         self.assertEqual(stream[-1]["request_id"], record["request_id"])
         self.assertEqual((record["tool_calls_total"], record["tool_calls_failed"]), (1, 0))
         self.assertNotIn("Circle M31", json.dumps(record))
-        # The model sees the browser context, delimited as data.
+        # The model sees the browser context, delimited as data, under the workspace prompt.
         self.assertIn("<workspace_context>", model.calls[0][-1].content)
+        from scoop.chat.prompt import WORKSPACE_PROMPT
+        self.assertEqual(model.calls[0][0].content, WORKSPACE_PROMPT)
 
-    def test_unknown_source_id_is_a_failed_tool_call(self):
-        highlight = {"type": "sources.highlight", "sourceIds": ["invented"]}
-        model = ScriptedModel(view_call(highlight), AIMessage(content="That source is unknown."))
-        stream = events(self.post_chat(TestClient(create_app(model=model))))
+    def test_unknown_row_id_is_a_failed_tool_call(self):
+        highlight = {"type": "highlight", "table": "gaia", "ids": ["invented"]}
+        model = ScriptedModel(map_call(highlight), AIMessage(content="That source is unknown."))
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = Path(tmp) / "turns.jsonl"
+            stream = events(self.post_chat(TestClient(create_app(model=model, fields=field_store(tmp), audit_path=audit))))
+            record = json.loads(audit.read_text())
+        self.assertEqual(record["failures"][0]["tool"], "update_map")
+        self.assertIn("Unknown gaia ids", record["failures"][0]["reason"])
+        from scoop.server.app import _reason
+        self.assertEqual(_reason("Error invoking tool 'x' with kwargs {...} with error:\n shape: bad\n"), "shape: bad")
         result = next(event for event in stream if event["type"] == "tool_result")
         self.assertEqual(result["status"], "error")
         self.assertFalse(any(event["type"] == "artifact" for event in stream))
@@ -106,7 +123,62 @@ class ServerTests(unittest.TestCase):
         client = TestClient(create_app(model=ScriptedModel()))
         self.assertEqual(self.post_chat(client, thread_id="bad id").status_code, 400)
         self.assertEqual(self.post_chat(client, message=" ").status_code, 400)
-        self.assertEqual(self.post_chat(client, context={"sourceIds": [1]}).status_code, 400)
+        self.assertEqual(self.post_chat(client, context={"layers": [{"id": 1}]}).status_code, 400)
+        self.assertEqual(self.post_chat(client, context={"field": 7}).status_code, 400)
+
+    def test_fields_are_listed_and_served_with_default_layers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = TestClient(create_app(fields=field_store(tmp)))
+            self.assertEqual(client.get("/api/fields").json()["fields"][0]["key"], "mini_1")
+            field = client.get("/api/fields/mini_1").json()
+            self.assertIn("gaia:stars", [layer["id"] for layer in field["layers"]])
+            self.assertEqual(client.get("/api/fields/nope").status_code, 404)
+            zipped = client.get("/api/fields/mini_1", headers={"Accept-Encoding": "gzip"})
+            self.assertEqual(zipped.headers["content-encoding"], "gzip")
+            self.assertEqual(zipped.json()["key"], "mini_1")
+
+    def test_assistant_text_streams_before_the_complete_message(self):
+        from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+
+        class Streaming(GenericFakeChatModel):
+            def bind_tools(self, tools, **kwargs):
+                return self
+
+        model = Streaming(messages=iter([AIMessage(content="Draco is a dwarf spheroidal.")]))
+        stream = events(self.post_chat(TestClient(create_app(model=model))))
+        deltas = [e for e in stream if e["type"] == "assistant_delta"]
+        final = next(e for e in stream if e["type"] == "assistant")
+        self.assertGreater(len(deltas), 1)
+        self.assertEqual("".join(d["text"] for d in deltas), final["text"])
+        self.assertEqual({d["id"] for d in deltas}, {final["id"]})
+        self.assertLess(stream.index(deltas[-1]), stream.index(final))
+
+    def test_repeated_tool_failures_stop_the_turn_and_are_logged(self):
+        bad = {"type": "highlight", "table": "gaia", "ids": ["invented"]}
+        model = ScriptedModel(*[map_call(bad, call_id=f"call-{i}") for i in range(10)])
+        with tempfile.TemporaryDirectory() as tmp:
+            audit = Path(tmp) / "turns.jsonl"
+            client = TestClient(create_app(model=model, fields=field_store(tmp), audit_path=audit))
+            stream = events(self.post_chat(client))
+            record = json.loads(audit.read_text())
+        self.assertEqual(len(model.calls), 4)  # stopped, not 12 steps
+        self.assertIn("Stopped after 4 failed tool calls in a row (update_map: No actions sent", stream[-2]["message"])
+        self.assertEqual((record["tool_calls_failed"], len(record["failures"])), (4, 4))
+        self.assertIn("Stopped after 4", record["error"])
+
+    def test_the_model_sees_a_sky_image_after_asking_for_it(self):
+        ask = AIMessage(content="", tool_calls=[{"name": "sky_image", "args": {"ra": 260.0, "dec": 57.9, "fov_arcmin": 2},
+                                                 "id": "img-1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="An edge-on galaxy."))
+
+        async def fetch_image(ra, dec, fov, survey):
+            return b"jpeg"
+
+        stream = events(self.post_chat(TestClient(create_app(model=model, fetch_image=fetch_image))))
+        second_call = model.calls[1]
+        image = second_call[-1]
+        self.assertEqual(image.content[1]["image_url"]["url"], "data:image/jpeg;base64,anBlZw==")
+        self.assertEqual((stream[-2]["type"], stream[-2]["text"]), ("assistant", "An edge-on galaxy."))
 
     def test_model_failure_is_reported_in_stream(self):
         class Broken(ScriptedModel):
@@ -116,6 +188,27 @@ class ServerTests(unittest.TestCase):
         stream = events(self.post_chat(TestClient(create_app(model=Broken()))))
         self.assertEqual(stream[-2], {"type": "error", "message": "RuntimeError: provider down"})
         self.assertEqual(stream[-1]["type"], "done")
+
+    def test_field_jobs_start_and_report(self):
+        class Job:
+            def view(self):
+                return {"id": "job42", "key": "leo_1", "status": "running"}
+
+        class Jobs:
+            def start(self, key, n_rhalf):
+                if key != "leo_1":
+                    raise ValueError("bad key")
+                return Job()
+
+            def get(self, job_id):
+                return Job() if job_id == "job42" else None
+
+        client = TestClient(create_app(jobs=Jobs()))
+        self.assertEqual(client.post("/api/jobs", json={"key": "leo_1"}).json()["status"], "running")
+        self.assertEqual(client.post("/api/jobs", json={"key": "../x"}).status_code, 400)
+        self.assertEqual(client.get("/api/jobs/job42").json()["key"], "leo_1")
+        self.assertEqual(client.get("/api/jobs/nope").status_code, 404)
+        self.assertEqual(TestClient(create_app()).post("/api/jobs", json={"key": "leo_1"}).status_code, 503)
 
     def test_literature_search_uses_shared_client(self):
         ads = FakeADS()

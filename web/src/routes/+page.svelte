@@ -4,22 +4,58 @@
   import SkyPanel from '../lib/components/SkyPanel.svelte';
   import LayersPanel from '../lib/components/LayersPanel.svelte';
   import LiteraturePanel from '../lib/components/LiteraturePanel.svelte';
+  import SelectedPanel from '../lib/components/SelectedPanel.svelte';
+  import TablePanel from '../lib/components/TablePanel.svelte';
+  import FieldNotesPanel from '../lib/components/FieldNotesPanel.svelte';
+  import PlotPanel from '../lib/components/PlotPanel.svelte';
+  import Splitter from '../lib/components/Splitter.svelte';
   import { createWorkspace } from '../lib/workspace/state.svelte';
   import { httpBackend } from '../lib/api/client';
-  import { sources } from '../lib/workspace/fixtures';
+  import 'katex/dist/katex.min.css';
   import '../app.css';
 
   const workspace = createWorkspace(httpBackend());
   let layersOpen = $state(true);
   let chatOpen = $state(true);
-  let resultsOpen = $state(false);
-  let chatWidth = $state(300);
-  let resultsHeight = $state(170);
-  const tabs = ['Literature', 'Selected object', 'Observations', 'Activity'] as const;
-  let activeTab = $state<(typeof tabs)[number]>('Literature');
-  const source = $derived(sources.find((item) => item.id === workspace.selection.sourceId));
+  let resultsOpen = $state(true);
+  const CHAT_WIDTH = 340, RESULTS_HEIGHT = 300;
+  // Sizes are a per-browser convenience; storage may be unavailable.
+  const stored = (name: string, fallback: number) => {
+    try { const v = Number(localStorage.getItem(`scoop.${name}`)); return Number.isFinite(v) && v > 0 ? v : fallback; }
+    catch { return fallback; }
+  };
+  let chatWidth = $state(CHAT_WIDTH);
+  let resultsHeight = $state(RESULTS_HEIGHT);
+  let workspaceEl = $state<HTMLElement>();
+  onMount(() => { chatWidth = stored('chatWidth', CHAT_WIDTH); resultsHeight = stored('resultsHeight', RESULTS_HEIGHT); });
+  $effect(() => {
+    const [w, h] = [chatWidth, resultsHeight];
+    try { localStorage.setItem('scoop.chatWidth', String(w)); localStorage.setItem('scoop.resultsHeight', String(h)); } catch { /* not persisted */ }
+  });
+  // These run during server rendering too, where there is no window.
+  const browser = typeof window !== 'undefined';
+  const chatMax = () => (browser ? Math.min(900, window.innerWidth * 0.7) : 900);
+  const resultsMax = () => (workspaceEl?.clientHeight ?? (browser ? window.innerHeight : 1000)) * 0.75;
+  const tabs = ['Selected', 'Plot', 'Tables', 'Summary', 'Literature', 'Decisions', 'Activity'] as const;
+  let activeTab = $state<(typeof tabs)[number]>('Tables');
+  // A new selection (by you or the agent) brings its details forward.
+  let lastSelection = '';
+  $effect(() => {
+    const ref = workspace.map.selection;
+    const key = ref ? `${ref.table}:${ref.id}` : '';
+    if (key && key !== lastSelection) { activeTab = 'Selected'; resultsOpen = true; }
+    lastSelection = key;
+  });
+  // A new plot (usually the agent's) brings the Plot tab forward.
+  let lastPlot = '';
+  $effect(() => {
+    const key = JSON.stringify(workspace.map.plot ?? null);
+    if (workspace.map.plot && key !== lastPlot) { activeTab = 'Plot'; resultsOpen = true; }
+    lastPlot = key;
+  });
   onMount(() => {
-    workspace.connect();
+    // A shared view link opens once its field is loaded.
+    void workspace.connect().then(() => { if (location.hash) void workspace.openViewLink(location.hash); });
     if (window.matchMedia('(max-width: 800px)').matches) {
       layersOpen = false;
       chatOpen = false;
@@ -31,6 +67,14 @@
     workspace.askAboutSelection();
     await tick();
     document.getElementById('chat-draft')?.focus();
+  }
+  // One click: the agent checks SIMBAD and the literature at the selected row.
+  async function lookupSelection() {
+    const row = workspace.selectedRow;
+    if (!row) return;
+    workspace.draft = `What is known about ${row.table} ${row.id}? Check SIMBAD near it and summarize the key references.`;
+    chatOpen = true;
+    await workspace.send();
   }
   function showResults(open: boolean) {
     resultsOpen = open;
@@ -50,8 +94,8 @@
 </script>
 
 <svelte:head>
-  <title>SCOOP — Scientific atlas demo</title>
-  <meta name="description" content="Map-first sky atlas with local fixture sources, literature, and context snapshots. No backend connected." />
+  <title>SCOOP</title>
+  <meta name="description" content="A sky map you explore together with an agent: archive data, literature and chat around a field." />
 </svelte:head>
 
 <div class="app-shell">
@@ -63,19 +107,25 @@
       <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>
       <button aria-expanded={chatOpen} aria-controls="chat-drawer" onclick={toggleChat}>Chat</button>
     </nav>
-    <span class="demo-label" title="Survey imagery uses external services. Sources are illustrative fixtures.">{workspace.services.chat || workspace.services.literature
-      ? `Agent ${workspace.services.chat ? 'on' : 'off'} · ADS ${workspace.services.literature ? 'on' : 'off'} · fixture sources`
-      : 'Demo · No backend'}</span>
+    <span class="demo-label">
+      {workspace.field?.target.name ?? ''}
+      <span class="dot" class:on={workspace.services.chat} title={workspace.services.chat ? 'Agent connected' : 'No agent'} aria-label={workspace.services.chat ? 'Agent connected' : 'No agent'}></span>agent
+      <span class="dot" class:on={workspace.services.literature} title={workspace.services.literature ? 'ADS connected' : 'ADS not configured'} aria-label={workspace.services.literature ? 'ADS connected' : 'ADS not configured'}></span>ADS
+    </span>
   </header>
-  <main id="workspace" tabindex="-1" class="atlas-workspace" style:--chat-width={`${chatWidth}px`}>
-    <aside id="layers-drawer" class="left-drawer" hidden={!layersOpen}>
-      <button class="drawer-close" aria-label="Close layers and sources" onclick={() => layersOpen = false}>Close layers ×</button>
-      <LayersPanel {workspace} />
+  <main id="workspace" tabindex="-1" class="atlas-workspace" style:--chat-width={`${chatWidth}px`} bind:this={workspaceEl}>
+    <!-- Drawers stay mounted and animate their size; inert keeps a closed one out of focus and reading order. -->
+    <aside id="layers-drawer" class="left-drawer" class:collapsed={!layersOpen} inert={!layersOpen} aria-hidden={!layersOpen}>
+      <div class="drawer-inner">
+        <button class="drawer-close" aria-label="Close layers" title="Close layers" onclick={() => layersOpen = false}>×</button>
+        <LayersPanel {workspace} />
+      </div>
     </aside>
     <div class="map-column">
       <!-- Never conditionally mount the renderer: panel changes preserve Aladin. -->
       <SkyPanel {workspace} />
       <section id="results-drawer" class="results-drawer" aria-label="Workspace results">
+        {#if resultsOpen}<Splitter bind:value={resultsHeight} min={120} max={resultsMax} grow="up" label="Results height" initial={RESULTS_HEIGHT} />{/if}
         <div class="results-bar">
           <button aria-expanded={resultsOpen} aria-controls="results-content" onclick={() => showResults(!resultsOpen)}>{resultsOpen ? '▾' : '▴'} <span class="sr-only">Toggle results drawer</span></button>
           <div class="result-tabs" role="tablist" aria-label="Results">
@@ -91,28 +141,32 @@
             {/each}
           </div>
         </div>
-        <div id="results-content" role="tabpanel" aria-labelledby={`result-tab-${tabs.indexOf(activeTab)}`} tabindex="0" hidden={!resultsOpen} style:height={`${resultsHeight}px`}>
-          <label class="resize-control">Results height <input aria-label="Results drawer height" type="range" min="130" max="400" step="10" bind:value={resultsHeight} /><span>{resultsHeight}px</span></label>
+        <div id="results-content" role="tabpanel" aria-labelledby={`result-tab-${tabs.indexOf(activeTab)}`} tabindex="0" class:collapsed={!resultsOpen} inert={!resultsOpen} style:height={`${resultsOpen ? resultsHeight : 0}px`}>
           <div class="results-body">
-            {#if activeTab === 'Literature'}
+            {#if activeTab === 'Selected'}
+              <SelectedPanel {workspace} onask={ask} onlookup={lookupSelection} />
+            {:else if activeTab === 'Plot'}
+              <PlotPanel {workspace} />
+            {:else if activeTab === 'Tables'}
+              <TablePanel {workspace} />
+            {:else if activeTab === 'Summary'}
+              <FieldNotesPanel {workspace} view="summary" />
+            {:else if activeTab === 'Literature'}
               <LiteraturePanel {workspace} onask={ask} />
-            {:else if activeTab === 'Selected object'}
-              {#if source}
-                <article class="object-detail"><h2>{source.label}</h2><p>{source.kind} · Illustrative fixture, not an identified object.</p><p>ICRS: {source.ra.toFixed(4)}° / {source.dec.toFixed(4)}°</p><button onclick={ask}>Ask about selection</button><button class="text-button" onclick={() => workspace.selectSource(null)}>Clear source</button></article>
-              {:else}<p class="empty-state">No source selected. Choose a marker or a fixture row in Layers. Publication selection is independent.</p>{/if}
-            {:else if activeTab === 'Observations'}
-              <p class="empty-state">No observations loaded. No archive or observation service is connected; the DSS2 backdrop and invented markers are not observation results.</p>
+            {:else if activeTab === 'Decisions'}
+              <FieldNotesPanel {workspace} view="decisions" />
             {:else}
-              <div class="activity-list"><p class="muted">Atlas: {workspace.viewerPhase} · {workspace.messages.filter((message) => message.role === 'user').length} local messages. View commands below are local renderer actions, not backend activity.</p>
-              {#each workspace.viewRequests.toReversed() as request (request.sequence)}<p>#{request.sequence} · {request.command.type} · {request.status}{request.error ? ` — ${request.error}` : ''}</p>{:else}<p>No view commands yet.</p>{/each}</div>
+              <FieldNotesPanel {workspace} view="activity" />
             {/if}
           </div>
         </div>
       </section>
     </div>
-    <aside id="chat-drawer" class="right-drawer" hidden={!chatOpen}>
-      <div class="chat-drawer-tools"><label class="resize-control">Chat width <input aria-label="Chat drawer width" type="range" min="260" max="460" step="10" bind:value={chatWidth} /></label><button class="text-button" aria-label="Close chat drawer" onclick={() => chatOpen = false}>Close ×</button></div>
-      <ChatPanel {workspace} />
+    <aside id="chat-drawer" class="right-drawer" class:collapsed={!chatOpen} inert={!chatOpen} aria-hidden={!chatOpen}>
+      <Splitter bind:value={chatWidth} min={260} max={chatMax} grow="left" label="Chat width" initial={CHAT_WIDTH} />
+      <div class="drawer-inner">
+        <ChatPanel {workspace} onclose={() => (chatOpen = false)} />
+      </div>
     </aside>
   </main>
 </div>

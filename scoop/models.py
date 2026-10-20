@@ -26,25 +26,6 @@ class Cone:
 
 
 @dataclass(frozen=True)
-class SearchRequest:
-    """Normalized request for one archive capability."""
-
-    capability: str
-    region: Cone | None = None
-    constraints: Mapping[str, Any] = field(default_factory=dict)
-    page_size: int = 500
-    max_pages: int | None = None
-
-    def __post_init__(self) -> None:
-        if not self.capability.strip():
-            raise ValueError("capability must be a non-empty string")
-        if self.page_size < 1:
-            raise ValueError("page_size must be positive")
-        if self.max_pages is not None and self.max_pages < 1:
-            raise ValueError("max_pages must be positive when set")
-
-
-@dataclass(frozen=True)
 class Provenance:
     """Origin and retrieval context for one normalized record."""
 
@@ -86,30 +67,3 @@ class SearchStatus(str, Enum):
     PARTIAL = "partial"
     FAILED = "failed"
     TIMED_OUT = "timed_out"
-
-
-@dataclass(frozen=True)
-class AdapterPage:
-    """One page as returned by an archive adapter."""
-
-    records: tuple[Any, ...]
-    next_cursor: str | None = None
-    total_count: int | None = None
-    truncated: bool = False
-    query: str = ""
-
-
-@dataclass(frozen=True)
-class HandlerReport:
-    """Normalized outcome, including empty and incomplete searches."""
-
-    status: SearchStatus
-    records: tuple[Record, ...] = ()
-    archive: str = ""
-    query: str = ""
-    pages_fetched: int = 0
-    total_count: int | None = None
-    error: str | None = None
-    warnings: tuple[str, ...] = ()
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    finished_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
