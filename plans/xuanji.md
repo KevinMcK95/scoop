@@ -113,8 +113,53 @@ The next step depends on what came back:
 - [Kevin's](kevin_mckinnon.md) Gaia skill: hosts carry `gaia_dr3_id` in the
   archive, for a later cross-match.
 
+## Next: exoplanets in a SCOOP field (2026-10-20)
+
+The user starts from a description of the sky area they want. Three stages, built in order:
+
+1. **Planets in this field.** Show the confirmed hosts (and TOIs; later TIC) in the
+   field: no agent needed, the data sources do this. If there are any, an
+   **exoplanet agent** answers questions about the planets and their properties,
+   every claim cited to a paper or archive record. *Building this first.*
+2. **Data for a planet search.** Which stars have TESS light curves (SPOC 2-min/20-s,
+   QLP, TESS-SPOC, TGLC) or other data usable for an exoplanet search?
+3. **Short-cadence candidates.** Which stars are good candidates for a TESS
+   short-cadence proposal? Needs stage 2, plus vetting (Gaia RUWE, TIC contamination,
+   TOIs, HST/JWST history) and the fact that FFIs are 200 s since 2022, so 2-min
+   mainly helps short transits, flares and asteroseismology.
+
+Ideas kept for stage 3: JWST transmission feasibility (TSM, Kempton et al. 2018) and
+PLATO coverage are tools, not separate agents. Benchmarks: TIC `Prior` (CTL
+priority), back-tests against later TOIs (`toi_created`), accepted TESS GI targets.
+
+## Added to the workspace (2026-10-20)
+
+Data sources in `scoop/sources/`, all queried on demand from "＋ Add data":
+
+- `exoplanets.py`: confirmed hosts now carry their planets (period, radius, mass and
+  whether it is measured or estimated from the radius, discovery paper linked to ADS).
+- `tess_tois.py`: TESS Objects of Interest, layered by TFOPWG disposition. The archive's
+  `toi` table has no spatial index, so the cone is queried as an RA/Dec box.
+- `mast_tso.py`: HST/JWST spectra, time series and IFU cubes, executed and planned, with
+  one line per program. The field pipeline fetches images only, which missed most
+  exoplanet atmosphere observations (1,185 for TRAPPIST-1).
+
+## Future data sources
+
+To add later, in this order:
+
+1. **Kepler/K2 candidates** (Exoplanet Archive `cumulative` KOI table and `k2pandc`):
+   candidates and false positives outside the confirmed table. Same code as the TOIs.
+2. **Gaia DR3 binary-orbit solutions** (`gaiadr3.nss_two_body_orbit`): stars with a
+   detected companion, to rule out binaries or flag planet/brown-dwarf candidates.
+3. **PLATO (LOPS2) and Roman (Galactic Bulge Time Domain Survey) footprints**: whether
+   another mission will observe a star anyway. Roman's bulge stars rarely suit TESS.
+
+Also considered: TIC as a layer (VizieR `IV/39/tic82`, Tmag < 16), TESS sector coverage
+and light-curve availability (needed by the target-selection agent), exoplanet.eu,
+the HWO target list, the archive's atmosphere spectra tables, RV archives.
+
 ## Open questions
 
 - Confirm the archive's position epoch in its documentation.
-- Include TESS candidates (TOIs), clearly marked as candidates?
 - Which real model to use for step 8, and what token budget.

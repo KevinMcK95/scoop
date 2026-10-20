@@ -176,6 +176,20 @@ PLANET_COLUMNS = ("pl_name, hostname, ra, dec, sy_dist, st_spectype, st_teff, pl
                   "disc_facility, disc_refname")
 
 
+def planet_record(r: dict, adql: str, retrieved: str) -> dict:
+    """One pscomppars row (PLANET_COLUMNS) as a planet record, with its query."""
+    return {
+        "kind": "catalog_row", "archive": ARCHIVE, "native_id": r["pl_name"],
+        "ra": r["ra"], "dec": r["dec"],
+        "orbital_period_days": r["pl_orbper"], "radius_earth": r["pl_rade"],
+        "mass_earth": r["pl_bmasse"], "mass_type": r["pl_bmassprov"],
+        "equilibrium_temp_k": r["pl_eqt"], "discovery_method": r["discoverymethod"],
+        "discovery_year": r["disc_year"], "discovery_facility": r["disc_facility"],
+        **parse_reference(r["disc_refname"]),
+        "query": adql, "access_url": TAP_URL, "retrieved_at": retrieved,
+    }
+
+
 def get_planets(hostname: str) -> dict:
     """Every confirmed planet of one host, with its parameters and discovery paper."""
     adql = (f"SELECT {PLANET_COLUMNS} FROM pscomppars "
@@ -187,19 +201,78 @@ def get_planets(hostname: str) -> dict:
                         "hostname returned by exoplanet_cone_search.")
     retrieved = now()
     first = rows[0]
-    planets = [{
-        "kind": "catalog_row", "archive": ARCHIVE, "native_id": r["pl_name"],
-        "ra": r["ra"], "dec": r["dec"],
-        "orbital_period_days": r["pl_orbper"], "radius_earth": r["pl_rade"],
-        "mass_earth": r["pl_bmasse"], "mass_type": r["pl_bmassprov"],
-        "equilibrium_temp_k": r["pl_eqt"], "discovery_method": r["discoverymethod"],
-        "discovery_year": r["disc_year"], "discovery_facility": r["disc_facility"],
-        **parse_reference(r["disc_refname"]),
-        "query": adql, "access_url": TAP_URL, "retrieved_at": retrieved,
-    } for r in rows]
+    planets = [planet_record(r, adql, retrieved) for r in rows]
     return {"hostname": hostname, "distance_pc": first["sy_dist"],
             "spectral_type": first["st_spectype"], "teff_k": first["st_teff"],
             "n_planets": len(planets), "planets": planets}
+
+
+def planets_in_cone(ra: float, dec: float, radius_arcmin: float) -> dict[str, list[dict]]:
+    """Every confirmed planet within the cone, grouped by hostname, in one query
+    (get_planets per host would be one query per host)."""
+    adql = (f"SELECT {PLANET_COLUMNS} FROM pscomppars "
+            f"WHERE CONTAINS(POINT('ICRS', ra, dec), "
+            f"CIRCLE('ICRS', {ra!r}, {dec!r}, {radius_arcmin / 60!r})) = 1 ORDER BY pl_orbper")
+    rows = tap_query(adql)
+    retrieved = now()
+    by_host: dict[str, list[dict]] = {}
+    for r in rows:
+        by_host.setdefault(r["hostname"], []).append(planet_record(r, adql, retrieved))
+    return by_host
+
+
+TOI_COLUMNS = ("toi, tid, tfopwg_disp, ra, dec, st_tmag, st_dist, st_teff, pl_orbper, pl_trandurh, "
+               "pl_trandep, pl_rade, pl_eqt, toi_created, rowupdate")
+# TFOPWG dispositions (TESS Follow-up Observing Program Working Group)
+TOI_DISPOSITION = {"PC": "planet candidate", "APC": "ambiguous planet candidate",
+                   "CP": "confirmed planet", "KP": "known planet",
+                   "FP": "false positive", "FA": "false alarm"}
+
+
+def radec_box(ra: float, dec: float, radius_deg: float) -> str:
+    """An ADQL condition for the RA/Dec box around a circle, for tables with no
+    spatial index (CONTAINS fails on them). Handles RA wrap-around and the poles."""
+    dec_lo, dec_hi = max(-90.0, dec - radius_deg), min(90.0, dec + radius_deg)
+    where = f"dec BETWEEN {dec_lo!r} AND {dec_hi!r}"
+    if max(abs(dec_lo), abs(dec_hi)) >= 89.999:
+        return where  # the box contains a pole: every RA
+    half = radius_deg / math.cos(math.radians(max(abs(dec_lo), abs(dec_hi))))
+    if half >= 180:
+        return where
+    lo, hi = (ra - half) % 360, (ra + half) % 360
+    if lo <= hi:
+        return f"{where} AND ra BETWEEN {lo!r} AND {hi!r}"
+    return f"{where} AND (ra >= {lo!r} OR ra <= {hi!r})"
+
+
+def toi_cone_search(ra: float, dec: float, radius_arcmin: float) -> dict:
+    """TESS Objects of Interest within `radius_arcmin` of (ra, dec), nearest first.
+
+    The toi table has no spatial index, so this queries the RA/Dec box around the
+    cone and keeps the rows inside the circle. Positions are J2000 (TIC)."""
+    adql = (f"SELECT {TOI_COLUMNS} FROM toi WHERE {radec_box(ra, dec, radius_arcmin / 60)} "
+            "ORDER BY toi")
+    rows = tap_query(adql)
+    retrieved = now()
+    tois = []
+    for r in rows:
+        separation = separation_arcsec(ra, dec, r["ra"], r["dec"])
+        if separation > radius_arcmin * 60:
+            continue  # in the box's corners, outside the circle
+        tois.append({
+            "kind": "catalog_row", "archive": "NASA Exoplanet Archive (toi)",
+            "native_id": f"TOI-{r['toi']}", "tic_id": r["tid"], "ra": r["ra"], "dec": r["dec"],
+            "separation_arcsec": round(separation, 1),
+            "disposition_code": r["tfopwg_disp"],
+            "disposition": TOI_DISPOSITION.get(r["tfopwg_disp"], r["tfopwg_disp"]),
+            "tess_mag": r["st_tmag"], "distance_pc": r["st_dist"], "teff_k": r["st_teff"],
+            "orbital_period_days": r["pl_orbper"], "transit_duration_hours": r["pl_trandurh"],
+            "transit_depth_ppm": r["pl_trandep"], "radius_earth": r["pl_rade"],
+            "equilibrium_temp_k": r["pl_eqt"], "created": r["toi_created"], "updated": r["rowupdate"],
+            "query": adql, "access_url": TAP_URL, "retrieved_at": retrieved})
+    tois.sort(key=lambda t: t["separation_arcsec"])
+    return {"center": {"ra": ra, "dec": dec}, "radius_arcmin": radius_arcmin,
+            "n_tois": len(tois), "tois": tois}
 
 
 # ------------------------------------------------------------------ Tool wrappers
