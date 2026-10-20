@@ -18,6 +18,14 @@ chat = [
 ]
 # The exoplanet data source runs Xuan Ji's exoplanets/archive.py (plain requests).
 exoplanets = ["requests>=2.32,<3"]
+# The monthly dataset scout: ADS over httpx, the agentbook loop (jsonschema), and
+# a model client. Data sources it generates query TAP with pyvo.
+scout = [
+    "scoop-sky[literature]",
+    "jsonschema>=4.21,<5",
+    "anthropic>=0.49,<1",
+    "pyvo>=1.5,<2",
+]
 server = [
     "scoop-sky[chat,literature]",
     "starlette>=0.46,<2",

@@ -43,6 +43,7 @@ archive.
 | Skill | Use it for |
 |---|---|
 | [new_survey_skill](meta/new_survey_skill.md) | Writing a skill for a survey or archive that isn't listed here (or whose release changed), including facilities whose data aren't public yet |
+| [dataset_scout](meta/dataset_scout.md) | The monthly scan for datasets SCOOP is missing or has gone stale on: running it, reviewing what it produced, and changing what it looks for (`python -m scoop.scout`) |
 
 ## To write
 
