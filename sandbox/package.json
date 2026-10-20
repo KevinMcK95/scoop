@@ -1,0 +1,12 @@
+{
+  "name": "scoop-python-sandbox",
+  "private": true,
+  "type": "module",
+  "description": "Pyodide (Python in WebAssembly) runner for the SCOOP agent's run_python tool",
+  "scripts": {
+    "setup": "node runner.mjs --setup"
+  },
+  "dependencies": {
+    "pyodide": "0.28.3"
+  }
+}

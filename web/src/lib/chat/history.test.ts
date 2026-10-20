@@ -29,6 +29,14 @@ describe('conversation history', () => {
     expect(kept[0].id).toBe(`c${MAX_CONVERSATIONS + 4}`);
   });
 
+  it('keeps run_python code and output but not images', () => {
+    const messages: ChatMessage[] = [...ask('q'), { id: 3, role: 'tool', text: 'run_python', status: 'success',
+      detail: { code: 'print(1)', output: '1', image: 'data:image/png;base64,AAAA' } }];
+    saveConversation({ id: 'a', title: '', field: null, updatedAt: 1, messages });
+    expect(loadConversations()[0].messages[2].detail).toEqual({ code: 'print(1)', output: '1' });
+    expect(messages[2].detail?.image).toBeDefined();
+  });
+
   it('works without storage and survives garbage', () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); } });
     expect(loadConversations()).toEqual([]);

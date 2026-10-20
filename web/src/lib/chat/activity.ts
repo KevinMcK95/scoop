@@ -16,7 +16,8 @@ const STEPS: Record<string, string> = {
   ads_paper: 'Read a paper',
   ads_citations: 'Followed citations',
   web_search: 'Searched the web',
-  web_fetch: 'Read a web page'
+  web_fetch: 'Read a web page',
+  run_python: 'Ran Python'
 };
 
 export function stepLabel(tool: string): string {

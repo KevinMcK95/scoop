@@ -1130,6 +1130,34 @@ body.resizing-y * {
 .activity .step.failed {
   color: #d08770;
 }
+.step-detail summary {
+  cursor: pointer;
+  font-size: 10.5px;
+}
+.step-detail pre {
+  margin: 4px 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--panel);
+  font-family: var(--mono);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  color: inherit;
+}
+.step-detail pre.failed {
+  color: #d08770;
+}
+.step-image {
+  display: block;
+  max-width: min(100%, 360px);
+  margin: 4px 0;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
 .context-note {
   margin-top: 6px;
   font-size: 10px;

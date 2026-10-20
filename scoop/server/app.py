@@ -29,6 +29,7 @@ from starlette.routing import Route
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from ..chat.visual import build_map_tools
+from ..chat.python_tool import build_python_tools
 from ..chat.web_tools import build_web_tools
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
@@ -91,9 +92,15 @@ def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> li
                     events.append({"type": "tool_call", "id": call["id"], "name": call["name"],
                                    "args": call["args"]})
             elif isinstance(message, ToolMessage):
-                events.append({"type": "tool_result", "id": message.tool_call_id,
-                               "name": message.name or names.get(message.tool_call_id), "status": message.status,
-                               "summary": message.content})
+                event = {"type": "tool_result", "id": message.tool_call_id,
+                         "name": message.name or names.get(message.tool_call_id), "status": message.status,
+                         "summary": message.content}
+                # Shown with the step: what run_python ran and printed, and any image a tool returned.
+                artifact = message.artifact if isinstance(message.artifact, dict) else {}
+                for key in ("image", "code", "output", "error"):
+                    if isinstance(artifact.get(key), str):
+                        event[key] = artifact[key]
+                events.append(event)
         for artifact_id, payload in node_update.get("artifacts", {}).items():
             if artifact_id not in artifacts_seen:
                 artifacts_seen.add(artifact_id)
@@ -148,6 +155,7 @@ def create_app(
     lvdb: Any = None,
     fetch_image: Any = None,
     web: tuple[Any, Any] | None = None,
+    python: Any = None,
     settings: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
@@ -156,7 +164,7 @@ def create_app(
 
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
-    a (search, read) pair from scoop.web for the web tools. With
+    a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox. With
     ``audit_path``, each turn appends one JSON line (no message text).
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -307,6 +315,7 @@ def create_app(
                                     add_source=add_source if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
         tools = [*map_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+                 *(build_python_tools(python, field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
