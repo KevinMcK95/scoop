@@ -14,7 +14,9 @@ const STEPS: Record<string, string> = {
   run_cone: 'Started a cone search',
   ads_search: 'Searched ADS',
   ads_paper: 'Read a paper',
-  ads_citations: 'Followed citations'
+  ads_citations: 'Followed citations',
+  web_search: 'Searched the web',
+  web_fetch: 'Read a web page'
 };
 
 export function stepLabel(tool: string): string {

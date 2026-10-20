@@ -29,6 +29,7 @@ from starlette.routing import Route
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from ..chat.visual import build_map_tools
+from ..chat.web_tools import build_web_tools
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
@@ -146,6 +147,7 @@ def create_app(
     jobs: Any = None,
     lvdb: Any = None,
     fetch_image: Any = None,
+    web: tuple[Any, Any] | None = None,
     settings: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
@@ -153,7 +155,8 @@ def create_app(
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
     The ADS client must already be active (entered) for the app's lifetime.
-    Map tools are rebuilt per turn for the field and layers the browser reports. With
+    Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
+    a (search, read) pair from scoop.web for the web tools. With
     ``audit_path``, each turn appends one JSON line (no message text).
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -303,7 +306,7 @@ def create_app(
                                     jobs=jobs, lvdb=lvdb, fetch_image=fetch_image,
                                     add_source=add_source if fields else None,
                                     field_keys=[f["key"] for f in fields.keys()] if fields else [])
-        tools = [*map_tools, *ads_tools(),
+        tools = [*map_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
