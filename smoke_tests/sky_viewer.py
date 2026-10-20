@@ -127,7 +127,7 @@ def _ellipse_radec(tgt, n_rhalf, ellipse_outline):
 
 
 def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
-                decisions, ellipse_outline) -> dict:
+                decisions, ellipse_outline, query_region=None) -> dict:
     """The field as JSON: what the standalone page and the SCOOP workspace both render."""
     obs = []
     for r in sel:
@@ -211,6 +211,8 @@ def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, regi
         "decisions": decisions,
         "surveys": SURVEYS, "colors": COLORS,
     }
+    if query_region is not None:  # a box, polygon or band (the spec, with its frame and cuts)
+        data["query_region"] = query_region
     # Round-trip check: every Gaia ID written into the page must be an exact ID from
     # the Gaia table (a rounded ID would point at a different star).
     known = {str(i) for i in np.asarray(gaia["source_id"])}
@@ -224,9 +226,9 @@ def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, regi
 
 
 def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
-                 decisions, ellipse_outline):
+                 decisions, ellipse_outline, query_region=None):
     data = viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
-                       decisions, ellipse_outline)
+                       decisions, ellipse_outline, query_region=query_region)
     # The workspace (web/) loads this file; the page below embeds the same data.
     path.with_name(path.name.replace("_viewer.html", "_field.json")).write_text(
         json.dumps({**data, "key": tgt["key"]}, separators=(",", ":")))

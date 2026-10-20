@@ -33,8 +33,10 @@ discovery = [
     "astropy>=7",
     "requests>=2.32,<3",
 ]
+# Stellar-stream tracks for region searches along streams (scoop/streams.py reads its files).
+streams = ["galstreams>=1.2.1,<2"]
 server = [
-    "scoop-sky[chat,literature,discovery]",
+    "scoop-sky[chat,literature,discovery,streams]",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",

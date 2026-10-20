@@ -37,6 +37,10 @@ from astropy.time import Time
 
 from ids import check_id_columns, to_int_id
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the scoop package, for regions
+from scoop.regions import Region, adql_condition  # noqa: E402
+
 LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
             "v1.1.1/comb_all.ecsv")
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
@@ -200,6 +204,17 @@ def query_mast(tgt, radius_deg: float, cache: Path):
     return obs, planned
 
 
+MAST_COLUMNS = {"intentType": str, "project": str, "calib_level": np.int64, "s_region": str, "obs_collection": str,
+                "instrument_name": str, "filters": str, "obs_id": str, "target_name": str, "t_min": float,
+                "t_max": float, "t_exptime": float, "proposal_id": str, "proposal_pi": str, "dataRights": str,
+                "s_ra": float, "s_dec": float, "obsid": str}
+
+
+def empty_mast() -> Table:
+    """No HST/JWST records, with the columns the rest of the pipeline reads."""
+    return Table({c: np.array([], dtype=d) for c, d in MAST_COLUMNS.items()})
+
+
 def select_observations(obs: Table, region_moc, tgt):
     """Science observations whose footprint overlaps the region; one row per dataset."""
     keep = np.ones(len(obs), bool)
@@ -237,8 +252,10 @@ def select_observations(obs: Table, region_moc, tgt):
         mocs.append((fm, shapes, inter.sky_fraction / fm.sky_fraction))
     sel = Table(rows=rows, names=obs.colnames) if rows else obs[:0]
     sel["frac_in_region"] = [m[2] for m in mocs]
-    note(f"Kept {len(sel)} HST/JWST observations whose footprints overlap the "
-         f"{N_RHALF:g} r_half ellipse (footprint polygons, not pointing centers).")
+    where = "region" if tgt.get("kind") == "region" else f"{N_RHALF:g} r_half ellipse"
+    if len(obs) or tgt.get("kind") != "region":
+        note(f"Kept {len(sel)} HST/JWST observations whose footprints overlap the "
+             f"{where} (footprint polygons, not pointing centers).")
     return sel, [m[0] for m in mocs], [m[1] for m in mocs]
 
 
@@ -395,7 +412,7 @@ def sdss_sql(sql: str) -> Table:
     return Table.read(text, format="ascii.csv")
 
 
-def query_spectra(tgt, radius_deg: float, cache: Path):
+def query_spectra(tgt, radius_deg: float, cache: Path, stars_only: bool = False):
     """Index rows (not the spectra themselves) for SDSS DR20 and DESI DR1 in the region.
 
     SDSS: allspec (SDSS-I to V, incl. APOGEE and MaNGA), plus the Gaia IDs SDSS-V
@@ -427,6 +444,37 @@ def query_spectra(tgt, radius_deg: float, cache: Path):
     sdss["survey_gaia_id"] = np.array([gmap.get(_int(x), 0) for x in sdss["sdss_id"]], dtype=np.int64)
     sdss["survey_gaia_release"] = "unknown"   # not documented in the pages we checked
 
+    try:
+        desi = query_desi(tgt, radius_deg, stars_only)
+    except Exception as e:  # one archive being down shouldn't lose the whole field
+        note(f"DESI DR1 (NOIRLab Data Lab) failed ({str(e)[:120]}); this field has no DESI spectra. "
+             "Re-run the field to try again.")
+        desi = Table({c: np.array([], dtype=d) for c, d in DESI_EMPTY_COLUMNS.items()})
+        sdss.write(p_sdss, overwrite=True)  # cache SDSS only, so a re-run retries DESI
+        return sdss, desi
+    for t, p in ((sdss, p_sdss), (desi, p_desi)):
+        for c in t.colnames:
+            if t[c].dtype == object:
+                t[c] = t[c].astype(str)
+        t.write(p, overwrite=True)
+    return sdss, desi
+
+
+OPTIONAL_ARCHIVES = {"hst_jwst": "HST/JWST observations", "qso": "QSO catalogs (MILLIQUAS, Quaia)",
+                     "spectra": "SDSS/DESI spectra"}
+MATCH_COLUMNS = {"gaia_source_id": np.int64, "match_method": str, "match_sep_arcsec": float}
+SDSS_EMPTY_COLUMNS = {"allspec_id": np.int64, "sdss_phase": str, "observatory": str, "instrument": str, "survey": str,
+                      "programname": str, "ra": float, "dec": float, "mjd": float, "sas_url": str, "cas_url": str,
+                      "apogee_id": str, "sdss_id": np.int64, "survey_gaia_id": np.int64, "survey_gaia_release": str,
+                      **MATCH_COLUMNS}
+DESI_EMPTY_COLUMNS = {"targetid": np.int64, "mean_fiber_ra": float, "mean_fiber_dec": float, "z": float,
+                      "zerr": float, "zwarn": np.int64, "spectype": str, "subtype": str, "survey": str,
+                      "program": str, "healpix": np.int64, "zcat_primary": bool, "mean_mjd": float,
+                      "survey_gaia_release": str, "survey_gaia_id": np.int64}
+
+
+def query_desi(tgt, radius_deg: float, stars_only: bool = False) -> Table:
+    """DESI DR1 redshift catalog rows (zpix) in a cone, with Milky Way Survey parameters."""
     import pyvo
     tap = pyvo.dal.TAPService(DATALAB_TAP)
     # Data Lab's TAP has no ADQL geometry; it takes the Q3C function in this form.
@@ -434,7 +482,7 @@ def query_spectra(tgt, radius_deg: float, cache: Path):
         "SELECT targetid, mean_fiber_ra, mean_fiber_dec, z, zerr, zwarn, spectype, subtype, "
         "survey, program, healpix, zcat_primary, mean_mjd FROM desi_dr1.zpix WHERE "
         f"'t' = q3c_radial_query(mean_fiber_ra, mean_fiber_dec, {tgt['ra']}, {tgt['dec']}, "
-        f"{radius_deg})").to_table()
+        f"{radius_deg})" + (" AND spectype = 'STAR'" if stars_only else "")).to_table()
     stars = np.unique(np.asarray(desi["targetid"])[np.asarray(desi["spectype"], str) == "STAR"])
     mws_rows = []
     for k in range(0, len(stars), 500):
@@ -453,12 +501,7 @@ def query_spectra(tgt, radius_deg: float, cache: Path):
         for sid, rc in zip(desi["source_id"] if "source_id" in desi.colnames else [0] * len(desi),
                            desi["ref_cat"] if "ref_cat" in desi.colnames else [""] * len(desi))],
         dtype=np.int64)
-    for t, p in ((sdss, p_sdss), (desi, p_desi)):
-        for c in t.colnames:
-            if t[c].dtype == object:
-                t[c] = t[c].astype(str)
-        t.write(p, overwrite=True)
-    return sdss, desi
+    return desi
 
 
 def _int(x) -> int:
@@ -665,7 +708,7 @@ def make_plot(tgt, sel, shapes_list, planned, gaia, mq, sg, out_png: Path,
         ax.plot(ex, ey, color=COLOR["ink"], lw=2 if n_r == 1 else 1.4, ls=ls, zorder=6)
     ax.plot(0, 0, marker="+", ms=14, mew=2.2, color=COLOR["ink"], zorder=7)
 
-    lim = 1.08 * N_RHALF * tgt["rhalf_arcmin"]
+    lim = 1.08 * N_RHALF * tgt["rhalf_arcmin"] * (1.3 if tgt.get("kind") == "region" else 1.0)
     ax.set_xlim(lim, -lim)                       # east to the left
     ax.set_ylim(-lim, lim)
     ax.set_aspect("equal")
@@ -750,13 +793,18 @@ def pct(f: float) -> str:
 
 
 def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov, out_md: Path):
-    lines = [f"# {tgt['name']}: HST/JWST imaging and Gaia within "
-             f"{N_RHALF:g} half-light radii", ""]
-    lines += [f"- Center (LVDB): RA {tgt['ra']:.4f}, Dec {tgt['dec']:+.4f}; "
-              f"r_half = {tgt['rhalf_arcmin']:.2f}′ (semi-major), e = {tgt['ellipticity']:.2f}, "
-              f"PA = {tgt['pa_deg']:.0f}° (ref: {tgt['ref_structure']})",
-              f"- Region: ellipse with semi-major axis {N_RHALF * tgt['rhalf_arcmin']:.2f}′",
-              ""]
+    if tgt.get("kind") == "region":
+        lines = [f"# {tgt['name']}: HST/JWST imaging and Gaia in the region", "",
+                 f"- Region centre: RA {tgt['ra']:.4f}, Dec {tgt['dec']:+.4f}; shape and source: "
+                 f"{tgt['ref_structure']} (see the decisions below)", ""]
+    else:
+        lines = [f"# {tgt['name']}: HST/JWST imaging and Gaia within "
+                 f"{N_RHALF:g} half-light radii", ""]
+        lines += [f"- Center (LVDB): RA {tgt['ra']:.4f}, Dec {tgt['dec']:+.4f}; "
+                  f"r_half = {tgt['rhalf_arcmin']:.2f}′ (semi-major), e = {tgt['ellipticity']:.2f}, "
+                  f"PA = {tgt['pa_deg']:.0f}° (ref: {tgt['ref_structure']})",
+                  f"- Region: ellipse with semi-major axis {N_RHALF * tgt['rhalf_arcmin']:.2f}′",
+                  ""]
     tel = np.asarray(sel["obs_collection"], str)
     lines += ["## Imaging", "",
               "| Telescope | Instrument | Obs. | Filters | Dates | Programs (PI) | Region covered |",
@@ -774,7 +822,7 @@ def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
             prog_txt += f", +{len(progs) - 6} more"
         lines.append(f"| {t} | {i} | {n} | {', '.join(filt[:8])}{' …' if len(filt) > 8 else ''} "
                      f"| {d0} – {d1} | {prog_txt} | {pct(region_cov.get((t, i), 0))} |")
-    lines += ["", "Region covered = fraction of the ellipse inside the union of that "
+    lines += ["", "Region covered = fraction of the region inside the union of that "
               "instrument's footprints.", ""]
     lines += ["### Longest baselines between overlapping images", ""]
     for k, (dt, a, b) in sorted(best.items()):
@@ -795,7 +843,7 @@ def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
     cand_txt = (f"- Not shown: the Gaia QSO candidate table ({int(qso.sum())} sources here"
                 + (f", {int(rrl.sum())} of them known Gaia RR Lyrae, i.e. member stars of "
                    f"{tgt['name']}" if rrl.any() else "") + "). ")
-    if rest.any():
+    if rest.any() and tgt.get("kind") != "region":
         f_rest = inside[rest].mean()
         verdict = ("so most are probably member stars too" if f_rest > 2 * expected
                    else "consistent with background objects")
@@ -837,6 +885,162 @@ def write_summary(tgt, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
     out_md.write_text("\n".join(lines) + "\n")
 
 
+# ── Regions (boxes, polygons, bands along stream tracks) ────────────────────
+
+def region_target(region, key: str) -> dict:
+    """A region shaped like a target so the rest of the pipeline runs: its centre, and an
+    r_half chosen so the viewer's field of view (2.6 r_half) spans the region."""
+    _, _, r = region.bounding_cone()
+    return {"key": key, "name": region.name, "ra": region.ra, "dec": region.dec,
+            "rhalf_arcmin": max(r, 0.01) * 60 / 1.3, "ellipticity": 1e-6, "pa_deg": 0.0,
+            "ref_structure": region.spec.get("source") or f"{region.kind} region", "distance_kpc": None,
+            "pmra": None, "pmdec": None, "ref_proper_motion": None, "kind": "region"}
+
+
+def region_outline(region):
+    """An ellipse_outline replacement: the region outline as sky offsets (arcmin) about
+    the centre (spherical offsets, valid at any size)."""
+    def outline(tgt, n_rhalf, n=361):
+        ring = np.array(region.outline())
+        return tangent_offsets(SkyCoord(tgt["ra"], tgt["dec"], unit="deg"), ring[:, 0], ring[:, 1])
+    return outline
+
+
+def region_moc(region):
+    from mocpy import MOC
+    if region.kind == "cone":
+        return MOC.from_cone(lon=region.ra * u.deg, lat=region.dec * u.deg, radius=Angle(region.radius * u.deg),
+                             max_depth=MOC_DEPTH)
+    return footprint_moc([np.array(p["polygon"]) for p in region.parts(pad_deg=0.0)])
+
+
+def _pm_prefilter(region, part, cuts) -> str:
+    """ADQL proper-motion circle around the track's motion in this part, wide enough to
+    hold the stream-frame window (applied exactly afterwards)."""
+    window = cuts.get("pm_window")
+    pm = region.track_values("pm_track") if region.kind == "band" else None
+    if not window or pm is None or "phi1" not in part:
+        return ""
+    phi1, _ = region.frame.to_frame(*np.array(region.spec["track"])[region._order].T)
+    lo, hi = part["phi1"]
+    sel = (phi1 >= lo - 1) & (phi1 <= hi + 1)
+    sel = sel if sel.any() else np.ones(len(phi1), bool)
+    centre = pm[sel].mean(axis=0)
+    spread = float(np.max(np.hypot(*(pm[sel] - centre).T)))
+    radius = float(np.hypot(*window)) + spread
+    return (f" AND POWER(g.pmra - ({centre[0]:.4f}), 2) + POWER(g.pmdec - ({centre[1]:.4f}), 2) "
+            f"< {radius ** 2:.4f}")
+
+
+def gaia_region_where(region, part, cuts) -> str:
+    where = adql_condition(part, "g.ra", "g.dec")
+    if cuts.get("gmax") is not None:
+        where += f" AND g.phot_g_mean_mag <= {float(cuts['gmax']):.3f}"
+    return where + _pm_prefilter(region, part, cuts)
+
+
+def count_region(region, cuts) -> dict:
+    """Gaia rows the region would return, per part: all, and with the cuts (an upper
+    bound for a stream-frame PM window, which is applied exactly only after the query)."""
+    from concurrent.futures import ThreadPoolExecutor
+    parts = region.parts()
+
+    def count(where):
+        res, _ = run_tap(f"SELECT COUNT(*) AS n FROM gaiadr3.gaia_source AS g WHERE {where}", "Gaia count")
+        return int(res["n"][0])
+
+    jobs = []
+    for part in parts:
+        jobs.append(adql_condition(part, "g.ra", "g.dec"))
+        jobs.append(gaia_region_where(region, part, cuts))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        n = list(pool.map(count, jobs))
+    return {"region": region.describe(), "cuts": cuts, "gaia_all": sum(n[0::2]), "gaia_with_cuts": sum(n[1::2]),
+            "per_part": [{"cone": p["cone"], "all": a, "with_cuts": b} for p, a, b in zip(parts, n[0::2], n[1::2])],
+            "note": "with_cuts is an upper bound when a stream-frame PM window is given: the query "
+                    "uses a circle that contains the window, and the exact window is applied afterwards."}
+
+
+def stream_pm_mask(gaia: Table, region, cuts) -> np.ndarray:
+    """Stars whose proper motion, in the stream frame, is within the window of the track's."""
+    window = cuts.get("pm_window")
+    if not window or region.kind != "band" or region.track_values("pm_track") is None:
+        return np.ones(len(gaia), bool)
+    ra, dec = np.asarray(gaia["ra"], float), np.asarray(gaia["dec"], float)
+    phi1, _ = region.frame.to_frame(ra, dec)
+    p1, p2 = region.frame.pm_to_frame(ra, dec, np.ma.filled(gaia["pmra"], np.nan).astype(float),
+                                      np.ma.filled(gaia["pmdec"], np.nan).astype(float))
+    t1, t2 = region.pm_track_frame(phi1)
+    return (np.abs(p1 - t1) <= window[0]) & (np.abs(p2 - t2) <= window[1])
+
+
+def query_gaia_region(region, cuts, cache: Path) -> Table:
+    from astropy.table import unique, vstack
+    path = cache / "gaia.ecsv"
+    if path.exists():
+        return Table.read(path)
+    tables = []
+    for i, part in enumerate(region.parts()):
+        where = gaia_region_where(region, part, cuts)
+        src, server = run_tap(f"SELECT {GAIA_COLS} FROM gaiadr3.gaia_source AS g WHERE {where}",
+                              f"gaia_source part {i + 1}")
+        qso, _ = run_tap("SELECT q.source_id, q.gaia_crf_source, q.classlabel_dsc_joint "
+                         "AS qso_classlabel_dsc_joint, q.redshift_qsoc FROM gaiadr3.qso_candidates "
+                         f"AS q JOIN gaiadr3.gaia_source AS g ON g.source_id = q.source_id WHERE {where}",
+                         "qso_candidates")
+        gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
+                         "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
+                         f"ON g.source_id = q.source_id WHERE {where}", "galaxy_candidates")
+        part_t = join(join(src, qso, keys="source_id", join_type="left"), gal, keys="source_id", join_type="left")
+        for c in part_t.colnames:
+            if part_t[c].dtype == object:
+                part_t[c] = part_t[c].astype(str)
+        tables.append(part_t)
+    note(f"Queried Gaia DR3 from the {server} in {len(tables)} piece(s) of the region; results are "
+         "identical to ESA's DR3.")
+    out = unique(vstack(tables, metadata_conflicts="silent"), keys="source_id")  # pieces overlap at their edges
+    cand = np.asarray(out["source_id"])[as_bool(out["in_qso_candidates"])]
+    rr_ids = []
+    for k in range(0, len(cand), 1000):
+        ids = ",".join(str(i) for i in cand[k:k + 1000])
+        res, _ = run_tap(f"SELECT source_id FROM gaiadr3.vari_rrlyrae WHERE source_id IN ({ids})", "vari_rrlyrae")
+        rr_ids += list(res["source_id"])
+    out["is_rrlyrae"] = np.isin(np.asarray(out["source_id"]), rr_ids)
+    out.write(path, overwrite=True)
+    return out
+
+
+def near_gaia(t: Table, ra: str, dec: str, gaia: Table, radius_arcsec: float = 3.0) -> np.ndarray:
+    """Rows that are one of these Gaia stars: the survey's own Gaia ID, or within radius."""
+    if not len(t) or not len(gaia):
+        return np.zeros(len(t), bool)
+    ids = set(np.asarray(gaia["source_id"]).tolist())
+    by_id = np.array([_int(x) in ids for x in t["survey_gaia_id"]], bool) if "survey_gaia_id" in t.colnames \
+        else np.zeros(len(t), bool)
+    _, sep, _ = SkyCoord(np.asarray(t[ra], float), np.asarray(t[dec], float), unit="deg").match_to_catalog_sky(
+        SkyCoord(np.asarray(gaia["ra"], float), np.asarray(gaia["dec"], float), unit="deg"))
+    return by_id | (sep < radius_arcsec * u.arcsec)
+
+
+def _per_part(region, cache: Path, fetch, key: str):
+    """Run a cone query (tgt, radius, cache) on small cones covering the region and merge
+    the results by key (callers then keep what is inside the region)."""
+    from astropy.table import unique, vstack
+    results = []
+    for i, (ra, dec, r) in enumerate(region.cover_cones()):
+        sub = cache / f"cone{i + 1}"
+        sub.mkdir(parents=True, exist_ok=True)
+        results.append(fetch({"ra": ra, "dec": dec}, r, sub))
+    if isinstance(results[0], tuple):
+        merged = []
+        for k, name in enumerate(key):
+            ts = [res[k] for res in results if len(res[k])]
+            merged.append(unique(vstack(ts, metadata_conflicts="silent"), keys=name) if ts else results[0][k])
+        return tuple(merged)
+    ts = [t for t in results if len(t)]
+    return unique(vstack(ts, metadata_conflicts="silent"), keys=key) if ts else results[0]
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def cone_target(name: str, ra: float, dec: float, radius_arcmin: float, key: str) -> dict:
@@ -849,7 +1053,7 @@ def cone_target(name: str, ra: float, dec: float, radius_arcmin: float, key: str
 
 
 def main():
-    global N_RHALF
+    global N_RHALF, ellipse_outline
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--lvdb-key", default="draco_1")
@@ -857,7 +1061,15 @@ def main():
     p.add_argument("--ra", type=float, help="cone search instead of an LVDB object: center RA (deg)")
     p.add_argument("--dec", type=float, help="cone center Dec (deg)")
     p.add_argument("--radius-arcmin", type=float, help="cone radius (arcmin)")
-    p.add_argument("--name", help="label for the cone (and output key)")
+    p.add_argument("--name", help="label for the cone or region (and output key)")
+    p.add_argument("--region", type=Path,
+                   help="JSON region spec (scoop/regions.py: box, polygon, band along a track), with "
+                        "optional \"cuts\": {\"gmax\": G limit, \"pm_window\": [w_phi1, w_phi2] mas/yr "
+                        "in the stream frame around the track's proper motion}")
+    p.add_argument("--count-only", action="store_true",
+                   help="with --region: print the Gaia row counts as JSON and stop")
+    p.add_argument("--max-gaia-rows", type=int, default=60_000,
+                   help="with --region: refuse to fetch more Gaia rows than this (count first)")
     p.add_argument("--show-qso-candidates", action="store_true",
                    help="also plot the (impure) Gaia DR3 QSO candidate table")
     p.add_argument("--serve", action="store_true",
@@ -868,7 +1080,40 @@ def main():
     cache = args.out / "cache"
     cache.mkdir(parents=True, exist_ok=True)
 
-    if args.ra is not None:
+    qregion, cuts, extras = None, {}, set(OPTIONAL_ARCHIVES)
+    if args.region is not None:
+        spec = json.loads(args.region.read_text())
+        cuts = spec.pop("cuts", {}) or {}
+        # Region searches fetch Gaia and SIMBAD galaxies; the rest only when asked for.
+        extras = set(spec.get("archives") or []) | ({"hst_jwst"} if spec.get("hst_jwst") else set())
+        unknown = extras - set(OPTIONAL_ARCHIVES)
+        if unknown:
+            raise SystemExit(f"unknown archives {sorted(unknown)}; optional ones: {OPTIONAL_ARCHIVES}")
+        qregion = Region.from_spec(spec)
+        if args.count_only:
+            print("COUNTS " + json.dumps(count_region(qregion, cuts)))
+            return
+        key = re.sub(r"[^a-z0-9]+", "_", (args.name or qregion.name).lower()).strip("_")
+        tgt = region_target(qregion, key)
+        N_RHALF = 1.0
+        ellipse_outline = region_outline(qregion)
+        print(f"{tgt['name']}: {json.dumps(qregion.describe())}")
+        d = qregion.describe()
+        note(f"Searched a {qregion.kind} region ({d['area_deg2']:g} deg², {d['pieces']} piece(s) for the archive "
+             f"queries)" + (f"; source: {spec.get('source')}" if spec.get("source") else "") + ".")
+        skipped = [OPTIONAL_ARCHIVES[a] for a in OPTIONAL_ARCHIVES if a not in extras]
+        note("Fetched Gaia DR3 and SIMBAD galaxies" + (f"; did not look up {', '.join(skipped)} (off by default for "
+             "region searches; ask to include them)" if skipped else "") + ".")
+        if cuts:
+            note("Gaia cuts: " + ", ".join(
+                [f"G ≤ {cuts['gmax']}"] * (cuts.get("gmax") is not None)
+                + [f"proper motion within ±{cuts['pm_window'][0]} (φ1) and ±{cuts['pm_window'][1]} (φ2) mas/yr "
+                   "of the track's, in the stream frame"] * bool(cuts.get("pm_window"))) + ".")
+        counts = count_region(qregion, cuts)
+        if counts["gaia_with_cuts"] > args.max_gaia_rows:
+            raise SystemExit(f"Gaia would return up to {counts['gaia_with_cuts']} rows (limit "
+                             f"{args.max_gaia_rows}); add cuts or shrink the region")
+    elif args.ra is not None:
         if args.dec is None or not args.radius_arcmin:
             p.error("a cone needs --ra, --dec and --radius-arcmin")
         key = re.sub(r"[^a-z0-9]+", "_", (args.name or f"cone {args.ra:.4f} {args.dec:+.4f}").lower()).strip("_")
@@ -885,15 +1130,26 @@ def main():
     a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
     query_radius = 1.02 * a_deg            # circle enclosing the ellipse
 
-    region = ellipse_moc(tgt, N_RHALF)
-    obs, planned = query_mast(tgt, query_radius, cache)
+    if qregion is not None and "hst_jwst" not in extras:
+        region = region_moc(qregion)
+        obs, planned = empty_mast(), empty_mast()
+        inside = lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float))  # noqa: E731
+    elif qregion is not None:
+        region = region_moc(qregion)
+        obs, planned = _per_part(qregion, cache, query_mast, ("obsid", "obsid"))
+        inside = lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float))  # noqa: E731
+    else:
+        region = ellipse_moc(tgt, N_RHALF)
+        obs, planned = query_mast(tgt, query_radius, cache)
+        inside = None
     sel, mocs, shapes = select_observations(obs, region, tgt)
     if len(planned):
         pm = [footprint_moc(parse_s_region(r["s_region"])) for r in planned]
         planned = planned[[m is not None and m.intersection(region).sky_fraction > 0
                            for m in pm]]
-    note(f"Checked for planned (not yet executed) JWST observations: {len(planned)} "
-         f"overlap the region.")
+    if "hst_jwst" in extras:
+        note(f"Checked for planned (not yet executed) JWST observations: {len(planned)} "
+             f"overlap the region.")
 
     region_cov = {}
     tel, inst = np.asarray(sel["obs_collection"], str), np.asarray(sel["instrument_name"], str)
@@ -905,12 +1161,19 @@ def main():
         region_cov[key] = union.intersection(region).sky_fraction / region.sky_fraction
     best = baselines(sel, mocs)
 
-    gaia = query_gaia(tgt, query_radius, cache)
+    gaia = query_gaia_region(qregion, cuts, cache) if qregion is not None else query_gaia(tgt, query_radius, cache)
     center = SkyCoord(tgt["ra"], tgt["dec"], unit="deg")
     check_id_columns(gaia, "Gaia")
     gaia["xi"], gaia["eta"] = tangent_offsets(center, gaia["ra"], gaia["dec"])
-    gaia["r_ell"] = elliptical_radius(gaia["xi"], gaia["eta"], tgt)
-    gaia = gaia[gaia["r_ell"] <= N_RHALF]
+    if qregion is not None:
+        gaia["r_ell"] = np.full(len(gaia), np.nan)
+        n0 = len(gaia)
+        gaia = gaia[inside(gaia) & stream_pm_mask(gaia, qregion, cuts)]
+        note(f"Kept {len(gaia)} of {n0} Gaia sources inside the region"
+             + (" and the stream-frame proper-motion window." if cuts.get("pm_window") else "."))
+    else:
+        gaia["r_ell"] = elliptical_radius(gaia["xi"], gaia["eta"], tgt)
+        gaia = gaia[gaia["r_ell"] <= N_RHALF]
     gaia["is_qso_cand"] = as_bool(gaia["in_qso_candidates"])
     gaia["is_gal_cand"] = as_bool(gaia["in_galaxy_candidates"])
     gaia["is_crf"] = as_bool(gaia["gaia_crf_source"]) & gaia["is_qso_cand"]
@@ -922,9 +1185,14 @@ def main():
     gaia["is_rrlyrae"] = as_bool(gaia["is_rrlyrae"])
 
     # Trusted QSOs: Gaia-CRF3, Quaia (by source_id), MILLIQUAS (by position).
-    mq, quaia = query_qso_catalogs(tgt, query_radius, cache)
+    if qregion is not None and "qso" not in extras:
+        mq, quaia = _with_columns(Table(), "milliquas"), _with_columns(Table(), "quaia")
+    elif qregion is not None:
+        mq, quaia = _per_part(qregion, cache, query_qso_catalogs, ("Name", "GaiaDR3"))
+    else:
+        mq, quaia = query_qso_catalogs(tgt, query_radius, cache)
     mq["xi"], mq["eta"] = tangent_offsets(center, mq["RAJ2000"], mq["DEJ2000"])
-    mq = mq[elliptical_radius(mq["xi"], mq["eta"], tgt) <= N_RHALF]
+    mq = mq[inside(mq, "RAJ2000", "DEJ2000")] if inside else mq[elliptical_radius(mq["xi"], mq["eta"], tgt) <= N_RHALF]
     # Class letters Q/A/B/K/N require a spectroscopic redshift; a bare R/X/2 (or S)
     # type is a radio/X-ray-associated candidate (ReadMe note 3).
     mq["confirmed"] = np.array([str(t)[:1] in "QABKN" and str(t)[:1] != ""
@@ -940,35 +1208,64 @@ def main():
                for c, e in (("parallax", "parallax_error"), ("pmra", "pmra_error"),
                             ("pmdec", "pmdec_error")))
     gaia["qso_astrometry_ok"] = chi2 < 14.16  # 3σ for 3 degrees of freedom
-    note(f"Showing trusted QSOs only: Gaia-CRF3 ({int(gaia['is_crf'].sum())}), Quaia "
-         f"({int(gaia['in_quaia'].sum())}) and MILLIQUAS ({len(mq)}). Quaia comes from "
-         f"VizieR, which has only its cleaner G < 20.0 sample.")
-    sg = query_simbad_galaxies(tgt, query_radius, cache)
+    if "qso" not in extras:
+        note(f"Trusted QSOs: Gaia-CRF3 only ({int(gaia['is_crf'].sum())}, flagged in Gaia itself).")
+    else:
+        note(f"Showing trusted QSOs only: Gaia-CRF3 ({int(gaia['is_crf'].sum())}), Quaia "
+             f"({int(gaia['in_quaia'].sum())}) and MILLIQUAS ({len(mq)}). Quaia comes from "
+             f"VizieR, which has only its cleaner G < 20.0 sample.")
+    sg = (_per_part(qregion, cache, query_simbad_galaxies, "main_id") if qregion is not None
+          else query_simbad_galaxies(tgt, query_radius, cache))
     sg["xi"], sg["eta"] = tangent_offsets(center, sg["ra"], sg["dec"])
-    sg = sg[elliptical_radius(sg["xi"], sg["eta"], tgt) <= N_RHALF]
+    sg = sg[inside(sg)] if inside else sg[elliptical_radius(sg["xi"], sg["eta"], tgt) <= N_RHALF]
     sg = match_gaia_to_galaxies(sg, gaia)
     note(f"Added {len(sg)} SIMBAD galaxies (not AGN) as an independent check on Gaia's "
          f"galaxy flag: {int(sg['gaia_match'].sum())} have a Gaia source within 2″, and Gaia "
          f"flagged {int(sg['gaia_gal_cand'].sum())} of those as galaxy candidates.")
-    sdss, desi = query_spectra(tgt, query_radius, cache)
-    for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
-        xi_, eta_ = tangent_offsets(center, t[ra], t[dec])
-        t.remove_rows(np.flatnonzero(elliptical_radius(xi_, eta_, tgt) > N_RHALF))
+    if qregion is not None and "spectra" not in extras:
+        sdss = Table({c: np.array([], dtype=d) for c, d in SDSS_EMPTY_COLUMNS.items()})
+        desi = Table({c: np.array([], dtype=d) for c, d in {**DESI_EMPTY_COLUMNS, **MATCH_COLUMNS}.items()})
+    elif qregion is not None:
+        big = qregion.area_deg2 > 20
+        if big:
+            note(f"The region is large ({qregion.area_deg2:.0f} deg²), so only DESI spectra classified as "
+                 "stars are listed (galaxies and QSOs would dominate).")
+        fetch = lambda t, r, c: query_spectra(t, r, c, stars_only=big)  # noqa: E731
+        sdss, desi = _per_part(qregion, cache, fetch, ("allspec_id", ["targetid", "survey", "program"]))
+        for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
+            t.remove_rows(np.flatnonzero(~inside(t, ra, dec)))
+        if big:
+            n_sdss, n_desi = len(sdss), len(desi)
+            for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
+                t.remove_rows(np.flatnonzero(~near_gaia(t, ra, dec, gaia)))
+            note(f"Kept only spectra of the {len(gaia)} Gaia stars in this field (by Gaia ID or within 3″): "
+                 f"{len(sdss)} of {n_sdss} SDSS and {len(desi)} of {n_desi} DESI. Over a large region the "
+                 "rest (mostly galaxies) would swamp the field.")
+    else:
+        sdss, desi = query_spectra(tgt, query_radius, cache)
+        for t, ra, dec in ((sdss, "ra", "dec"), (desi, "mean_fiber_ra", "mean_fiber_dec")):
+            xi_, eta_ = tangent_offsets(center, t[ra], t[dec])
+            t.remove_rows(np.flatnonzero(elliptical_radius(xi_, eta_, tgt) > N_RHALF))
     check_id_columns(sdss, "SDSS spectra")
     check_id_columns(desi, "DESI spectra")
     check_id_columns(quaia, "Quaia")
-    match_spectra_to_gaia(gaia, sdss, desi, cache)
+    if len(sdss) or len(desi):
+        match_spectra_to_gaia(gaia, sdss, desi, cache)
+    else:  # nothing to match (and no 2MASS lookups for every Gaia source)
+        gaia["has_sdss"] = np.zeros(len(gaia), bool)
+        gaia["has_desi"] = np.zeros(len(gaia), bool)
     check_id_columns(sdss, "SDSS spectra (matched)")
     check_id_columns(desi, "DESI spectra (matched)")
-    for name, t in (("SDSS", sdss), ("DESI", desi)):
+    for name, t in (("SDSS", sdss), ("DESI", desi)) if "spectra" in extras else ():
         how = Counter(m for m in np.asarray(t["match_method"], str) if m)
         note(f"Matched {name} spectra to Gaia by " + (", ".join(f"{k} ({v})" for k, v in
              how.most_common()) or "nothing") + f"; {int((np.asarray(t['gaia_source_id']) == 0).sum())} "
              "have no Gaia match (often galaxies, or stars too faint for Gaia).")
-    note(f"Looked up spectra in the region: {len(sdss)} SDSS spectra (DR20 index, SDSS-I to V "
-         f"incl. APOGEE and MaNGA) and {len(desi)} DESI DR1 spectra; "
-         f"{int(gaia['has_sdss'].sum())} and {int(gaia['has_desi'].sum())} Gaia sources have "
-         f"a match. Click a source in the viewer to see its spectra.")
+    if "spectra" in extras:
+        note(f"Looked up spectra in the region: {len(sdss)} SDSS spectra (DR20 index, SDSS-I to V "
+             f"incl. APOGEE and MaNGA) and {len(desi)} DESI DR1 spectra; "
+             f"{int(gaia['has_sdss'].sum())} and {int(gaia['has_desi'].sum())} Gaia sources have "
+             f"a match. Click a source in the viewer to see its spectra.")
     note(f"Hid the Gaia QSO candidate table ({int(gaia['is_qso_cand'].sum())} sources here, "
          f"{int((gaia['is_qso_cand'] & gaia['is_rrlyrae']).sum())} of them known Gaia RR "
          f"Lyrae): it's too impure, especially in a dwarf galaxy. Use "
@@ -992,7 +1289,8 @@ def main():
     from sky_viewer import write_viewer
     write_viewer(Path(f"{stem}_viewer.html"), tgt, N_RHALF, sel, planned, gaia, mq, sg,
                  sdss, desi, best,
-                 region_cov, DECISIONS, ellipse_outline)
+                 region_cov, DECISIONS, ellipse_outline,
+                 query_region=None if qregion is None else {**qregion.to_spec(), "cuts": cuts})
     print(f"Wrote {stem}_viewer.html, _map.png, _images.csv, _gaia.csv, _summary.md")
     if args.serve:
         serve(args.out, f"{tgt['key']}_viewer.html", args.port)

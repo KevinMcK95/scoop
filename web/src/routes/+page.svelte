@@ -152,6 +152,8 @@
       <button aria-expanded={layersOpen} aria-controls="layers-drawer" onclick={toggleLayers}>Layers</button>
       <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>
       <button aria-expanded={chatOpen} aria-controls="chat-drawer" onclick={toggleChat}>Chat</button>
+      <button class="new-search" disabled={workspace.busy} title="Clear the field, layers and chat, and start from the start page"
+        onclick={() => { workspace.newSearch(); landing = true; }}>New search</button>
     </nav>
     <span class="demo-label">
       {workspace.field?.target.name ?? ''}

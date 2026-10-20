@@ -155,3 +155,31 @@ change: the map tools switch to it at once). The other tools now switch too:
   `build_handoff_tool` and `scoop/chat/pm_tools.py` `build_pm_tools` accept either a
   field or a function returning it; passing a field works as before.
 - Test: `tests/test_server.py::StartPageTests` (load_field then a PM tool, in one turn).
+
+## Regions beyond cones (boxes, polygons, stream tracks) and New search
+
+New: `scoop/regions.py` (region shapes, great-circle stream frames), `scoop/streams.py`
+(galstreams tracks, read from its files), `scoop/chat/region_tools.py` (`find_stream`,
+`plan_region`, `run_region`). Changes to shared code, all additive:
+
+- `smoke_tests/lvdb_field.py`: `--region spec.json` (with `--count-only` and
+  `--max-gaia-rows`). Region searches fetch only Gaia (polygon ADQL per piece, optional
+  G limit and a stream-frame proper-motion window) and SIMBAD galaxies; HST/JWST, QSO
+  catalogs and spectra only when the spec lists them in `archives`. Cone-only archives are
+  queried on small cones covering the region (`Region.cover_cones`). DESI failures no
+  longer fail the whole run (decision note; not cached, so a re-run retries). LVDB and
+  cone runs are unchanged (checked on Draco).
+- `smoke_tests/sky_viewer.py`: `viewer_data` / `write_viewer` take `query_region` and
+  write it into the field JSON.
+- `scoop/fields.py`: fields keep `query_region`; for bands, point tables get `phi1`,
+  `phi2`, `dphi2` and (with proper motions) `pm_phi1`, `pm_phi2`, `dpm_phi1`, `dpm_phi2`,
+  and Gaia gets stream-frame plot presets.
+- `scoop/chat/visual.py`: `_coverage` tests circles against `query_region` when a field
+  has one (a long band's outline is too large for the tangent-plane polygon test);
+  `run_cone`'s docstring points to `plan_region` for other shapes.
+- `scoop/server/jobs.py`: region plans (`save_plan`, `load_plan`, `count_plan`,
+  `start_region`), stored under `<fields>/region_plans/`; `_launch` takes a timeout.
+- `scoop/server/app.py`: each turn gets the region tools.
+- `web/src/lib/workspace/state.svelte.ts` `newSearch()` and a **New search** button in
+  `web/src/routes/+page.svelte`: clears the field, layers, plot, highlights and drawings,
+  starts a new conversation and returns to the start page.

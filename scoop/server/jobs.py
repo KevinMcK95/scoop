@@ -7,6 +7,7 @@ output lands in ``<fields>/<key>/<key>_field.json``, where FieldStore finds it.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 import time
@@ -19,6 +20,7 @@ KEY = re.compile(r"[a-z0-9_]{1,64}")
 NAME = re.compile(r"[^\W_][\w .+\-()′'\"]{0,59}")
 MAX_CONE_ARCMIN = 60.0  # larger cones exceed the pipeline's Gaia row-limit check
 MAX_LINES = 200
+PLAN = re.compile(r"[0-9a-f]{12}")
 
 
 @dataclass
@@ -45,6 +47,7 @@ class JobManager:
     def __init__(self, fields_root: Path, script: Path, python: str = sys.executable,
                  timeout_s: float = 900.0) -> None:
         self.root, self.script, self.python, self.timeout_s = Path(fields_root), Path(script), python, timeout_s
+        self.plans = self.root / "region_plans"
         self.jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task] = set()
 
@@ -75,25 +78,69 @@ class JobManager:
         return self._launch(key, 1.0, ["--ra", repr(float(ra)), "--dec", repr(float(dec)),
                                        "--radius-arcmin", repr(float(radius_arcmin)), "--name", name])
 
-    def _launch(self, key: str, n_rhalf: float, args: list[str]) -> Job:
+    # ── Regions: a plan is a saved spec (with cuts), counted before it is run ──
+    def save_plan(self, spec: dict, name: str) -> str:
+        """Store a region spec (validated by the caller) under a new plan id."""
+        if not isinstance(name, str) or not NAME.fullmatch(name):
+            raise ValueError("name must be 1-60 letters, digits, spaces or simple punctuation")
+        plan_id = uuid.uuid4().hex[:12]
+        self.plans.mkdir(parents=True, exist_ok=True)
+        (self.plans / f"{plan_id}.json").write_text(json.dumps({"name": name, "spec": spec}))
+        return plan_id
+
+    def load_plan(self, plan_id: str) -> dict | None:
+        path = self.plans / f"{plan_id}.json"
+        return json.loads(path.read_text()) if PLAN.fullmatch(plan_id or "") and path.exists() else None
+
+    async def count_plan(self, plan_id: str, timeout_s: float = 300.0) -> dict:
+        """Gaia row counts for a plan (the pipeline's --count-only), without building a field."""
+        if self.load_plan(plan_id) is None:
+            raise ValueError(f"no region plan {plan_id!r}")
+        process = await asyncio.create_subprocess_exec(
+            self.python, str(self.script.resolve()), "--out", str(self.plans / f"{plan_id}_count"),
+            "--region", str(self.plans / f"{plan_id}.json"), "--count-only", cwd=str(self.script.parent),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            async with asyncio.timeout(timeout_s):
+                output = (await process.communicate())[0].decode(errors="replace")
+        except TimeoutError:
+            process.kill()
+            raise RuntimeError(f"counting timed out after {timeout_s:.0f} s")
+        line = next((l for l in output.splitlines() if l.startswith("COUNTS ")), None)
+        if line is None:
+            tail = [l for l in output.splitlines() if l.strip()][-3:]
+            raise RuntimeError("counting failed: " + " | ".join(tail))
+        return json.loads(line[len("COUNTS "):])
+
+    def start_region(self, plan_id: str, max_gaia_rows: int) -> Job:
+        plan = self.load_plan(plan_id)
+        if plan is None:
+            raise ValueError(f"no region plan {plan_id!r}")
+        key = re.sub(r"[^a-z0-9]+", "_", plan["name"].lower()).strip("_")
+        if not KEY.fullmatch(key):
+            raise ValueError("the plan's name must contain letters or digits")
+        return self._launch(key, 1.0, ["--region", str(self.plans / f"{plan_id}.json"), "--name", plan["name"],
+                                       "--max-gaia-rows", str(int(max_gaia_rows))], timeout_s=max(self.timeout_s, 2400))
+
+    def _launch(self, key: str, n_rhalf: float, args: list[str], timeout_s: float | None = None) -> Job:
         for job in self.jobs.values():
             if job.key == key and job.status == "running":
                 return job
         job = Job(id=uuid.uuid4().hex[:12], key=key, n_rhalf=n_rhalf, args=args)
         self.jobs[job.id] = job
-        task = asyncio.get_running_loop().create_task(self._run(job))
+        task = asyncio.get_running_loop().create_task(self._run(job, timeout_s or self.timeout_s))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job
 
-    async def _run(self, job: Job) -> None:
+    async def _run(self, job: Job, timeout_s: float) -> None:
         out = (self.root / job.key).resolve()
         try:
             process = await asyncio.create_subprocess_exec(
                 self.python, str(self.script.resolve()), "--out", str(out), *job.args,
                 cwd=str(self.script.parent),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-            async with asyncio.timeout(self.timeout_s):
+            async with asyncio.timeout(timeout_s):
                 async for raw in process.stdout:
                     line = raw.decode(errors="replace").rstrip()
                     if not line:
@@ -110,7 +157,7 @@ class JobManager:
                                  f"exit code {code}")
         except TimeoutError:
             process.kill()
-            job.status, job.error = "failed", f"timed out after {self.timeout_s:.0f} s"
+            job.status, job.error = "failed", f"timed out after {timeout_s:.0f} s"
         except OSError as exc:
             job.status, job.error = "failed", f"could not start the pipeline: {exc}"
         finally:

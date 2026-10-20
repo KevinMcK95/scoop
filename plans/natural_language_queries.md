@@ -80,10 +80,16 @@ data source (Gaia, MAST, MILLIQUAS, SIMBAD, spectra, exoplanets) that reads the
 pipeline's output, and `scoop/fields.py` builds fields. What's missing is
 mostly what natural-language requests need:
 
-- [ ] **`Region`**: one type for every region shape: cone, ellipse, polygon,
-      MOC, and a buffer around a stream track ("along GD-1"). Methods for
-      "contains", a bounding cone (for queries) and a MOC (for footprint
-      overlap). `scoop/spatial.py` is the natural home; check what it covers.
+- [x] **`Region`** (`scoop/regions.py`): cone, box, polygon, and a band along a
+      track (galstreams streams or a track from a paper), with exact containment
+      (bands in their own great-circle frame), outlines, query pieces, small
+      covering cones and areas. Fields over regions fetch Gaia (with G and
+      stream-frame proper-motion cuts) and SIMBAD galaxies by default; HST/JWST,
+      QSO catalogs and spectra on request. The agent plans and counts a region,
+      confirms the cuts with the user, then runs it (`plan_region`,
+      `run_region`). GD-1's spur window (±10° in φ1, 4° wide, 80 deg²) builds in
+      ~1.5 minutes. Still to do: MOC regions, regions drawn on the map, and the
+      data agent working over regions (it still assumes a circle ≤ 1°).
 - [ ] **Resolvers**: `resolve_target` (SIMBAD/NED, plus the LVDB for nearby
       galaxies and clusters; see the proposed tool in docs/langgraph_chat.md),
       `resolve_stream` (galstreams), and a literature lookup for named features

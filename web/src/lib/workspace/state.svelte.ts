@@ -508,6 +508,17 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       budget = null;  // a new conversation asks for its own budget
       void refreshBudget();
     },
+    /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings
+     *  (the previous conversation stays in History). The next question picks a field. */
+    newSearch() {
+      if (busy) return;
+      this.newConversation();
+      field = null;
+      fieldStatus = 'No field loaded.';
+      map = emptyMap();
+      undoStack = [];
+      requests = [];
+    },
     /** Reopen a saved conversation and continue its server thread. */
     openConversation(id: string) {
       if (busy || id === threadId) return;

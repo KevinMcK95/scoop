@@ -30,6 +30,7 @@ from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from ..chat.data_agent import build_handoff_tool
 from ..chat.pm_tools import build_pm_tools
+from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
 from ..chat.web_tools import build_web_tools
@@ -425,7 +426,9 @@ def create_app(
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
-        tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+        # Fields over boxes, polygons and stream tracks: planned and counted, then run once confirmed.
+        region_tools = build_region_tools(jobs=jobs, resolver=resolver)
+        tools = [*map_tools, *region_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, current_field) if python else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,

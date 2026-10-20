@@ -215,6 +215,13 @@ def field_from_viewer_data(data: dict) -> dict:
         link_to_gaia(tables, name)
     for table in tables.values():
         add_tangent_plane(table, data["target"])
+    if data.get("query_region"):
+        field["query_region"] = data["query_region"]
+        if data["query_region"].get("kind") == "band":
+            from .regions import Region
+            band = Region.from_spec({k: v for k, v in data["query_region"].items() if k != "cuts"})
+            for name, table in tables.items():
+                add_stream_coordinates(table, band, presets=name == "gaia")
     layers.sort(key=lambda layer: layer.pop("order"))
     for layer in layers:
         layer["count"] = layer_count(field, layer)
@@ -222,6 +229,56 @@ def field_from_viewer_data(data: dict) -> dict:
         layer["added"] = layer["visible"]
     field["layers"] = layers
     return field
+
+
+STREAM_PRESETS = (
+    {"label": "Stream (φ1, φ2)", "x": "phi1", "y": "phi2", "title": "Along the stream: φ1 vs φ2"},
+    {"label": "φ1 vs Δφ2", "x": "phi1", "y": "dphi2", "title": "Offset from the track across the stream"},
+    {"label": "φ1 vs μφ1", "x": "phi1", "y": "pm_phi1", "title": "μφ1 cos φ2 along the stream"},
+    {"label": "φ1 vs μφ2", "x": "phi1", "y": "pm_phi2", "title": "μφ2 along the stream"},
+    {"label": "Δμ (stream frame)", "x": "dpm_phi1", "y": "dpm_phi2",
+     "title": "Proper motion relative to the track, in the stream frame"},
+)
+STREAM_COLUMNS = {
+    "phi1": ("deg", "stream longitude (along the track)"), "phi2": ("deg", "stream latitude (across)"),
+    "dphi2": ("deg", "phi2 minus the track's phi2 at this phi1"),
+    "pm_phi1": ("mas/yr", "proper motion along the stream, mu_phi1 cos phi2"),
+    "pm_phi2": ("mas/yr", "proper motion across the stream, mu_phi2"),
+    "dpm_phi1": ("mas/yr", "mu_phi1 cos phi2 minus the track's at this phi1"),
+    "dpm_phi2": ("mas/yr", "mu_phi2 minus the track's at this phi1"),
+}
+
+
+def add_stream_coordinates(table: dict, band, presets: bool = False) -> None:
+    """Stream-frame columns for a field queried along a band: phi1, phi2, the offset
+    from the track, and (with proper motions) the motion along/across the stream and
+    relative to the track's."""
+    import numpy as np
+
+    rows = [r for r in table["rows"] if _is_number(r.get("ra")) and _is_number(r.get("dec"))]
+    if not rows or table.get("kind") in ("footprints", "annotation"):
+        return
+    ra, dec = np.array([r["ra"] for r in rows]), np.array([r["dec"] for r in rows])
+    phi1, phi2 = band.frame.to_frame(ra, dec)
+    dphi2 = phi2 - band.phi2_track(phi1)
+    has_pm = np.array([_is_number(r.get("pmra")) and _is_number(r.get("pmdec")) for r in rows])
+    pm = np.array([[r["pmra"], r["pmdec"]] if ok else [np.nan, np.nan] for r, ok in zip(rows, has_pm)])
+    p1, p2 = band.frame.pm_to_frame(ra, dec, pm[:, 0], pm[:, 1])
+    track = band.pm_track_frame(phi1)
+    added = ["phi1", "phi2", "dphi2"]
+    for k, r in enumerate(rows):
+        r["phi1"], r["phi2"], r["dphi2"] = (round(float(v), 5) for v in (phi1[k], phi2[k], dphi2[k]))
+        if has_pm[k]:
+            r["pm_phi1"], r["pm_phi2"] = round(float(p1[k]), 4), round(float(p2[k]), 4)
+            if track is not None:
+                r["dpm_phi1"], r["dpm_phi2"] = round(float(p1[k] - track[0][k]), 4), round(float(p2[k] - track[1][k]), 4)
+    if has_pm.any():
+        added += ["pm_phi1", "pm_phi2"] + (["dpm_phi1", "dpm_phi2"] if track is not None else [])
+    table["columns"] += [c for c in added if c not in table["columns"]]
+    table.setdefault("units", {}).update({c: STREAM_COLUMNS[c][0] for c in added})
+    table.setdefault("descriptions", {}).update({c: STREAM_COLUMNS[c][1] for c in added})
+    if presets:
+        table["presets"] = [*table.get("presets", []), *[dict(p) for p in STREAM_PRESETS if {p["x"], p["y"]} <= set(added)]]
 
 
 def add_tangent_plane(table: dict, target: dict) -> None:

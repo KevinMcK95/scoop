@@ -59,6 +59,17 @@ describe('field workspace', () => {
     expect(workspace.camera).toMatchObject({ ra: 260.05, dec: 57.92, fov: 0.8 });
   });
 
+  it('a new search clears the field, layers and chat and starts a new conversation', async () => {
+    const { workspace } = await ready();
+    const before = workspace.conversationId;
+    expect(workspace.layers.length).toBeGreaterThan(0);
+    workspace.newSearch();
+    expect(workspace.field).toBeNull();
+    expect(workspace.layers).toEqual([]);
+    expect(workspace.messages).toEqual([]);
+    expect(workspace.conversationId).not.toBe(before);
+  });
+
   it('changes the map only when the renderer resolves a request, and undo restores it', async () => {
     const { workspace } = await ready();
     expect(workspace.request([{ type: 'layer.update', layerId: 'gaia:stars', visible: false }], 'user')).toBeNull();

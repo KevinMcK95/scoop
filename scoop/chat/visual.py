@@ -247,6 +247,21 @@ Resolver = Callable[[str], Awaitable[dict | None]]
 
 def _coverage(field: dict, ra: float, dec: float, radius: float) -> tuple[str, str]:
     """Whether a circle lies inside the region the field's archives were queried for."""
+    if field.get("query_region"):  # a box, polygon or band: test against the region itself
+        import math
+
+        from ..regions import Region
+        shape = Region.from_spec({k: v for k, v in field["query_region"].items() if k != "cuts"})
+        d = [k * math.pi / 8 for k in range(16)]
+        dec_ = [dec + radius * math.cos(t) for t in d]
+        ra_ = [ra + radius * math.sin(t) / max(math.cos(math.radians(dec)), 1e-6) for t in d]
+        rim = shape.contains(ra_, dec_)
+        if shape.contains([ra], [dec])[0] and rim.all():
+            return "inside", "The circle is inside the field's query region."
+        if rim.any() or shape.contains([ra], [dec])[0]:
+            return "partial", ("Part of the circle is outside the field's query region; archives were "
+                               "not queried there, so counts are lower limits.")
+        return "outside", "The circle is outside the field's query region; no archive data was retrieved there."
     region = field.get("region")
     if not region:
         return "unknown", "The field has no query region recorded."
@@ -778,7 +793,8 @@ def build_map_tools(
         LVDB objects), in the background: HST/JWST, Gaia DR3 with QSO and galaxy
         candidates, MILLIQUAS/Quaia QSOs, SIMBAD galaxies, SDSS/DESI spectra.
         Center from ra+dec or an object name (Sesame); radius up to 60′ (larger
-        cones exceed the Gaia row limit). The browser loads the field when ready.
+        cones exceed the Gaia row limit). For boxes, polygons and stream tracks use
+        plan_region instead. The browser loads the field when ready.
         """
         if jobs is None:
             return ToolMessage(content="Running new fields is not available on this server.",
