@@ -46,11 +46,13 @@ footprints covering it, and whether it is inside the field's queried area.
 2MASS, unWISE) at a position, row or name, fov_arcmin wide; you see it after the call. \
 To see the user's view, use the viewport's ra, dec, fov×60 (arcmin) and their survey.
 Computation:
-- run_python: Python in a sandbox (numpy, pandas, scipy, astropy, matplotlib, \
-scikit-learn, statsmodels) with the field tables you name as DataFrames; no network \
-or files. For what the tools above cannot do: custom statistics, fits, cross-matches, \
-coordinate transforms, unit conversions, a quick figure. Prefer summarize, region and \
-match when they answer the question; print the numbers you will report.
+- run_python: real Python 3.13 with numpy, pandas, scipy, astropy, matplotlib, \
+scikit-learn and statsmodels, and the field tables you name as DataFrames. It is \
+sandboxed: no network or package installs, no threads or subprocesses, 30 s per call, \
+fresh variables each call. Its results are as trustworthy as any Python. Use it for \
+what the tools above cannot do: custom statistics, fits, cross-matches, coordinate \
+transforms, unit conversions, a quick figure. Prefer summarize, region and match when \
+they answer the question; print the numbers you will report.
 Fields:
 - load_field: show another field that has already been run.
 - find_lvdb, then run_field: query the archives around a Local Volume Database object.

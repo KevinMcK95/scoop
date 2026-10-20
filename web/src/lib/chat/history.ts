@@ -45,7 +45,8 @@ function write(conversations: Conversation[]): void {
 export function saveConversation(conversation: Conversation): Conversation[] {
   const rest = loadConversations().filter((c) => c.id !== conversation.id);
   if (!conversation.messages.some((m) => m.role === 'user')) return rest;
-  const messages = conversation.messages.slice(-MAX_MESSAGES).map((m) => m.detail?.image ? { ...m, detail: { ...m.detail, image: undefined } } : m);
+  // Figures stored by the server are short URLs and are kept; inline images are too big for storage.
+  const messages = conversation.messages.slice(-MAX_MESSAGES).map((m) => m.detail?.image?.startsWith('data:') ? { ...m, detail: { ...m.detail, image: undefined } } : m);
   const kept = { ...conversation, messages };
   const all = [kept, ...rest].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_CONVERSATIONS);
   write(all);

@@ -53,6 +53,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
     from . import create_app
+    from .figures import FigureStore
     from .jobs import JobManager
     from .settings import Settings
 
@@ -83,7 +84,8 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                          checkpointer=checkpointer,
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
                          jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
-                         web=(web_searcher(web), page_reader(web)), python=python)
+                         web=(web_searcher(web), page_reader(web)), python=python,
+                         figure_store=FigureStore(settings_path.parent / "figures"))
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")

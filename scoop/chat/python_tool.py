@@ -17,14 +17,26 @@ def build_python_tools(sandbox, field: dict | None = None) -> list[BaseTool]:
         tool_call_id: Annotated[str, InjectedToolCallId],
         tables: Annotated[list[str], Field(max_length=10)] = [],
     ):
-        """Run Python 3 in a sandbox (no network, no files) for computations the other
-        tools cannot do: custom statistics, fits, cross-matches, coordinate and unit
-        conversions, quick plots. numpy (np), pandas (pd), matplotlib.pyplot (plt), scipy,
-        astropy, scikit-learn, statsmodels, sympy and uncertainties are available.
-        Each named field table is a pandas DataFrame, as a variable of that name and in
-        `tables` (e.g. tables=["gaia"] -> gaia.G, gaia.bp_rp). Print what you need; the
-        value of a final expression is shown too. A matplotlib figure is shown to you
-        (and the user) as an image. Every call starts fresh; limit 30 s.
+        """Run real CPython 3.13 (Pyodide: Python compiled to WebAssembly) on the field's
+        tables, for computations the other tools cannot do: custom statistics, fits,
+        cross-matches, coordinate and unit conversions, quick plots.
+
+        Available: the standard library, numpy (np), pandas (pd), matplotlib.pyplot (plt),
+        scipy, astropy, scikit-learn, statsmodels, sympy, uncertainties, shapely. They
+        behave as usual. Each table named in `tables` is a pandas DataFrame, as a variable
+        of that name and in `tables` (e.g. tables=["gaia"] -> gaia.G, gaia.bp_rp).
+
+        Output: what you print, plus the value of a final expression. A matplotlib figure
+        is shown to you and the user as an image; plt.show() is not needed.
+
+        Limits (by design, not errors to work around):
+        - no network (no archive queries; use the other tools) and no package installs;
+          a missing module is simply not available here;
+        - no threads, subprocesses or multiprocessing; one CPU;
+        - 32-bit memory: arrays above ~2 GB fail; dense linear algebra is slow
+          (a 2000x2000 matrix product takes ~10 s), table work on 1e5 rows is fine;
+        - astropy uses its bundled Earth-orientation data (to early 2025);
+        - every call starts with fresh variables (re-create what you need); 30 s per call.
         """
         unknown = [t for t in tables if field is None or t not in field["tables"]]
         if unknown:

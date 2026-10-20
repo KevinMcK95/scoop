@@ -76,6 +76,15 @@
     chatOpen = true;
     await workspace.send();
   }
+  // From a figure in the Plot tab back to where it was made in the chat.
+  async function revealStep(stepId: number) {
+    chatOpen = true;
+    await tick();
+    const step = document.getElementById(`step-${stepId}`);
+    step?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    step?.classList.add('flash');
+    setTimeout(() => step?.classList.remove('flash'), 1500);
+  }
   function showResults(open: boolean) {
     resultsOpen = open;
     if (open && window.matchMedia('(max-width: 800px)').matches) {
@@ -137,7 +146,7 @@
                   activeTab = tabs[next]; showResults(true);
                   document.getElementById(`result-tab-${next}`)?.focus();
                 }
-              }}>{tab}</button>
+              }}>{tab}{tab === 'Plot' && workspace.figures.length ? ` (${workspace.figures.length})` : ''}</button>
             {/each}
           </div>
         </div>
@@ -146,7 +155,7 @@
             {#if activeTab === 'Selected'}
               <SelectedPanel {workspace} onask={ask} onlookup={lookupSelection} />
             {:else if activeTab === 'Plot'}
-              <PlotPanel {workspace} />
+              <PlotPanel {workspace} onreveal={revealStep} />
             {:else if activeTab === 'Tables'}
               <TablePanel {workspace} />
             {:else if activeTab === 'Summary'}
