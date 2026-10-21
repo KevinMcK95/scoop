@@ -280,6 +280,35 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(list(sandbox.tables), ["gaia"])
         self.assertEqual(model.calls[1][-1].content[1]["image_url"]["url"], "data:image/png;base64,iVBOR")
 
+    def test_run_kernel_is_offered_only_when_a_kernel_is_given(self):
+        ask = AIMessage(content="", tool_calls=[{"name": "run_kernel", "args": {"code": "imap.shape"},
+                                                 "id": "k-1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="The map is 3 x 1000 x 2000."))
+
+        facts = {"name": "analysis", "display_name": "Analysis", "language": "python",
+                 "python": "/envs/analysis/bin/python", "working_directory": "/scratch/scoop"}
+
+        class Kernel:
+            async def run(self, code, tables):
+                return {"output": "(3, 1000, 2000)\n", "error": None, "figures": [], "figure_count": 0}
+
+            async def describe(self):
+                return facts
+
+        stream = events(self.post_chat(TestClient(create_app(model=model, kernel=Kernel()))))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual((result["name"], result["status"], result["output"]), ("run_kernel", "success", "(3, 1000, 2000)\n"))
+        # The agent is told which environment its code runs in.
+        self.assertIn(json.dumps({"kernel": facts}, sort_keys=True)[1:-1], model.calls[0][-1].content)
+
+        model = ScriptedModel(ask, AIMessage(content="No kernel."))
+        client = TestClient(create_app(model=model))
+        # The browser cannot claim a kernel: the server's answer (off) replaces it.
+        stream = events(self.post_chat(client, message="shape?", context={"kernel": facts}))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual(result["status"], "error")
+        self.assertIn('"kernel": null', model.calls[0][-1].content)
+
     def test_figures_are_stored_and_served_by_url(self):
         from scoop.server.figures import FigureStore
 

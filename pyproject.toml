@@ -26,6 +26,8 @@ scout = [
     "anthropic>=0.49,<1",
     "pyvo>=1.5,<2",
 ]
+# run_kernel (scoop/kernel.py): a Jupyter kernel in the user's own analysis environment.
+kernel = ["jupyter_client>=8,<9"]
 # The data agent (scoop/discovery.py): VO registry, TAP, VizieR, MOC server.
 discovery = [
     "pyvo>=1.9,<2",
