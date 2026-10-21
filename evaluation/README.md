@@ -2,7 +2,7 @@
 
 Checks that the data SCOOP returns for a patch of sky is **real**, **in the
 requested field**, **complete** and **correct**, by going back to the archives
-themselves. See [plans/duo_xu.md](../plans/duo_xu.md) for the full plan.
+themselves.
 
 > **Status:** verifies the pipeline's real output (fields from
 > `smoke_tests/lvdb_field.py`, as loaded by the workspace server), and any

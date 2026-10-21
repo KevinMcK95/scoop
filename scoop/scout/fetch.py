@@ -8,7 +8,7 @@ the scout needs to read them.
 This is a deliberately narrower thing than ``scoop/web.py``, which gives the
 chat agent the open web (any public host, on a user's request, with a person
 reading the answer). The scout runs unattended on a schedule, so the controls
-from ``SAFETY_CHECKLIST_TODO.md`` apply in full: an allowlist of archive and
+for unattended agents apply in full: an allowlist of archive and
 publisher domains, robots.txt, a per-host rate limit, a response size cap and a
 content-type cap. HTML becomes text through ``scoop.web.html_to_text``, so there
 is one such parser in the repository and not two. Everything refused is refused

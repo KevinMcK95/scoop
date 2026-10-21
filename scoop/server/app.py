@@ -44,7 +44,7 @@ from .settings import BASE_URL
 from .trace import TurnTracer
 
 MAX_MESSAGE_CHARS = 8000
-# SPEC.md caps a request at 12 tool steps; each step is an agent and a tools node.
+# A request gets at most 12 tool steps; each step is an agent and a tools node.
 RECURSION_LIMIT = 2 * 12 + 1
 MAX_CONSECUTIVE_FAILURES = 4
 

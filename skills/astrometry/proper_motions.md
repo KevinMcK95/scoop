@@ -4,7 +4,7 @@ description: Where to find existing proper motions, and how to judge whether
   new, better-than-Gaia proper motions could be measured. Load for any
   question about proper motions, tangential velocities or orbits of stars,
   star clusters, dwarf galaxies or other nearby structures. Used by the
-  proper-motion agent (plans/natural_language_queries.md, step 5).
+  proper-motion tools (scoop/chat/pm_tools.py).
 used_by: [proper-motion agent, astrometry, literature]
 depends_on: [gaia, mast_hst_jwst, stsci_proposals]
 status: draft
@@ -63,8 +63,7 @@ How to use them:
 - Note which **data** each measurement used (from the paper, via the
   literature agent: program IDs and epochs). That's what tells you whether a
   new measurement would add anything.
-- Cite Pace (2025) for the LVDB and the input references used (see the lvdb
-  plan section in `plans/kevin_mckinnon.md`).
+- Cite Pace (2025) for the LVDB and the input references used.
 
 ## What size of proper motion to expect, and what precision a measurement needs
 

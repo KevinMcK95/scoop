@@ -49,5 +49,10 @@ as typed actions. The workspace validates and applies them, and reports on the n
 whether each was applied, so the agent never assumes the user saw something they did not.
 No chat text is executed.
 
-See [the workspace architecture](../docs/web_workspace.md) and
-[map and agent interaction](../docs/map_interaction.md).
+⚙ Settings → *Developer: show the Debug tab* adds a Debug tab: a timeline of each turn's
+model calls (messages, reply, tokens, cache hits, duration) and tool calls (arguments,
+result, status), recorded on the server by `scoop/server/trace.py`. Traces are kept per
+conversation under `~/.config/scoop/traces/` (owner-only, newest 50 turns) and deleted
+with it; unlike the audit log they contain message text. ⧉ copies a turn as JSON.
+
+See [map and agent interaction](../docs/map_interaction.md).
