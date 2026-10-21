@@ -418,6 +418,8 @@ flowchart LR
     J --> FS[("Fields")]
     AD --> FS
     FS --> W
+    FS -.-> FR["Freshness (each turn, no network)<br/>field age · plug-ins and skills added since ·<br/>dataset scout's last scan"]
+    FR -.->|"first turn: say once,<br/>offer a refresh"| C
 ```
 
 | Agent | What it does |
@@ -433,6 +435,11 @@ Around them:
   paper tracks), queried archive by archive with each decision recorded and shown.
 - **Cost budgets** ([What a command costs](#what-a-command-costs)): an optional per-conversation
   budget, an estimate before each command and its actual cost after.
+- **Freshness** ([`scoop/freshness.py`](scoop/freshness.py)): every turn's context says how old
+  the loaded field is, which data-source plug-ins and survey skills SCOOP gained since it was
+  built, and when the dataset scout last looked for new data releases. On the first turn of
+  a conversation the chat agent mentions an old field (over 30 days) or new sources once,
+  and offers to refresh it or add them through the data agent.
 - **Exoplanet agent** ([`exoplanets/`](exoplanets/agent.py)): answers planet questions with
   every claim quoted from a tool result and checked (one retry when a check fails); the
   chat agent hands it exoplanet questions (`ask_exoplanet_agent`) and shows its answer
@@ -450,14 +457,23 @@ flowchart LR
     T -->|"reproduce, test, fix"| B["Branch / PR for review"]
     ADS[("ADS / arXiv<br/>data-release papers")] --> SC["Dataset scout agent<br/>(monthly)"]
     SC -->|"draft skills, sources, probes"| B
-    E["Evaluation<br/>benchmarks and checks"] --> B
+    FLD[("Fields")] --> DC["Data checks<br/>(evaluation/verify.py)<br/>records real, in the field, correct"]
+    SRV["Running workspace"] --> SPC["Spot checks<br/>(evaluation/spot_checks.py)<br/>right agent, tools, map actions, answer"]
+    DC --> REP["Reports<br/>(spot checks: also the demos'<br/>rehearsal and transcripts)"]
+    SPC --> REP
 ```
 
   The [dataset scout](#dataset-scout) finds datasets SCOOP lacks; `/triage`
   ([skill](.claude/skills/triage/SKILL.md), [`scripts/triage_failures.py`](scripts/triage_failures.py))
-  turns what failed in sessions into tested fixes; [evaluation](evaluation/README.md) scores
-  answers against benchmarks. Both open branches for a person to review; nothing changes
-  SCOOP's code unreviewed.
+  turns the triage agent's suggestions into tested fixes. Both open branches for a person
+  to review; nothing changes SCOOP's code unreviewed.
+  [Evaluation](evaluation/README.md) checks both halves of an answer: the **data checks**
+  go back to the archives to confirm a field's records are real, inside the field and
+  correct; the **spot checks** send real questions to a running workspace and check that
+  the right agent is handed each one, the expected map actions appear, nothing starts
+  that shouldn't (no download for an oversized request), the answer matches what it must
+  say, and it finishes in time. The spot checks are also the presentation demos
+  ([docs/demos.md](docs/demos.md)).
 
 ### Longer-term sketch
 
