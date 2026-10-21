@@ -148,7 +148,7 @@
 <div class="app-shell">
   <a class="skip-link" href="#workspace">Skip to atlas workspace</a>
   <header class="app-header">
-    <h1 class="wordmark"><button class="wordmark-home" title="Start page" onclick={() => (landing = true)} disabled={landing}>◉ SCOOP <span>Sky atlas</span></button></h1>
+    <h1 class="wordmark"><button class="wordmark-home" title="Start page" onclick={() => (landing = true)} disabled={landing}><img class="wordmark-logo" src="/scoop-mark-small.svg" alt="" width="24" height="24" /> SCOOP <span>Sky atlas</span></button></h1>
     <nav aria-label="Workspace panels" hidden={landing}>
       <button aria-expanded={layersOpen} aria-controls="layers-drawer" onclick={toggleLayers}>Layers</button>
       <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>

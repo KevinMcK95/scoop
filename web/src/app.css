@@ -95,6 +95,11 @@ p {
   letter-spacing: 2px;
   white-space: nowrap;
 }
+.wordmark-logo {
+  width: 24px;
+  height: 24px;
+  vertical-align: -6px;
+}
 .wordmark span {
   font-size: 11px;
   letter-spacing: 0;
@@ -1944,8 +1949,15 @@ body.resizing-y * {
   letter-spacing: 6px;
   text-align: center;
 }
-.landing-title span {
-  color: var(--accent);
+.landing-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.landing-logo {
+  width: 84px;
+  height: 84px;
 }
 .landing-tagline {
   margin: 0 auto;
