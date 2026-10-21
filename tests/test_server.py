@@ -229,6 +229,11 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(zipped.headers["content-encoding"], "gzip")
             self.assertEqual(zipped.json()["key"], "mini_1")
 
+    def test_the_api_root_points_to_the_workspace(self):
+        page = TestClient(create_app()).get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("127.0.0.1:5173", page.text)
+
     def test_fields_with_nan_are_served_as_strict_json(self):
         # An LVDB object without a proper motion (NGC 300) has NaN pmra: Python writes it,
         # browsers' JSON.parse rejects it, so the field failed to load.

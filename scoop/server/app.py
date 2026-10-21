@@ -241,6 +241,16 @@ def create_app(
         return OpenAIModel(settings.get("model"), base_url=settings.get("base_url"),
                            api_key=settings.get("api_key") or "unset")
 
+    async def root(request: Request) -> Response:
+        # This port is the API; people who open it in a browser want the workspace page.
+        return Response(
+            "<!doctype html><meta charset=utf-8><title>SCOOP API</title>"
+            "<body style='font-family:system-ui;margin:3rem;max-width:40rem'><h1>SCOOP API</h1>"
+            "<p>This is SCOOP's API server. The workspace is the web page: start it with "
+            "<code>cd web &amp;&amp; npm run dev</code> and open "
+            "<a href='http://127.0.0.1:5173'>http://127.0.0.1:5173</a>.</p>"
+            "<p>Health: <a href='/api/health'>/api/health</a></p></body>", media_type="text/html")
+
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"chat": live["model"] is not None, "literature": live["ads"] is not None})
 
@@ -709,6 +719,7 @@ def create_app(
                 task.cancel()
 
     return Starlette(lifespan=lifespan, routes=[
+        Route("/", root),
         Route("/api/triage", list_triage),
         Route("/api/triage/{name}", get_triage),
         Route("/api/health", health),
