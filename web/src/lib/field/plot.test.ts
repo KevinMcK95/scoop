@@ -54,8 +54,8 @@ describe('plot data', () => {
     const field = miniField();
     const offered = presets(field);
     expect(offered.map((p) => `${p.table}:${p.label}`)).toEqual([
-      'gaia:CMD', 'gaia:Proper motion', 'gaia:Parallax / G', 'gaia:RV / G', 'gaia:Sky (ξ, η)',
-      'spectra:RV histogram', 'spectra:RV vs [Fe/H]']);
+      'gaia:CMD', 'gaia:Proper motion', 'gaia:Parallax / G', 'gaia:RV / G', 'gaia:RV histogram',
+      'gaia:RV vs [Fe/H]', 'gaia:Sky (ξ, η)', 'spectra:DESI RV histogram', 'spectra:DESI RV vs [Fe/H]']);
     field.tables.gaia.columns = field.tables.gaia.columns.filter((c) => c !== 'pmdec');
     expect(presets(field).some((p) => p.label === 'Proper motion')).toBe(false);
     expect(presets(null)).toEqual([]);

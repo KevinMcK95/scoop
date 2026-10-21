@@ -309,6 +309,68 @@ def add_tangent_plane(table: dict, target: dict) -> None:
 DISCOVERED_COLORS = ("#e66767", "#c98500", "#9085e9", "#008300", "#d55181", "#3987e5")
 
 
+# Columns that hold a velocity or metallicity, by name (case-insensitive), when the data
+# agent didn't say which ("roles" in the table's meta).
+MEASUREMENT_NAMES = {
+    "rv": ("rv", "rvel", "hrv", "vhel", "vhelio", "vlos", "v_los", "vrad", "radial_velocity", "rv_adop",
+           "helio_rv", "vr"),
+    "rv_err": ("rv_err", "e_rv", "e_rvel", "e_hrv", "e_vhel", "e_vhelio", "vlos_err", "e_vlos", "e_vrad",
+               "radial_velocity_error", "rv_adop_err", "rv_error", "e_vr", "verr"),
+    "feh": ("feh", "[fe/h]", "fe_h", "feh_adop"),
+    "feh_err": ("feh_err", "e_[fe/h]", "e_feh", "fe_h_err", "e_fe_h"),
+}
+MEASUREMENT_UNITS = {"rv": "km/s", "rv_err": "km/s", "feh": "dex", "feh_err": "dex"}
+
+
+def measurement_roles(columns: list[str], explicit: dict | None = None) -> dict[str, str]:
+    """Which columns are the line-of-sight velocity, [Fe/H] and their errors: as the data
+    agent declared them, else by common names. An error only counts with its value."""
+    explicit = {k: v for k, v in (explicit or {}).items() if k in MEASUREMENT_NAMES and v in columns}
+    lower = {c.lower(): c for c in columns}
+    roles = dict(explicit)
+    for role, names in MEASUREMENT_NAMES.items():
+        if role not in roles:
+            found = next((lower[n] for n in names if n in lower), None)
+            if found:
+                roles[role] = found
+    for value, err in (("rv", "rv_err"), ("feh", "feh_err")):
+        if value not in roles:
+            roles.pop(err, None)
+    return roles
+
+
+def add_measurements(table: dict, roles: dict[str, str], name: str) -> None:
+    """Copy a table's velocity / metallicity columns into the standard rv, rv_err, feh,
+    feh_err (so the RV plots, summaries and member fits read them), with RV presets."""
+    for row in table["rows"]:
+        for role, column in roles.items():
+            if role != column and _is_number(row.get(column)):
+                row[role] = row[column]
+    added = [r for r in roles if r not in table["columns"]]
+    table["columns"] += added
+    for role, column in roles.items():
+        table.setdefault("units", {}).setdefault(role, MEASUREMENT_UNITS[role])
+        if role != column:
+            table.setdefault("descriptions", {})[role] = f"{column}, as the standard {role} column"
+    table["measurement_roles"] = dict(roles)
+    if "rv" in roles:
+        table["presets"] = [*table.get("presets", []), {"label": f"RV histogram · {name}", "x": "rv",
+                                                 "title": f"Line-of-sight velocities: {table['label']}"}]
+        if "feh" in roles:
+            table["presets"].append({"label": f"RV vs [Fe/H] · {name}", "x": "feh", "y": "rv",
+                                     "title": f"RV vs [Fe/H]: {table['label']}"})
+
+
+def _combine(values: list[tuple[float, float | None]]) -> tuple[float, float | None]:
+    """Inverse-variance mean (and its error) of repeated measurements; a plain mean when
+    any error is missing."""
+    import math
+    if all(e is not None and e > 0 for _, e in values):
+        w = [1 / e ** 2 for _, e in values]
+        return sum(v * wi for (v, _), wi in zip(values, w)) / sum(w), 1 / math.sqrt(sum(w))
+    return sum(v for v, _ in values) / len(values), None
+
+
 def discovered_table(name: str, rows: list[dict], meta: dict, index: int = 0) -> tuple[dict, dict]:
     """A table and its default layer for data found at run time (no source plug-in)."""
     from .sources import layer
@@ -326,6 +388,10 @@ def discovered_table(name: str, rows: list[dict], meta: dict, index: int = 0) ->
              "descriptions": {c: info[c]["description"] for c in columns if (info.get(c) or {}).get("description")},
              "presets": [], "browse": columns[:8], "rows": rows, "query": meta.get("query"),
              "origin": "agent"}
+    if table["kind"] == "catalog":
+        roles = measurement_roles(columns, meta.get("roles"))
+        if roles:
+            add_measurements(table, roles, name)
     lay = layer(f"agent-data:{name}", name, [], "Added by the data agent", meta["label"],
                 style.get("color") or DISCOVERED_COLORS[index % len(DISCOVERED_COLORS)], order=90 + index,
                 shape=style.get("shape", "circle"), size=int(style.get("size", 10)),
@@ -399,6 +465,28 @@ def link_to_gaia(tables: dict, name: str, radius_arcsec: float = LINK_RADIUS_ARC
                                 table["label"]: [*star.get("_details", {}).get(table["label"], []), item]}
     for g in gaia["rows"]:
         g.setdefault(f"in_{name}", False)
+    # Velocities and metallicities reach the matched Gaia stars (repeats combined), where
+    # the RV plots and the member fits read them; a star's existing value is kept.
+    roles = table.get("measurement_roles") or {}
+    for value, err in (("rv", "rv_err"), ("feh", "feh_err")):
+        if value not in roles:
+            continue
+        per_star: dict[str, list] = {}
+        for row in table["rows"]:
+            if row.get("gaia_id") and _is_number(row.get(value)):
+                e = row.get(err)
+                per_star.setdefault(row["gaia_id"], []).append((float(row[value]), float(e) if _is_number(e) else None))
+        for gid, measured in per_star.items():
+            star = by_id[gid]
+            if _is_number(star.get(value)):
+                continue
+            star[value], star[err] = _combine(measured)
+            star[value] = round(star[value], 3)
+            star[err] = None if star[err] is None else round(star[err], 3)
+            star[f"{value}_source"] = table["label"] + (f" (mean of {len(measured)})" if len(measured) > 1 else "")
+        gaia.setdefault("units", {}).setdefault(value, MEASUREMENT_UNITS[value])
+        gaia["units"].setdefault(err, MEASUREMENT_UNITS[err])
+        gaia["descriptions"][f"{value}_source"] = f"where {value} comes from"
     table["columns"] = _columns(table["rows"])
     gaia["columns"] = _columns(gaia["rows"])
     gaia["descriptions"][f"in_{name}"] = f"has a match in {table['label']}"

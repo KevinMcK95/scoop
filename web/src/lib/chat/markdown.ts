@@ -68,6 +68,9 @@ const markdown = new Marked({
     // Plain text runs only: code spans and blocks have their own renderers.
     text(token) {
       if ('tokens' in token && token.tokens) return this.parser.parseInline(token.tokens);
+      // Loose list items: marked has already rendered this text through these renderers
+      // and flags it escaped; escaping it again showed the HTML as text.
+      if ('escaped' in token && token.escaped) return token.text;
       return linkBibcodes(token.text);
     },
     html({ text }) {

@@ -320,6 +320,12 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       // What the command is expected to cost, then what it cost and what is left of the budget.
       case 'cost': {
         if (event.budget) budget = event.budget;
+        // An unpriced model can't be costed: say so once per conversation, not on every command.
+        if (event.priced === false && messages.some((m) => m.role === 'note' && m.text === event.note)) {
+          priced = false;
+          costNote = null;
+          break;
+        }
         if (event.phase === 'estimate') costNote = push({ role: 'note', text: event.note });
         else if (costNote) costNote.text = event.note;
         else push({ role: 'note', text: event.note });

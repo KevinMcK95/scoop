@@ -148,6 +148,33 @@ class GaiaLinkTests(unittest.TestCase):
         self.assertTrue(near["gaia_match"].startswith("position, 0.5"))
         self.assertIsNone(far["gaia_id"])
 
+    def test_velocities_reach_the_standard_columns_and_the_gaia_stars(self):
+        from scoop.fields import add_measurements, link_to_gaia, measurement_roles
+        rows = [{"id": "a1", "ra": 260.0, "dec": 57.9, "RVel": 78.0, "e_RVel": 1.0, "[Fe/H]": -2.0, "e_[Fe/H]": 0.1},
+                {"id": "a2", "ra": 260.0, "dec": 57.9, "RVel": 80.0, "e_RVel": 1.0, "[Fe/H]": -2.2, "e_[Fe/H]": 0.1},
+                {"id": "b", "ra": 260.01, "dec": 57.9, "RVel": 60.0, "e_RVel": 2.0}]
+        tables = self.tables(rows)
+        roles = measurement_roles(tables["new"]["columns"])
+        self.assertEqual(roles, {"rv": "RVel", "rv_err": "e_RVel", "feh": "[Fe/H]", "feh_err": "e_[Fe/H]"})
+        tables["gaia"]["rows"][1]["rv"] = 55.5  # already measured (e.g. DESI): kept
+        add_measurements(tables["new"], roles, "new")
+        self.assertEqual(tables["new"]["rows"][0]["rv"], 78.0)
+        self.assertEqual([p["label"] for p in tables["new"]["presets"]], ["RV histogram · new", "RV vs [Fe/H] · new"])
+        link_to_gaia(tables, "new")
+        first, second = tables["gaia"]["rows"]
+        self.assertAlmostEqual(first["rv"], 79.0)                # two measurements, equal weights
+        self.assertAlmostEqual(first["rv_err"], 1 / 2 ** 0.5, places=3)
+        self.assertEqual(first["rv_source"], "New catalog (mean of 2)")
+        self.assertAlmostEqual(first["feh"], -2.1)
+        self.assertEqual(second["rv"], 55.5)
+        self.assertNotIn("rv_source", second)
+
+    def test_declared_roles_win_and_errors_need_values(self):
+        from scoop.fields import measurement_roles
+        cols = ["Vel", "eVel", "rv", "e_FeH_x"]
+        self.assertEqual(measurement_roles(cols, {"rv": "Vel", "rv_err": "eVel"}), {"rv": "Vel", "rv_err": "eVel"})
+        self.assertEqual(measurement_roles(["e_rvel", "mag"]), {})  # an error without its value is dropped
+
     def test_float_gaia_ids_are_never_trusted(self):
         from scoop.fields import _gaia_id_column
         self.assertIsNone(_gaia_id_column([{"Gaia": 1.433143832631935e18}]))

@@ -232,6 +232,8 @@
     "rv",
     "rv_err",
     "feh",
+    "rv_source",
+    "feh_source",
     "xi",
     "eta"
    ],
@@ -264,8 +266,10 @@
     "clean": "passes RUWE, IPD, visibility-period and excess-noise cuts",
     "gaia_crf": "Gaia-CRF3 source (trusted QSO)",
     "quaia": "in Quaia (G < 20)",
-    "rv": "DESI DR1 line-of-sight velocity (Milky Way Survey), where matched",
-    "feh": "DESI [Fe/H], where matched",
+    "rv": "line-of-sight velocity, where measured (DESI DR1, or a catalog added later; see rv_source)",
+    "feh": "[Fe/H], where measured (see feh_source)",
+    "rv_source": "where rv comes from",
+    "feh_source": "where feh comes from",
     "xi": "tangent-plane offset east of the target",
     "eta": "tangent-plane offset north of the target"
    },
@@ -293,7 +297,18 @@
      "label": "RV / G",
      "x": "G",
      "y": "rv",
-     "title": "DESI line-of-sight velocity vs G"
+     "title": "Line-of-sight velocity vs G"
+    },
+    {
+     "label": "RV histogram",
+     "x": "rv",
+     "title": "Line-of-sight velocities of the field's stars (every source)"
+    },
+    {
+     "label": "RV vs [Fe/H]",
+     "x": "feh",
+     "y": "rv",
+     "title": "RV vs [Fe/H] of the field's stars"
     },
     {
      "label": "Sky (\u03be, \u03b7)",
@@ -340,6 +355,8 @@
      "rv": -291.5,
      "rv_err": 1.2,
      "feh": -1.9,
+     "rv_source": "DESI DR1",
+     "feh_source": "DESI DR1",
      "_details": {
       "Spectra": [
        {
@@ -506,12 +523,12 @@
    },
    "presets": [
     {
-     "label": "RV histogram",
+     "label": "DESI RV histogram",
      "x": "rv",
      "title": "DESI radial velocities"
     },
     {
-     "label": "RV vs [Fe/H]",
+     "label": "DESI RV vs [Fe/H]",
      "x": "feh",
      "y": "rv",
      "title": "DESI RV vs [Fe/H]"

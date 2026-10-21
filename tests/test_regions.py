@@ -105,6 +105,24 @@ class RegionTests(unittest.TestCase):
             sky = sum(2 * math.pi * (1 - math.cos(math.radians(c[2]))) for c in cones) * (180 / math.pi) ** 2
             self.assertLess(sky, 3.5 * region.area_deg2)  # not one huge bounding cone
 
+    def test_plan_files_from_the_job_manager_are_read(self):
+        # The pipeline reads what JobManager.save_plan writes (this mismatch once broke plan_region).
+        import json
+        import tempfile
+        from pathlib import Path
+        from scoop.regions import read_spec
+        from scoop.server.jobs import JobManager
+        spec = {"kind": "box", "ra": 150.0, "dec": 2.0, "width_deg": 0.7, "height_deg": 0.7, "cuts": {"gmax": 20}}
+        with tempfile.TemporaryDirectory() as tmp:
+            jobs = JobManager(Path(tmp), Path(tmp) / "pipeline.py")
+            plan_id = jobs.save_plan(spec, "COSMOS box")
+            loaded, name = read_spec(json.loads((Path(tmp) / "region_plans" / f"{plan_id}.json").read_text()))
+        self.assertEqual((loaded, name), (spec, "COSMOS box"))
+        self.assertEqual(read_spec(spec), (spec, None))
+        Region.from_spec({k: v for k, v in loaded.items() if k != "cuts"})
+        with self.assertRaises(ValueError):
+            read_spec({"name": "x"})
+
     def test_bad_specs_are_refused(self):
         for spec in ({"kind": "box", "ra": 1, "dec": 2, "width_deg": 40, "height_deg": 1},
                      {"kind": "polygon", "vertices": [[0, 0], [1, 1]]},

@@ -44,6 +44,15 @@ describe('assistant markdown', () => {
     expect(renderMarkdown('$\\frac{$')).not.toContain('<script');
   });
 
+  it('renders loose lists (items separated by blank lines) once, not as escaped HTML', () => {
+    const html = renderMarkdown('- **The spur** is unusual.\n\n- See 2020ApJ...892L..37B');
+    expect(html).toContain('<strong>The spur</strong>');
+    expect(html).not.toContain('&lt;');
+    expect(html.match(/class="bibcode"/g)).toHaveLength(1);
+    // Raw HTML from the model is still shown as text, loose list or not.
+    expect(renderMarkdown('- <b>x</b>\n\n- y')).toContain('&lt;b&gt;');
+  });
+
   it('never passes raw HTML or unsafe links through', () => {
     for (const attack of ['<script>alert(1)</script>', '<img src=x onerror=alert(1)>', 'hi <b onclick="x()">b</b>']) {
       const html = renderMarkdown(attack);

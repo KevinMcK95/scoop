@@ -413,6 +413,17 @@ class Region:
         return out
 
 
+def read_spec(obj: dict) -> tuple[dict, str | None]:
+    """A region spec (with its "cuts") from a JSON file's contents: either the spec itself
+    or a saved plan ({"name": ..., "spec": {...}}, as scoop.server.jobs writes). Returns
+    the spec and the plan's name (None for a bare spec)."""
+    if isinstance(obj, dict) and "kind" not in obj and isinstance(obj.get("spec"), dict):
+        return dict(obj["spec"]), obj.get("name")
+    if not isinstance(obj, dict) or "kind" not in obj:
+        raise ValueError("a region file holds a spec with a kind, or a plan with a spec")
+    return dict(obj), None
+
+
 def adql_condition(part: dict, ra: str = "ra", dec: str = "dec") -> str:
     """ADQL for one part: CONTAINS(POINT, POLYGON or CIRCLE) = 1."""
     if "circle" in part:
@@ -423,4 +434,4 @@ def adql_condition(part: dict, ra: str = "ra", dec: str = "dec") -> str:
     return f"1=CONTAINS(POINT('ICRS', {ra}, {dec}), {shape})"
 
 
-__all__ = ["GreatCircleFrame", "Region", "adql_condition", "gnomonic", "in_polygon", "separation", "unit"]
+__all__ = ["GreatCircleFrame", "Region", "adql_condition", "read_spec", "gnomonic", "in_polygon", "separation", "unit"]

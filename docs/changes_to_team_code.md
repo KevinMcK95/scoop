@@ -183,3 +183,35 @@ New: `scoop/regions.py` (region shapes, great-circle stream frames), `scoop/stre
 - `web/src/lib/workspace/state.svelte.ts` `newSearch()` and a **New search** button in
   `web/src/routes/+page.svelte`: clears the field, layers, plot, highlights and drawings,
   starts a new conversation and returns to the start page.
+
+## Fixes: loose lists in chat, repeated cost note, plan files, QSOs in stream fields
+
+- `web/src/lib/chat/markdown.ts`: the `text` renderer returns marked's pre-rendered
+  text when the token is flagged `escaped` (marked does this for loose list items,
+  i.e. items separated by blank lines). Before, those answers showed their HTML as text
+  (`<strong>`, bibcode links). Raw HTML from the model is still escaped. Test in
+  `markdown.test.ts`.
+- `web/src/lib/workspace/state.svelte.ts`: when the model has no price, the "cannot be
+  costed" note is shown once per conversation instead of on every command.
+- `smoke_tests/lvdb_field.py` reads region files with `scoop.regions.read_spec`, which
+  accepts a saved plan (`{"name", "spec"}`, as `JobManager.save_plan` writes) or a bare
+  spec; before, every `plan_region` count failed with "a region spec needs a kind".
+- Stream fields with a proper-motion window also keep the region's Gaia-CRF3 QSOs (G
+  limit, no motion cut), which the window would otherwise remove; they are the field's
+  zero-motion references.
+
+## Velocities and metallicities from any catalog reach the RV plots
+
+- `scoop/fields.py`: point tables the data agent adds have their velocity / [Fe/H]
+  columns (declared `roles`, else recognised by name: `RVel`, `HRV`, `radial_velocity`,
+  `[Fe/H]`, ...) copied into the standard `rv`, `rv_err`, `feh`, `feh_err`, with RV
+  presets; `link_to_gaia` carries them to the matched Gaia stars (repeats: inverse-variance
+  mean), keeping a value a star already has, and records `rv_source` / `feh_source`.
+- `scoop/sources/gaia.py`: Gaia presets "RV histogram" and "RV vs [Fe/H]" (every source
+  of velocities on the field's stars); `scoop/sources/spectra.py`: its presets renamed
+  "DESI RV histogram" / "DESI RV vs [Fe/H]" (what they plot), and DESI values set
+  `rv_source`.
+- `scoop/chat/data_agent.py`: `query_catalog` / `query_service` take `roles`; their reply
+  says which measurement columns were recognised. Prompts: the data agent passes roles
+  (and prefers one combined row per star); the chat agent shows the RV histogram once RVs
+  arrive and points to RV vs [Fe/H].

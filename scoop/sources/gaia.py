@@ -11,8 +11,9 @@ COLUMNS = {
     "ruwe": Column(None, "renormalised unit weight error; >1.4 suggests a poor astrometric fit"),
     "clean": Column(None, "passes RUWE, IPD, visibility-period and excess-noise cuts"),
     "r_ell": Column("r_half", "elliptical radius from the target center, in half-light radii"),
-    "rv": Column("km/s", "DESI DR1 line-of-sight velocity (Milky Way Survey), where matched"),
-    "rv_err": Column("km/s"), "feh": Column("dex", "DESI [Fe/H], where matched"),
+    "rv": Column("km/s", "line-of-sight velocity, where measured (DESI DR1, or a catalog added later; see rv_source)"),
+    "rv_err": Column("km/s"), "feh": Column("dex", "[Fe/H], where measured (see feh_source)"),
+    "rv_source": Column(None, "where rv comes from"), "feh_source": Column(None, "where feh comes from"),
     "gaia_crf": Column(None, "Gaia-CRF3 source (trusted QSO)"), "quaia": Column(None, "in Quaia (G < 20)"),
 }
 # The viewer data lists each Gaia source under the classes it belongs to.
@@ -62,6 +63,8 @@ register(Source(
     presets=({"label": "CMD", "x": "bp_rp", "y": "G", "invert_y": True, "title": "Gaia colour–magnitude"},
              {"label": "Proper motion", "x": "pmra", "y": "pmdec", "title": "Gaia proper motions"},
              {"label": "Parallax / G", "x": "G", "y": "parallax", "title": "Parallax vs G"},
-             {"label": "RV / G", "x": "G", "y": "rv", "title": "DESI line-of-sight velocity vs G"},
+             {"label": "RV / G", "x": "G", "y": "rv", "title": "Line-of-sight velocity vs G"},
+             {"label": "RV histogram", "x": "rv", "title": "Line-of-sight velocities of the field's stars (every source)"},
+             {"label": "RV vs [Fe/H]", "x": "feh", "y": "rv", "title": "RV vs [Fe/H] of the field's stars"},
              {"label": "Sky (ξ, η)", "x": "xi", "y": "eta", "invert_x": True, "equal": True,
               "title": "Sky position about the target (tangent plane, east to the left)"})))

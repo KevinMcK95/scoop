@@ -245,6 +245,12 @@ object, load_field it and answer in the same turn (the tools use it at once). Ot
 start run_field or run_cone, focus the map on the target, and say what was started and \
 how long it takes (1–6 minutes); questions that need no field (literature, a SIMBAD \
 lookup) need none.
+- "RVs / velocities / metallicities here": if the field lacks them, ask_data_agent; once \
+they are in (the reply says which columns are rv / feh), show them without being asked \
+again: plot.show the RV histogram (table gaia, x rv: every source on the field's stars; \
+or the new table, x rv, for stars Gaia doesn't have) and, when there is [Fe/H], tell the \
+user the RV vs [Fe/H] panel is ready (x feh, y rv). rv_source says where each star's \
+value came from; give the counts per source.
 - "Show me <survey> data here" / "what else covers this region?": if the field has no \
 such table and add_data doesn't offer it, ask_data_agent with the request; after it \
 reports, show the new layer and summarize what was added (source, rows, limits).

@@ -398,6 +398,25 @@ describe('field workspace', () => {
     expect(workspace.budget?.remaining_usd).toBe(4.95);
   });
 
+  it('says once per conversation that an unpriced model cannot be costed', async () => {
+    const note = 'No price is known for some/model, so this command cannot be costed.';
+    const turn = (id: string): ChatEvent[] => [
+      { type: 'cost', phase: 'estimate', note, request_id: id, model: 'some/model', priced: false } as ChatEvent,
+      { type: 'assistant', id, text: 'ok' }, { type: 'done' }];
+    const { fake } = backend(turn('a1'), turn('a2'));
+    fake.getBudget = async () => ({ budget: null, default_budget_usd: 1, model: 'some/model', priced: false });
+    fake.setBudget = async (_thread, usd) => ({ thread_id: 't', budget_usd: usd, spent_usd: 0, remaining_usd: usd, turns: 0 });
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+    await workspace.setBudget(1);
+    for (const q of ['first?', 'second?']) {
+      workspace.draft = q;
+      await workspace.send();
+    }
+    expect(workspace.messages.filter((m) => m.role === 'note' && m.text === note)).toHaveLength(1);
+    expect(workspace.messages.filter((m) => m.role === 'assistant')).toHaveLength(2);
+  });
+
   it('says so instead of pretending when no agent is connected', async () => {
     const workspace = createWorkspace();
     workspace.draft = 'Hello';

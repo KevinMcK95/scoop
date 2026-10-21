@@ -55,7 +55,9 @@ def attach(tables: dict[str, list[dict]], data: dict) -> None:
                 desi = next((s for s in data["spectra"].get(key, {}).get("spectra", [])
                              if s.get("kind") == "DESI" and s.get("rv") is not None), None)
                 if desi:
-                    row.update({"rv": desi["rv"], "rv_err": desi.get("rv_err"), "feh": desi.get("feh")})
+                    row.update({"rv": desi["rv"], "rv_err": desi.get("rv_err"), "feh": desi.get("feh"),
+                                "rv_source": "DESI DR1",
+                                **({"feh_source": "DESI DR1"} if desi.get("feh") is not None else {})})
             if key in details:
                 row["_details"] = {**row.get("_details", {}), "Spectra": details[key]}
 
@@ -73,6 +75,6 @@ register(Source(
     name="spectra", label="Objects with spectra", provenance="SDSS DR20, DESI DR1", order=30,
     rows=rows, layers=layers, columns=COLUMNS,
     browse=("kinds", "n_spectra", "spectype", "rv", "rv_err", "feh", "teff", "logg"),
-    presets=({"label": "RV histogram", "x": "rv", "title": "DESI radial velocities"},
-             {"label": "RV vs [Fe/H]", "x": "feh", "y": "rv", "title": "DESI RV vs [Fe/H]"})))
+    presets=({"label": "DESI RV histogram", "x": "rv", "title": "DESI radial velocities"},
+             {"label": "DESI RV vs [Fe/H]", "x": "feh", "y": "rv", "title": "DESI RV vs [Fe/H]"})))
 register_enrichment(Enrichment("spectra details", needs=("spectra",), apply=attach))

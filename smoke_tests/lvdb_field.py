@@ -39,7 +39,7 @@ from ids import check_id_columns, to_int_id
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the scoop package, for regions
-from scoop.regions import Region, adql_condition  # noqa: E402
+from scoop.regions import Region, adql_condition, read_spec  # noqa: E402
 
 LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
             "v1.1.1/comb_all.ecsv")
@@ -992,10 +992,20 @@ def query_gaia_region(region, cuts, cache: Path) -> Table:
                          "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
                          f"ON g.source_id = q.source_id WHERE {where}", "galaxy_candidates")
         part_t = join(join(src, qso, keys="source_id", join_type="left"), gal, keys="source_id", join_type="left")
-        for c in part_t.colnames:
-            if part_t[c].dtype == object:
-                part_t[c] = part_t[c].astype(str)
         tables.append(part_t)
+        if cuts.get("pm_window"):
+            # A stream proper-motion cut removes every QSO (they don't move), so also take this
+            # piece's Gaia-CRF3 sources, with the G limit but no motion cut, as references.
+            g_cut = f" AND g.phot_g_mean_mag <= {float(cuts['gmax']):.3f}" if cuts.get("gmax") is not None else ""
+            ref, _ = run_tap(f"SELECT {GAIA_COLS}, q.gaia_crf_source, q.classlabel_dsc_joint AS qso_classlabel_dsc_joint, "
+                             "q.redshift_qsoc FROM gaiadr3.qso_candidates AS q JOIN gaiadr3.gaia_source AS g "
+                             f"ON g.source_id = q.source_id WHERE {adql_condition(part, 'g.ra', 'g.dec')}{g_cut}",
+                             f"Gaia-CRF3 part {i + 1}")
+            tables.append(ref[as_bool(ref["gaia_crf_source"])])
+    for t in tables:
+        for c in t.colnames:
+            if t[c].dtype == object:
+                t[c] = t[c].astype(str)
     note(f"Queried Gaia DR3 from the {server} in {len(tables)} piece(s) of the region; results are "
          "identical to ESA's DR3.")
     out = unique(vstack(tables, metadata_conflicts="silent"), keys="source_id")  # pieces overlap at their edges
@@ -1082,7 +1092,7 @@ def main():
 
     qregion, cuts, extras = None, {}, set(OPTIONAL_ARCHIVES)
     if args.region is not None:
-        spec = json.loads(args.region.read_text())
+        spec, plan_name = read_spec(json.loads(args.region.read_text()))
         cuts = spec.pop("cuts", {}) or {}
         # Region searches fetch Gaia and SIMBAD galaxies; the rest only when asked for.
         extras = set(spec.get("archives") or []) | ({"hst_jwst"} if spec.get("hst_jwst") else set())
@@ -1168,9 +1178,12 @@ def main():
     if qregion is not None:
         gaia["r_ell"] = np.full(len(gaia), np.nan)
         n0 = len(gaia)
-        gaia = gaia[inside(gaia) & stream_pm_mask(gaia, qregion, cuts)]
+        crf = as_bool(gaia["gaia_crf_source"]) & as_bool(gaia["in_qso_candidates"])
+        gaia = gaia[inside(gaia) & (stream_pm_mask(gaia, qregion, cuts) | crf)]
+        n_crf = int((as_bool(gaia["gaia_crf_source"]) & as_bool(gaia["in_qso_candidates"])).sum())
         note(f"Kept {len(gaia)} of {n0} Gaia sources inside the region"
-             + (" and the stream-frame proper-motion window." if cuts.get("pm_window") else "."))
+             + (f" and the stream-frame proper-motion window, plus {n_crf} Gaia-CRF3 QSOs (kept whatever their "
+                "motion, as zero-motion references)." if cuts.get("pm_window") else "."))
     else:
         gaia["r_ell"] = elliptical_radius(gaia["xi"], gaia["eta"], tgt)
         gaia = gaia[gaia["r_ell"] <= N_RHALF]
