@@ -35,7 +35,7 @@ class PromptTests(unittest.TestCase):
 
     def test_every_context_key_is_explained(self):
         for key in ("field", "availableFields", "viewport", "survey", "layers", "highlight", "annotations",
-                    "selection", "userRegions", "plot", "selectedPublication", "mapAcknowledgments"):
+                    "selection", "userRegions", "plot", "selectedPublication", "mapAcknowledgments", "kernel"):
             self.assertIn(key, WORKSPACE_PROMPT)
 
 

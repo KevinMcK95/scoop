@@ -120,17 +120,17 @@ class KernelSettingTests(unittest.TestCase):
 
         self.client = TestClient(create_app(settings=Settings(path), make_model=lambda s: None, make_ads=lambda s: None,
                                             make_kernel=make_kernel,
-                                            list_kernels=lambda: [{"name": "so", "display_name": "SO (pixell)"}]))
+                                            list_kernels=lambda: [{"name": "analysis", "display_name": "Analysis"}]))
 
     def post(self, body):
         return self.client.post("/api/settings", json=body, headers={"Origin": "http://127.0.0.1:5173"})
 
     def test_only_installed_kernels_can_be_chosen_and_switching_closes_the_old_one(self):
-        self.assertEqual(self.client.get("/api/settings").json()["kernels"], [{"name": "so", "display_name": "SO (pixell)"}])
+        self.assertEqual(self.client.get("/api/settings").json()["kernels"], [{"name": "analysis", "display_name": "Analysis"}])
         self.assertEqual(self.post({"kernel": "python9"}).status_code, 400)
         self.assertEqual(self.made, [])
-        chosen = self.post({"kernel": "so"}).json()
-        self.assertEqual((chosen["kernel"], chosen["kernel_on"], chosen["sources"]["kernel"]), ("so", True, "settings"))
+        chosen = self.post({"kernel": "analysis"}).json()
+        self.assertEqual((chosen["kernel"], chosen["kernel_on"], chosen["sources"]["kernel"]), ("analysis", True, "settings"))
         self.post({"kernel_cwd": "~/scratch"})  # a new working directory means a new kernel
         self.assertEqual((len(self.made), self.made[0].closed), (2, True))
         self.post({"model": "openai/gpt-6-luna"})  # other settings leave the kernel alone

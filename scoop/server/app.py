@@ -418,6 +418,8 @@ def create_app(
                 costs.set_budget(thread_id, float(budget))
         except (KeyError, ValueError, TypeError) as exc:
             return _bad_request(f"Invalid chat request: {exc}")
+        # Which analysis environment run_kernel uses (null: off) comes from the server, never the browser.
+        context = {**context, "kernel": await live["kernel"].describe() if live["kernel"] else None}
 
         field = fields.get(field_key) if fields and field_key else None
         # The field this turn works on: load_field can switch it mid-turn (e.g. from the start

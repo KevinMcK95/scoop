@@ -31,6 +31,14 @@ class KernelSetupTests(unittest.TestCase):
     def test_installed_kernels_are_listed(self):
         self.assertIn("python3", [k["name"] for k in available_kernels()])
 
+    @unittest.skipUnless(READY, "no jupyter_client or python3 kernel")
+    def test_the_agent_is_told_the_environment(self):
+        facts = run(AnalysisKernel("python3", cwd=Path("/tmp/scoop-k")).describe())
+        self.assertEqual((facts["name"], facts["working_directory"]), ("python3", str(Path("/tmp/scoop-k").resolve())))
+        self.assertEqual(facts["language"], "python")
+        # The built-in python3 spec names a bare "python"; installed ones give a full path.
+        self.assertTrue(facts["python"] is None or Path(facts["python"]).is_absolute())
+
     def test_long_output_keeps_both_ends(self):
         text = _truncate("a" * 50 + "b" * 50, limit=20)
         self.assertTrue(text.startswith("a" * 10) and text.endswith("b" * 10))

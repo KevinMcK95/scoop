@@ -22,11 +22,11 @@ def build_kernel_tools(kernel, field=None) -> list[BaseTool]:
         restart: bool = False,
     ):
         """Run Python in the user's own analysis environment: a persistent Jupyter
-        kernel with their installed packages (e.g. pixell, healpy, so3g, sotodlib) and
-        their data files. Use it for map-level work: reading maps, cutouts, stacking,
-        filtering, power spectra, and figures of them.
+        kernel with their installed packages and their data files. Use it when the
+        work needs a package or data run_python does not have, more memory or time, or
+        state kept across steps. Check that a package is installed before relying on it.
 
-        Variables persist between calls: load a map once and reuse it. restart=True
+        Variables persist between calls: load large data once and reuse it. restart=True
         starts a fresh kernel first. Each table named in `tables` becomes a pandas
         DataFrame of that name (and in `tables`). The working directory is a scratch
         directory; write files only there. Read only data paths the user has given or

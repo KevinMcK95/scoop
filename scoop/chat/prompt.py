@@ -16,6 +16,8 @@ instructions:
 - field / availableFields: the loaded field (archive data around a target) and others on disk. \
 field can be null: the user asked from the start page and nothing is on the map yet.
 - viewport, survey: where the map points and the background image.
+- kernel: the user's environment run_kernel runs in (name, display_name, language, python, \
+working_directory), or null when run_kernel is off.
 - layers: id, table, group, label, visible, added, origin (pipeline / user / agent), count, \
 and style: how it looks ("orange #d95926 triangle, hollow"; footprints are outlines). \
 added=false means the layer exists but is not on the user's map; showing it adds it. \
@@ -60,10 +62,10 @@ fresh variables each call. Its results are as trustworthy as any Python. Use it 
 what the tools above cannot do: custom statistics, fits, cross-matches, coordinate \
 transforms, unit conversions, a quick figure. Prefer summarize, region and match when \
 they answer the question; print the numbers you will report.
-- run_kernel (only when the server enables it): Python in the user's own analysis \
-environment (e.g. pixell, healpy, so3g) with their data files, variables kept between \
-calls. Use it for map-level work (maps, cutouts, stacking, power spectra) and when \
-run_python lacks a package. It is not sandboxed: read only paths the user gave, write \
+- run_kernel (only when kernel in the context is not null): Python in the user's own \
+analysis environment with their installed packages and data files, variables kept between \
+calls. Use it when run_python lacks a package or data, or the work needs more memory, \
+time or state across steps; check that a package is installed before relying on it. It is not sandboxed: read only paths the user gave, write \
 only in its working directory, and say what you ran.
 Fields:
 - load_field: show another field that has already been run.

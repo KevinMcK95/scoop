@@ -1,7 +1,7 @@
 """A Jupyter kernel in the user's own analysis environment (the run_kernel tool).
 
 Unlike the Pyodide sandbox (scoop/sandbox.py), this is real Python with whatever the
-environment has installed (pixell, healpy, so3g, ...), with access to the files and
+environment has installed, with access to the files and
 network the user has, and with variables kept between calls: a map loaded once stays
 in memory for the follow-up questions. It is therefore **not contained**. It is off
 unless a kernel is chosen in the Settings tab (or ``SCOOP_KERNEL=<kernel name>``), and
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -53,6 +54,7 @@ class AnalysisKernel:
         self._manager = None
         self._client = None
         self._lock = asyncio.Lock()
+        self._facts: dict | None = None
 
     def problem(self) -> str | None:
         """Why the kernel cannot run here, or None."""
@@ -66,6 +68,23 @@ class AnalysisKernel:
             return (f"no Jupyter kernel named {self.kernel_name!r}: run "
                     f"`python -m ipykernel install --user --name {self.kernel_name}` in that environment")
         return None
+
+    def _facts_now(self) -> dict:
+        """The kernel's display name and interpreter, from its spec (the kernel is not started)."""
+        from jupyter_client.kernelspec import KernelSpecManager
+
+        spec = KernelSpecManager().get_kernel_spec(self.kernel_name)
+        python = spec.argv[0] if spec.argv and os.path.isabs(spec.argv[0]) else None
+        return {"display_name": spec.display_name, "language": spec.language, "python": python}
+
+    async def describe(self) -> dict:
+        """What the agent is told each turn: which environment its code runs in, and where it writes."""
+        if self._facts is None:
+            try:
+                self._facts = await asyncio.to_thread(self._facts_now)
+            except Exception:  # an unreadable spec should not stop the turn
+                self._facts = {"display_name": self.kernel_name, "language": None, "python": None}
+        return {"name": self.kernel_name, **self._facts, "working_directory": str(self.cwd)}
 
     async def _start(self):
         if self._client is not None and await self._manager.is_alive():
