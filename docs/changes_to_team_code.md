@@ -303,3 +303,11 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   `<fields>/_runs/` with their log and traceback. `scripts/triage_failures.py` groups them
   (transient / user / SCOOP bug / refused call) with an example to reproduce, and the Claude
   Code skill `.claude/skills/triage` reproduces, tests and fixes them on a branch for review.
+
+## README: the architecture as it runs
+
+- `README.md` (Agent architecture): a new "What runs today" section with a diagram of the
+  chat agent, the data agent and their tools (from the tool lists the server builds), a
+  table of what each agent does, the pieces around them (field pipeline, budgets, the
+  exoplanet agent) and the maintenance loop (triage, dataset scout, evaluation). The
+  team's specialized-agent diagram stays, under "Longer-term sketch".

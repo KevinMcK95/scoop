@@ -337,13 +337,72 @@ scoop chat   # interactive session
 
 ## Agent architecture
 
-The initial implementation is a **LangGraph chat agent with typed tools**:
-`START → agent → tools → agent → END`, or a direct answer/clarification when no
-tool call is needed. Conversation messages and tool-published result snapshots
-are checkpointed separately; archive access stays in deterministic tools and
-data-source modules. See the [implemented layout](docs/langgraph_chat.md).
+### What runs today
 
-The specialized-agent diagram below is a longer-term sketch, not the current
+Two LangGraph agents serve the workspace, each with typed tools
+(`START → agent → tools → agent → END`; see the [layout](docs/langgraph_chat.md)).
+The **chat agent** talks to the user and works on the loaded field; the **data agent**
+decides everything that is downloaded. Archive access stays in deterministic tools,
+the field pipeline and data-source modules; the agents choose and explain, they never
+invent data.
+
+```mermaid
+flowchart LR
+    U(["User"]) <--> W["Web workspace<br/>sky map · layers · plots · tables · chat"]
+    W <-->|"chat turns, events"| C["Chat agent"]
+    C -->|"update_map: layers, focus,<br/>highlight, plots"| W
+    C --> F["Field analysis<br/>describe_field · summarize · region<br/>match · overlaps · load_field"]
+    C --> LK["Sky and objects<br/>lookup (SIMBAD) · sky_image (HiPS)"]
+    C --> PM["Proper motions<br/>pm_expectations · pm_published · pm_new_epoch<br/>pm_wait_time · fit_members · auto_members"]
+    C --> LIT["Literature and web<br/>ads_search · ads_paper · ads_citations<br/>web_search · web_fetch"]
+    C --> PY["Computation<br/>run_python (sandbox) · run_kernel (your env)"]
+    C ==>|"ask_data_agent<br/>(every download; user_confirmed<br/>once the user agrees)"| D["Data agent"]
+    D --> SZ["Size and health first<br/>estimate_gaia · gaia_status · job_log"]
+    D --> NF["New fields<br/>find_lvdb · run_field · run_cone<br/>find_stream · plan_region · run_region"]
+    D --> AD["More data for a field<br/>add_data (plug-ins: TIC, TESS, exoplanets, ...)<br/>VizieR · IVOA registry and TAP · survey_inventory"]
+    D --> SK[("Skills<br/>read_skill · save_skill_draft")]
+    NF --> J[["Field pipeline (background jobs)<br/>Gaia DR3 + SIMBAD galaxies;<br/>HST/JWST, QSOs, spectra on request"]]
+    J --> FS[("Fields")]
+    AD --> FS
+    FS --> W
+```
+
+| Agent | What it does |
+| --- | --- |
+| **Chat agent** ([prompt](scoop/chat/prompt.py)) | Answers from the loaded field and shows the answer on the map: layers, highlights, plots (CMD, proper motions, RVs), annotations. Analyses what is there (counts, statistics, overlaps and time baselines of HST/JWST footprints, cross-matches), plans and fits proper motions (expected precision, new-epoch value, member selection and population fits against the literature), reads the literature (ADS) and the web, and runs Python. It never starts a download: it passes the user's request to the data agent in plain words, relays its plan or report, and asks the user to confirm large requests. |
+| **Data agent** ([prompt and tools](scoop/chat/data_agent.py)) | Decides what is fetched, from where and how much. Sizes every request first (Gaia counts in about a second); starts new fields for an LVDB object, a cone, a box, polygon or stellar-stream band (with cuts in the stream's frame), and adds data the field lacks from SCOOP's archive plug-ins, VizieR or any TAP service, following SCOOP's skills. Large requests come back as a plan for the user (above 60,000 Gaia sources for a cone or LVDB field, 500,000 for a region). Checks the Gaia servers and its own job queue, reads failed runs' logs, retries transient failures once and reports SCOOP bugs with their traceback. Defaults: Gaia and SIMBAD galaxies; HST/JWST observations, QSO catalogs and spectra only when asked; images are never downloaded. |
+
+Around them:
+
+- **Field pipeline** ([`smoke_tests/lvdb_field.py`](smoke_tests/lvdb_field.py)): the background
+  job a field comes from: cones, LVDB objects and regions (boxes, polygons, galstreams or
+  paper tracks), queried archive by archive with each decision recorded and shown.
+- **Cost budgets** ([What a command costs](#what-a-command-costs)): an optional per-conversation
+  budget, an estimate before each command and its actual cost after.
+- **Exoplanet agent** ([`exoplanets/`](exoplanets/agent.py)): answers planet questions with
+  every claim quoted from a tool result and checked; standalone for now, and its archive
+  queries already feed the workspace as plug-ins (TIC, TESS sectors and TOIs, planet hosts).
+- **Keeping SCOOP working**, outside the chat:
+
+```mermaid
+flowchart LR
+    A[("Audit log: failed calls with arguments,<br/>incl. the data agent's")] --> T["triage<br/>(Claude Code skill)"]
+    R[("Failed field runs<br/>log + traceback")] --> T
+    T -->|"reproduce, test, fix"| B["Branch / PR for review"]
+    ADS[("ADS / arXiv<br/>data-release papers")] --> SC["Dataset scout<br/>(monthly)"]
+    SC -->|"draft skills, sources, probes"| B
+    E["Evaluation<br/>benchmarks and checks"] --> B
+```
+
+  The [dataset scout](#dataset-scout) finds datasets SCOOP lacks; `/triage`
+  ([skill](.claude/skills/triage/SKILL.md), [`scripts/triage_failures.py`](scripts/triage_failures.py))
+  turns what failed in sessions into tested fixes; [evaluation](evaluation/README.md) scores
+  answers against benchmarks. Both open branches for a person to review; nothing changes
+  SCOOP's code unreviewed.
+
+### Longer-term sketch
+
+The specialized-agent diagram below is the longer-term sketch, not the current
 runtime. We will add separate agent roles only when a concrete workflow needs
 them, rather than requiring a planner/compiler pipeline for every chat turn.
 
