@@ -224,6 +224,7 @@ class ScriptedModel:
 
     def bind_tools(self, tools):
         self.tools = [t.name for t in tools]
+        self.tools_full = list(tools)
         return self
 
     async def ainvoke(self, messages, config=None):
@@ -367,6 +368,24 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Fields started: ['ngc_300']", result.update["messages"][0].content)
         sized = next(m for m in model.last if getattr(m, "tool_call_id", None) == "c2")
         self.assertIn("about 2,000,000 Gaia sources", sized.content)
+
+    async def test_the_data_agent_clears_added_tables_on_request(self):
+        field = field_from_viewer_data(viewer_data())
+        calls = []
+
+        def remove(key, names):
+            calls.append((key, names))
+            return ["ps1_dr2", "twomass_psc"]
+
+        model = ScriptedModel(call("remove_tables", {}, "r1"), AIMessage(content="Removed 2 added tables."))
+        handoff = build_handoff_tool(model=model, field=field, store_rows=None, remove_tables=remove,
+                                     added_tables=lambda key: ["ps1_dr2", "twomass_psc"])
+        result = await handoff.ainvoke({"type": "tool_call", "name": "ask_data_agent", "id": "h1",
+                                        "args": {"request": "clear the extra catalogs from this field"}})
+        self.assertEqual(calls, [(field["key"], None)])
+        self.assertEqual(result.update["artifacts"]["h1"]["kind"], "field_refresh")  # the browser reloads it
+        self.assertEqual(result.update["artifacts"]["h1"]["removed"], ["ps1_dr2", "twomass_psc"])
+        self.assertIn("ps1_dr2, twomass_psc", next(t for t in model.tools_full if t.name == "remove_tables").description)
 
     def test_the_prompt_names_every_add_data_source(self):
         from scoop.sources import SOURCES

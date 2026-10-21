@@ -641,6 +641,32 @@ class FieldStore:
                           **({"options": options} if options else {})}
         extra.write_text(json.dumps(stored))
 
+    def added_tables(self, key: str) -> list[str]:
+        """Tables added to a field after the pipeline built it (by the data agent or a
+        plug-in query), which remove_rows can take away again."""
+        path = self._path(key)
+        extra = self._extra(path) if path is not None else None
+        return sorted(json.loads(extra.read_text())) if extra is not None and extra.exists() else []
+
+    def remove_rows(self, key: str, sources: list[str] | None = None) -> list[str]:
+        """Remove added tables from a field (all of them when ``sources`` is None); the
+        pipeline's own tables are never touched. Returns the names removed. Old fields
+        gathered every table anyone asked for, so reloading one showed them all."""
+        path = self._path(key)
+        if path is None:
+            raise KeyError(key)
+        extra = self._extra(path)
+        stored = json.loads(extra.read_text()) if extra.exists() else {}
+        gone = sorted(stored if sources is None else set(sources) & set(stored))
+        for name in gone:
+            del stored[name]
+        if stored:
+            extra.write_text(json.dumps(stored))
+        elif extra.exists():
+            extra.unlink()
+        self._cache.pop(key, None)
+        return gone
+
 
 def finite_json(obj):
     """A copy with NaN and infinities as None: browsers' JSON.parse rejects them (an LVDB

@@ -77,6 +77,9 @@ only in its working directory, and say what you ran.
 Fields and data — the data agent decides every download; you never start one:
 - load_field: show a field that has already been run (availableFields). Loading is \
 not downloading: do it yourself.
+- Clearing added data ("clear the extra catalogs", "reset this field", "remove the 2MASS \
+table"): ask_data_agent; it removes tables added after the field was built, never the \
+pipeline's own.
 - ask_data_agent: everything that fetches data, and every question about how much \
 data a request would be: a new field (an LVDB object, a cone around a position or \
 name, a box, polygon, a band along a track from a paper, a stellar stream), data the \

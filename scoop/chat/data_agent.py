@@ -52,6 +52,9 @@ paper (points, width and source from a tool result, never from memory), and gals
 streams. Stream cuts are in the stream frame (gmax, pm_window [w_phi1, w_phi2] mas/yr \
 around the track's motion). Region fields fetch only Gaia and SIMBAD galaxies unless the \
 user asked for more (include: hst_jwst, qso, spectra). SCOOP never downloads images.
+- Clearing a field: remove_tables takes added tables (yours or plug-ins') off the loaded \
+field when the user asks to clear, reset or remove them, all or by name; the pipeline's \
+own tables stay. Say what you removed.
 - Refreshing an old field: run_field with refresh=true for an LVDB object (its archives \
 are queried again), or a new run_cone / plan_region over the same area; say what the new \
 run will add before starting it.
@@ -540,7 +543,35 @@ def build_estimate_tool(*, resolver=None, estimate=None):
     return estimate_gaia
 
 
-def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None, jobs=None):
+def build_remove_tool(*, field: dict, remove_tables, added_tables, removed: list[str]):
+    """remove_tables: take tables added to the loaded field off it again."""
+    added = added_tables(field["key"])
+    remove = remove_tables  # the tool below takes this name
+
+    @tool
+    async def remove_tables(tool_call_id: Annotated[str, InjectedToolCallId],
+                            names: Annotated[list[str] | None, Field(description=(
+                                "tables to remove; omit to remove every added table"))] = None):
+        """Remove tables that were added to the loaded field after it was built (by you or
+        a plug-in query: e.g. old survey catalogs that clutter the map); the field's own
+        pipeline tables (gaia, observations, spectra, ...) are never removed. Use when the
+        user asks to clear, reset or remove added data. Added now: {added}."""
+        if names is not None and (bad := sorted(set(names) - set(added))):
+            return _error(f"Not added tables (or not in this field): {bad}. Added: {added or 'none'}.", tool_call_id)
+        try:
+            gone = remove(field["key"], names)
+        except Exception as exc:
+            return _error(f"Could not remove ({type(exc).__name__}: {exc}).", tool_call_id)
+        removed.extend(gone)
+        return _ok(f"Removed {gone or 'nothing (no added tables)'} from {field['key']}; the pipeline's tables "
+                   "are unchanged.", tool_call_id)
+
+    remove_tables.description = remove_tables.description.replace("{added}", ", ".join(added) or "none")
+    return remove_tables
+
+
+def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None, jobs=None,
+                       remove_tables=None, added_tables=None):
     """The chat agent's ``ask_data_agent`` tool: runs the data agent for one request.
     ``field`` is the field, or a function returning the turn's current field.
     ``field_tools(confirmed)`` returns the tools that start new fields (sized and gated
@@ -572,6 +603,10 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
             tools += field_tools(user_confirmed)
         if jobs is not None:
             tools.append(build_job_log_tool(jobs))
+        removed: list[str] = []
+        if field is not None and remove_tables is not None and added_tables is not None:
+            tools.append(build_remove_tool(field=field, remove_tables=remove_tables, added_tables=added_tables,
+                                           removed=removed))
         # Runs that failed recently, so the data agent notices them without being told.
         failures = jobs.recent_failures() if jobs is not None else []
         context = {"user_confirmed": user_confirmed, "recent_failed_runs": failures[:5],
@@ -585,11 +620,12 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
                                     max_steps=MAX_STEPS, name="data agent")
         started = [p["key"] for p in result.artifacts.values() if p.get("kind") == "field_job"]
         summary = (f"Data agent report:\n{result.report or '(no report)'}\nTables added: {added or 'none'}."
+                   + (f" Tables removed: {removed}." if removed else "")
                    + (f" Fields started: {started} (not loaded yet; the browser loads them when ready)."
                       if started else ""))
         key = field["key"] if field is not None else None
-        payload = ({"kind": "field_refresh", "key": key, "added": added} if added
-                   else {"kind": "data_agent_report", "key": key})
+        payload = ({"kind": "field_refresh", "key": key, "added": added, **({"removed": removed} if removed else {})}
+                   if added or removed else {"kind": "data_agent_report", "key": key})
         # What the data agent showed or started (plan outlines, focus, field jobs) reaches
         # the browser as this turn's artifacts, before the hand-off's own.
         return attach(publish_result(tool_call_id, tool_call_id, payload, summary), result)

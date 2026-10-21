@@ -443,6 +443,14 @@ def create_app(
                                           **({"options": [asdict(o) for o in s.options]} if s.options else {})}
                                          for s in SOURCES.values()]})
 
+    async def remove_source(request: Request) -> JSONResponse:
+        """Take an added table off a field (`all` for every added table)."""
+        key, name = request.path_params["key"], request.path_params["name"]
+        if fields is None or fields.get(key) is None:
+            return JSONResponse({"error": "No such field."}, status_code=404)
+        removed = fields.remove_rows(key, None if name == "all" else [name])
+        return JSONResponse({"removed": removed})
+
     async def query_source(request: Request) -> JSONResponse:
         key, name = request.path_params["key"], request.path_params["name"]
         try:
@@ -573,8 +581,18 @@ def create_app(
                                         estimate=gaia_estimate.estimate),
                     build_estimate_tool(resolver=resolver)]
 
+        def remove_tables(key: str, names: list[str] | None) -> list[str]:
+            gone = fields.remove_rows(key, names)
+            refreshed, current = fields.get(key), turn["field"]
+            if current is not None and refreshed is not None and current.get("key") == key:
+                current.clear()
+                current.update(refreshed)  # the rest of this turn sees the field without them
+            return gone
+
         handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None,
-                                     field_tools=field_tools, jobs=jobs)
+                                     field_tools=field_tools, jobs=jobs,
+                                     remove_tables=remove_tables if fields else None,
+                                     added_tables=fields.added_tables if fields else None)
         # The proper-motion agent: the PM tools (LVDB tables cached beside the fields), the
         # literature and a read-only view of the field; the chat agent hands PM work to it.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
@@ -731,6 +749,7 @@ def create_app(
         Route("/api/fields", list_fields),
         Route("/api/fields/{key}", get_field),
         Route("/api/fields/{key}/sources/{name}", query_source, methods=["POST"]),
+        Route("/api/fields/{key}/sources/{name}", remove_source, methods=["DELETE"]),
         Route("/api/sources", list_sources),
         Route("/api/jobs", start_job, methods=["POST"]),
         Route("/api/jobs/{id}", get_job),

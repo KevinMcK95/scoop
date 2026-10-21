@@ -181,15 +181,17 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     }
   }
 
-  /** Reload the field after it gained a table: keep the map as it is, add the new layers. */
+  /** Reload the field after it gained or lost tables: keep the map as it is, add the new
+   *  layers, and drop layers of tables the field no longer has (removed by the data agent). */
   async function refreshField(key: string, commandId?: string) {
     if (!backend || field?.key !== key) return loadField(key, commandId);
     try {
       const loaded = await track(`Updating ${key}…`, () => backend.getField(key));
-      const known = new Set(map.layers.map((layer) => layer.id));
+      const kept = map.layers.filter((layer) => !layer.table || layer.table in loaded.tables);
+      const known = new Set(kept.map((layer) => layer.id));
       const counts = new Map(loaded.layers.map((layer) => [layer.id, layer.count]));
       field = loaded;
-      map = { ...map, layers: [...map.layers.map((layer) => ({ ...layer, count: counts.get(layer.id) ?? layer.count })),
+      map = { ...map, layers: [...kept.map((layer) => ({ ...layer, count: counts.get(layer.id) ?? layer.count })),
         ...clone(loaded.layers.filter((layer) => !known.has(layer.id)))] };
       report(commandId, 'applied');
     } catch (error) {

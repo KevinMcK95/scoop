@@ -1964,6 +1964,18 @@ body.resizing-y * {
   width: 84px;
   height: 84px;
 }
+/* What the name stands for, right under it. */
+.landing-acronym {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.landing-acronym b {
+  color: var(--accent);
+  font-weight: 700;
+}
 .landing-tagline {
   margin: 0 auto;
   max-width: 520px;

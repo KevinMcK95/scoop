@@ -59,6 +59,25 @@ describe('field workspace', () => {
     expect(workspace.camera).toMatchObject({ ra: 260.05, dec: 57.92, fov: 0.8 });
   });
 
+  it('a refreshed field drops the layers of tables it no longer has', async () => {
+    const { fake } = backend([{ type: 'artifact', id: 'call-r', payload: { kind: 'field_refresh', key: 'mini_1', removed: ['milliquas'] } },
+                              { type: 'done' }]);
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+    await workspace.loadField('mini_1');
+    expect(workspace.layers.some((l) => l.table === 'milliquas')).toBe(true);
+    // The data agent removed an added table: the field comes back without it.
+    fake.getField = async (key) => {
+      const f = { ...miniField(), key };
+      const { milliquas: _gone, ...tables } = f.tables;
+      return { ...f, tables, layers: f.layers.filter((l) => l.table !== 'milliquas') };
+    };
+    workspace.draft = 'clear the extra catalogs';
+    await workspace.send();
+    await vi.waitFor(() => expect(workspace.layers.some((l) => l.table === 'milliquas')).toBe(false));
+    expect(workspace.layers.some((l) => l.table === 'gaia')).toBe(true);  // the rest stays
+  });
+
   it('a new search clears the field, layers and chat and starts a new conversation', async () => {
     const { workspace } = await ready();
     const before = workspace.conversationId;

@@ -388,3 +388,16 @@ Tested from a fresh clone and a new Python 3.12 environment, following the READM
   budget is optional), the scout, evaluation and demos, other ways in (the pipeline; the
   planned Python API and CLI marked as planned), the original vision (kept, labelled), an
   updated roadmap, and Yilun in the team list. Teammates' plan sections are unchanged.
+
+## Clearing added data from a field; the acronym on the start page
+
+- Tables added to a field (by the data agent or a plug-in query) are kept beside it and
+  came back on every load, so a field gathered every catalog anyone had asked for (Draco:
+  six survey catalogs, ~17,000 rows, from one earlier request). `scoop/fields.py`:
+  `FieldStore.added_tables` and `remove_rows` (added tables only; the pipeline's are never
+  touched). `scoop/server/app.py`: `DELETE /api/fields/{key}/sources/{name|all}`, and the
+  data agent's new `remove_tables` tool (`scoop/chat/data_agent.py`), which the chat agent
+  reaches with "clear the extra data". `web/src/lib/workspace/state.svelte.ts`: a refreshed
+  field drops the layers of tables it no longer has.
+- `web/src/lib/components/Landing.svelte`, `web/src/app.css`: "Sky Cone Of Observations and
+  Papers" under the title, initials in the accent colour.

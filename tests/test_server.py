@@ -229,6 +229,26 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(zipped.headers["content-encoding"], "gzip")
             self.assertEqual(zipped.json()["key"], "mini_1")
 
+    def test_added_tables_can_be_removed_and_pipeline_tables_stay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = field_store(tmp)
+            store.add_rows("mini_1", "twomass_psc", [{"id": "J1", "ra": 260.05, "dec": 57.92}],
+                           {"label": "2MASS", "provenance": "VizieR II/246", "kind": "catalog", "columns": {},
+                            "query": {"service": "VizieR", "table": "II/246/out", "rows": 1, "truncated": False}})
+            store.add_rows("mini_1", "galex_ais", [{"id": "G1", "ra": 260.05, "dec": 57.92}],
+                           {"label": "GALEX", "provenance": "VizieR II/335", "kind": "catalog", "columns": {},
+                            "query": {"service": "VizieR", "table": "II/335", "rows": 1, "truncated": False}})
+            self.assertEqual(store.added_tables("mini_1"), ["galex_ais", "twomass_psc"])
+            client = TestClient(create_app(fields=store))
+            gone = client.request("DELETE", "/api/fields/mini_1/sources/twomass_psc").json()
+            self.assertEqual(gone, {"removed": ["twomass_psc"]})
+            tables = client.get("/api/fields/mini_1").json()["tables"]
+            self.assertNotIn("twomass_psc", tables)
+            self.assertIn("galex_ais", tables)
+            self.assertEqual(store.remove_rows("mini_1", ["gaia"]), [])  # pipeline tables are never touched
+            self.assertEqual(client.request("DELETE", "/api/fields/mini_1/sources/all").json(), {"removed": ["galex_ais"]})
+            self.assertIn("gaia", client.get("/api/fields/mini_1").json()["tables"])
+
     def test_the_api_root_points_to_the_workspace(self):
         page = TestClient(create_app()).get("/")
         self.assertEqual(page.status_code, 200)
