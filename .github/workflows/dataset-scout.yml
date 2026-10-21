@@ -49,12 +49,13 @@ jobs:
           ADS_API_TOKEN: ${{ secrets.ADS_API_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          mkdir -p out  # gitignored, so the scan summary never lands in the pull request
           python -m scoop.scout --json \
             --max-proposals "${{ inputs.max_proposals || '3' }}" \
             ${{ inputs.since && format('--since {0}', inputs.since) || '' }} \
             ${{ inputs.dry_run == true && '--dry-run' || '' }} \
-            | tee scan.json
-          echo "report=$(python -c 'import json;print(json.load(open("scan.json"))["report"] or "")')" >> "$GITHUB_OUTPUT"
+            | tee out/scan.json
+          echo "report=$(python -c 'import json;print(json.load(open("out/scan.json"))["report"] or "")')" >> "$GITHUB_OUTPUT"
 
       - name: Open a pull request
         if: ${{ inputs.dry_run != true }}
@@ -65,7 +66,7 @@ jobs:
           set -euo pipefail
           git config user.name "scoop-dataset-scout"
           git config user.email "noreply@github.com"
-          # out/ is gitignored, so the audit line stays out of the branch on purpose.
+          # out/ is gitignored, so the scan summary and audit line stay out of the branch on purpose.
           if [ -z "$(git status --porcelain)" ]; then
             echo "Nothing new this month; no pull request."
             exit 0
@@ -106,6 +107,6 @@ jobs:
         with:
           name: scout-scan
           path: |
-            scan.json
+            out/scan.json
             out/scout_events.jsonl
           if-no-files-found: ignore

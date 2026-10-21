@@ -39,6 +39,9 @@ discovery = [
 streams = ["galstreams>=1.2.1,<2"]
 server = [
     "scoop-sky[chat,literature,discovery,streams]",
+    # Proper-motion and member fits (scoop/pm.py, scoop/members.py) behind the chat's PM tools.
+    "numpy>=1.26",
+    "scipy>=1.11",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",

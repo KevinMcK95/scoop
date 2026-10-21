@@ -59,7 +59,7 @@ same way.
 4. **Fill in the template** (sections below).
 5. **Write a smoke test** in `smoke_tests/`: one known field, checks on counts
    and coverage, timings printed, decisions logged (see
-   `smoke_tests/draco_hst_jwst_gaia.py`).
+   `smoke_tests/lvdb_field.py`).
 6. **Add the skill to `skills/index.md`** with `status: draft`.
 7. **Report back**: what the skill covers, what's unverified, and anything
    surprising found while probing.
