@@ -1377,6 +1377,24 @@ body.resizing-y * {
   visibility: visible;
 }
 .map-layer-row.sub,
+/* Options a data source's query takes, e.g. the TIC's "Tmag <" limit. */
+.source-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 2px 8px 6px 28px;
+  font-size: 0.85em;
+}
+
+.source-options input {
+  width: 4.5em;
+}
+
+.source-options small {
+  flex-basis: 100%;
+}
+
 .catalog-entry.sub {
   padding-left: 22px;
 }

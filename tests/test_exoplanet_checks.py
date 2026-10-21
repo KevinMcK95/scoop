@@ -63,6 +63,11 @@ class BadAnswerTests(unittest.TestCase):
         self.assertIn("no source", summary)
         self.assertIn("Add the bibcode", summary)
 
+    def test_a_claim_without_a_number_still_needs_a_source(self):
+        # Found by hand: this passed when only sentences with numbers needed a source.
+        report = check_answer("TOI 561 b has an atmosphere.", MESSAGES)
+        self.assertEqual(report.uncited_sentences, ["TOI 561 b has an atmosphere."])
+
 
 class ObjectNameTests(unittest.TestCase):
     """Digits in names (TRAPPIST-1, HD 209458) are not values to check or cite."""
@@ -71,11 +76,11 @@ class ObjectNameTests(unittest.TestCase):
         for answer in ("TRAPPIST-1 e is a rocky planet.", "HD 209458 b was the first transiting planet found.",
                        "TOI-700.01 is confirmed.", "KOI-351 is Kepler-90.", "TIC 150428135 is TOI-700."):
             with self.subTest(answer):
-                self.assertTrue(check_answer(answer, MESSAGES).ok, check_answer(answer, MESSAGES).summary())
+                self.assertEqual(check_answer(answer, MESSAGES).unsupported_numbers, [])
 
     def test_names_the_tools_returned_are_not_numbers(self):
         evidence = [json.dumps({"hostname": "51 Peg", "planets": [{"native_id": "51 Peg b"}]})]
-        self.assertTrue(check_answer("51 Peg b is a hot Jupiter.", evidence).ok)
+        self.assertEqual(check_answer("51 Peg b is a hot Jupiter.", evidence).unsupported_numbers, [])
 
     def test_a_value_next_to_a_name_is_still_checked(self):
         report = check_answer("Kepler-90 has 9 planets (NASA Exoplanet Archive).", MESSAGES)
