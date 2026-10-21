@@ -133,6 +133,17 @@ class MapToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "error")
         self.assertIn("No actions sent", result.content)
 
+    async def test_a_rejected_layer_can_be_added_on_retry(self):
+        update_map = self.tools()["update_map"]
+        add = {"type": "layer.add", "id": "agent:new", "table": "gaia", "label": "New"}
+        calls = ([add, {"type": "select", "table": "gaia", "id": "invented"}], [add])
+        results = [await update_map.ainvoke({"name": "update_map", "args": {"actions": actions},
+                                             "id": f"call-{i}", "type": "tool_call"})
+                   for i, actions in enumerate(calls)]
+        self.assertEqual(results[0].status, "error")
+        self.assertNotIn("already exists", str(results[1]))  # sent, not rejected
+        self.assertEqual(type(results[1]).__name__, "Command")
+
     async def test_malformed_and_executable_actions_are_rejected(self):
         for action in (
             {"type": "eval", "code": "alert(1)"},
@@ -274,6 +285,9 @@ class MapToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(none["pairs"], 0)
         bad = await self.call("overlaps", {"table": "gaia"})
         self.assertEqual(bad.status, "error")
+        self.field["tables"] = {"gaia": self.field["tables"]["gaia"]}
+        none_loaded = await self.call("overlaps", {})
+        self.assertEqual((none_loaded.status, none_loaded.content), ("error", "This field has no footprint tables."))
 
     async def test_run_cone_resolves_a_name_and_starts_a_job(self):
         started = await self.call("run_cone", {"name": "Mini", "radius_arcmin": 5})

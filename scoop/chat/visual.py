@@ -436,15 +436,17 @@ def build_map_tools(
         acknowledges it on a later turn.
         """
         problems = []
+        pending = dict(current)  # layers this call adds; kept only if every action is valid
         for i, action in enumerate(actions):
-            problem = check_action(action, field, current)
+            problem = check_action(action, field, pending)
             if problem:
                 problems.append(f"action {i} ({action.type}): {problem}")
             elif isinstance(action, LayerAdd):
-                current[action.id] = {"id": action.id, "table": action.table, "origin": "agent"}
+                pending[action.id] = {"id": action.id, "table": action.table, "origin": "agent"}
         if problems:
             return ToolMessage(content="No actions sent. " + " ".join(problems),
                                tool_call_id=tool_call_id, status="error")
+        current.update(pending)
         payload = {"kind": "map_actions", "status": "requested",
                    "actions": [a.model_dump(mode="json", exclude_none=True) for a in actions]}
         lines = [_summary(a, field, current) for a in actions]
@@ -722,6 +724,8 @@ def build_map_tools(
             return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
         if table is None:
             table = next((n for n, t in field["tables"].items() if t.get("kind") == "footprints" and t["rows"]), None)
+            if table is None:
+                return error("This field has no footprint tables.")
         for name in (table, table_b):
             if name is not None and (name not in field["tables"] or
                                      not any(r.get("s_region") for r in field["tables"][name]["rows"])):
