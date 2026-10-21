@@ -507,13 +507,17 @@ def create_app(
                 return
             async with lock:
                 request_id, started = uuid.uuid4().hex, time.monotonic()
-                # Before anything runs: what this command should cost, against what is left to spend.
-                estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
-                                          overhead_tokens=overhead, request_id=request_id)
-                yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
+                # Costing is opt-in: a conversation that never set a budget is not estimated,
+                # confirmed or calibrated at all.
+                tracked = costs.budget(thread_id) is not None
+                estimate: dict = {}
+                if tracked:
+                    # Before anything runs: what this command should cost, against what is left to spend.
+                    estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
+                                              overhead_tokens=overhead, request_id=request_id)
+                    yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
                 # An unpriced model cannot be held to a budget; the note says so instead.
-                over_budget = (estimate["priced"] and estimate["budget_scope"] == "conversation"
-                               and not estimate["within_budget"])
+                over_budget = tracked and estimate["priced"] and not estimate["within_budget"]
                 if over_budget:
                     costs.forget(request_id)
                     left = estimate["budget"]["remaining_usd"]
@@ -579,13 +583,13 @@ def create_app(
                 finally:
                     # However the turn ends, its tokens are what it cost: charge them to the
                     # conversation's budget and let the next estimate learn from them.
-                    actual = costs.confirm_usage(request_id, model_id(), usage) if usage else None
-                    if actual is None:
+                    actual = costs.confirm_usage(request_id, model_id(), usage) if tracked and usage else None
+                    if tracked and actual is None:
                         costs.forget(request_id)
                     # Written however the turn ends, so failures are always diagnosable.
                     if audit_path is not None:
                         record = _audit_record(request_id, thread_id, started, sent, usage, error,
-                                               cost={**estimate, **(actual or {})})
+                                               cost={**estimate, **(actual or {})} if tracked else None)
                         with audit_path.open("a", encoding="utf-8") as log:
                             log.write(json.dumps(record) + "\n")
                     if tracer is not None:

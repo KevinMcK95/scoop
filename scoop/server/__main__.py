@@ -13,6 +13,7 @@ Python in that environment, not sandboxed, working in ``SCOOP_KERNEL_CWD`` (defa
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import os
 from pathlib import Path
@@ -94,7 +95,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from ..lookup import simbad_query
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
-    from ..cost import DEFAULT_BUDGET_USD, CostTracker
+    from ..cost import CostTracker, load_prices
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
@@ -108,6 +109,8 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         "api_key": os.environ.get("SCOOP_MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "ads_token": os.environ.get("ADS_API_TOKEN"), "kernel": os.environ.get("SCOOP_KERNEL"),
         "kernel_cwd": os.environ.get("SCOOP_KERNEL_CWD")})
+    # Model prices come from a public list, kept beside the settings and refreshed daily.
+    prices_from = await asyncio.to_thread(load_prices, settings_path.with_name("prices.json"))
     async with contextlib.AsyncExitStack() as stack:
         web = await stack.enter_async_context(httpx.AsyncClient(follow_redirects=True))
         # Conversations' agent state survives restarts (reopened History threads keep their memory).
@@ -149,7 +152,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")
         print(f"settings file: {settings_path}; conversations: {threads_path}")
         print(f"budgets and cost calibration: {settings_path.with_name('costs.json')} "
-              f"(default ${DEFAULT_BUDGET_USD:.2f} per command until a conversation sets its own)")
+              f"(only for conversations that set a budget; model prices: {prices_from})")
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
 
 

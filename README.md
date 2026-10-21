@@ -249,13 +249,18 @@ until it has one.
    advance which tools it will call. `calibration(model)` reports the factor,
    the sample count and the rolling relative error.
 
-Budgets and calibration live in one JSON file (`~/.config/scoop/costs.json`),
-beside the settings. `AGENT_BUDGET_USD` sets the per-command default used
-before a conversation sets its own.
+A budget is optional. A conversation that never sets one is not costed at all:
+no estimate, no calibration, nothing written.
 
-An unknown model is reported as unpriced rather than priced at another model's
-rate; `SCOOP_MODEL_PRICE_USD_PER_MTOK="input,output[,cached]"` (USD per million
-tokens) prices a local or self-hosted endpoint.
+Budgets and calibration live in one JSON file (`~/.config/scoop/costs.json`),
+beside the settings.
+
+Model prices are looked up online (LiteLLM's public price list) when the server
+starts, kept in `~/.config/scoop/prices.json` and refreshed daily; offline, the
+last copy or the built-in table is used. A model with no price anywhere is
+reported as unpriced rather than priced at another model's rate. Only a
+self-hosted endpoint that is not listed online needs
+`SCOOP_MODEL_PRICE_USD_PER_MTOK="input,output[,cached]"` (USD per million tokens).
 
 [`scoop/cost.py`](scoop/cost.py) is also usable on its own:
 

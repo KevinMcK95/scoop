@@ -116,9 +116,9 @@ class ServerTests(unittest.TestCase):
             record = json.loads(audit.read_text())
 
         self.assertEqual(kinds(stream), ["tool_call", "tool_result", "artifact", "assistant", "done"])
-        # Every turn is costed before it runs, whether or not the model has a price.
-        self.assertEqual(stream[0]["type"], "cost")
-        self.assertEqual((stream[0]["phase"], stream[0]["request_id"]), ("estimate", record["request_id"]))
+        # No budget was set, so the turn is not costed at all.
+        self.assertFalse(any(event["type"] == "cost" for event in stream))
+        self.assertIsNone(record["estimated_cost_usd"])
         artifact = next(event for event in stream if event["type"] == "artifact")
         self.assertEqual(artifact["payload"]["status"], "requested")
         self.assertEqual(artifact["payload"]["actions"], [highlight])
@@ -171,6 +171,19 @@ class ServerTests(unittest.TestCase):
         self.assertAlmostEqual(actual["budget"]["remaining_usd"], round(5 - billed, 6), places=6)
         self.assertEqual(actual["budget"]["turns"], 1)
         self.assertIn("left of this conversation", actual["note"])
+
+    def test_without_a_budget_nothing_is_costed_or_calibrated(self):
+        from scoop.cost import CostTracker
+
+        answer = AIMessage(content="ok", usage_metadata={"input_tokens": 1000, "output_tokens": 10, "total_tokens": 1010})
+        model = ScriptedModel(answer)
+        model.model_name = "claude-opus-5-5"
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "costs.json"
+            stream = events(self.post_chat(TestClient(create_app(model=model, costs=CostTracker(state)))))
+            self.assertFalse(state.exists())  # no estimate, no pending request, no calibration
+        self.assertFalse(any(event["type"] == "cost" for event in stream))
+        self.assertEqual(kinds(stream), ["assistant", "done"])
 
     def test_a_command_the_remaining_budget_cannot_cover_does_not_run(self):
         from scoop.cost import CostTracker

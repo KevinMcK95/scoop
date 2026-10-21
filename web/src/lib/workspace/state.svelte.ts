@@ -21,8 +21,6 @@ export function adsPublications(payload: ADSPayload): Publication[] {
 }
 
 const emptyMap = (): MapState => ({ layers: [], highlight: null, annotations: [], selection: null, plot: null });
-const BUDGET_NOTE = 'Set a budget for this conversation first, so SCOOP can tell you what each command costs '
-  + 'before it runs. Your question is still in the box.';
 const MAX_UNDO = 50;
 
 // Call once per page/component tree. No module-level mutable state (SSR safe).
@@ -485,7 +483,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       survey = saved.survey;
       moveCamera(saved.viewport);
     },
-    /** What this conversation may spend; null until the user sets a budget. */
+    /** What this conversation may spend; null when the user has not set one (costing is then off). */
     get budget() { return budget; },
     /** Whether this server keeps budgets: asking for one is pointless when it does not. */
     get budgetRequired() { return !!backend?.getBudget; },
@@ -511,7 +509,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       threadId = globalThis.crypto.randomUUID();
       messages = [];
       unreported = [];
-      budget = null;  // a new conversation asks for its own budget
+      budget = null;  // a new conversation starts without a budget
       void refreshBudget();
     },
     /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings
@@ -587,12 +585,6 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       if (!backend || !services.chat) {
         push({ role: 'user', text });
         push({ role: 'note', text: 'No agent is connected. Start `python -m scoop.server` with SCOOP_MODEL set.' });
-        return;
-      }
-      if (!budget && backend.getBudget) {
-        // Nothing is sent and nothing is lost: the question waits in the composer for a budget.
-        draft = text;
-        if (messages.at(-1)?.text !== BUDGET_NOTE) push({ role: 'note', text: BUDGET_NOTE });
         return;
       }
       const sent = context();

@@ -357,7 +357,7 @@ describe('field workspace', () => {
     expect(workspace.map.highlight?.ids).toEqual(['1004']); // the view was kept
   });
 
-  it('asks for a budget before the first command, then reports cost and what is left', async () => {
+  it('reports cost and what is left once an optional budget is set', async () => {
     const cost = (phase: 'estimate' | 'actual', note: string, remaining: number): ChatEvent =>
       ({ type: 'cost', phase, note, request_id: 'r1', model: 'claude-opus-5-5',
          budget: { thread_id: 't', budget_usd: 5, spent_usd: 5 - remaining, remaining_usd: remaining, turns: 1 } });
@@ -376,15 +376,8 @@ describe('field workspace', () => {
     const workspace = createWorkspace(fake, { pollMs: 1 });
     await workspace.connect();
 
-    // Nothing is sent to the agent until the conversation has a budget.
-    expect(workspace.budgetRequired).toBe(true);
+    // A budget is optional: with none, the question goes straight to the agent.
     expect(workspace.budget).toBeNull();
-    workspace.draft = 'What is Draco?';
-    await workspace.send();
-    expect(requests).toHaveLength(0);
-    expect(workspace.messages.map((m) => m.role)).toEqual(['note']);
-    expect(workspace.messages[0].text).toMatch(/Set a budget/);
-    expect(workspace.draft).toBe('What is Draco?');  // the question is kept, not lost
 
     expect(await workspace.setBudget(5)).toBeNull();
     expect(budgets).toEqual([5]);
@@ -393,8 +386,8 @@ describe('field workspace', () => {
 
     // One note per turn: the estimate, replaced by what the command actually cost.
     const notes = workspace.messages.filter((m) => m.role === 'note');
-    expect(notes).toHaveLength(2);  // the "set a budget" note, then this turn's cost
-    expect(notes[1].text).toMatch(/cost \$0.0500 · \$4.9500 left/);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toMatch(/cost \$0.0500 · \$4.9500 left/);
     expect(workspace.budget?.remaining_usd).toBe(4.95);
   });
 
