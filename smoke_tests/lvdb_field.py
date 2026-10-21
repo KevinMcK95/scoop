@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import socket
 import time
 from collections import Counter
 from itertools import combinations
@@ -39,6 +41,7 @@ from ids import check_id_columns, to_int_id
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the scoop package, for regions
+from scoop import gaia_status  # noqa: E402
 from scoop.lvdb import CACHE_NAME as LVDB_CACHE_NAME, LVDB_BASE, LVDB_RELEASE  # noqa: E402
 from scoop.regions import Region, adql_condition, read_spec  # noqa: E402
 
@@ -46,6 +49,10 @@ LVDB_URL = LVDB_BASE + "comb_all.ecsv"
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
 TAP_ROW_LIMITS = (2_000, 100_000, 3_000_000, 10_000_000)  # a result this long is truncated
 GAIA_DR3_EPOCH = 2016.0
+# astroquery's TAP and MAST clients open sockets without a timeout, so a connection the
+# network drops (seen 2026-10-21: CLOSE_WAIT after a wifi change) hangs the run forever;
+# with this a stalled read raises, and with_retries tries again.
+socket.setdefaulttimeout(120)
 MOC_DEPTH = 16  # ~3" HEALPix cells; footprints are arcmin-scale
 
 # Reference palette (dataviz skill), light mode.
@@ -215,8 +222,9 @@ def empty_mast() -> Table:
     return Table({c: np.array([], dtype=d) for c, d in MAST_COLUMNS.items()})
 
 
-def select_observations(obs: Table, region_moc, tgt):
-    """Science observations whose footprint overlaps the region; one row per dataset."""
+def select_observations(obs: Table, region_moc, tgt, queried: bool = True):
+    """Science observations whose footprint overlaps the region; one row per dataset.
+    ``queried`` False: MAST was skipped, so there is nothing to report."""
     keep = np.ones(len(obs), bool)
     intent = np.char.lower(np.asarray(obs["intentType"], str))
     n_cal = int((intent != "science").sum())
@@ -252,7 +260,7 @@ def select_observations(obs: Table, region_moc, tgt):
     sel = Table(rows=rows, names=obs.colnames) if rows else obs[:0]
     sel["frac_in_region"] = [m[2] for m in mocs]
     where = "region" if tgt.get("kind") == "region" else f"{N_RHALF:g} r_half ellipse"
-    if len(obs) or tgt.get("kind") != "region":
+    if len(obs) or (tgt.get("kind") != "region" and queried):
         note(f"Kept {len(sel)} HST/JWST observations whose footprints overlap the "
              f"{where} (footprint polygons, not pointing centers).")
     return sel, [m[0] for m in mocs], [m[1] for m in mocs]
@@ -283,25 +291,109 @@ GAIA_COLS = ("g.source_id, g.ra, g.dec, g.phot_g_mean_mag, g.bp_rp, g.parallax, 
              "g.classprob_dsc_combmod_quasar, g.classprob_dsc_combmod_galaxy")
 
 
-def run_tap(adql: str, what: str) -> Table:
-    """Heidelberg first (faster), ESA on failure; refuse truncated results."""
-    from astroquery.utils.tap.core import TapPlus
+ESA_TAP = "https://gea.esac.esa.int/tap-server/tap"
+
+
+# Async TAP jobs keep running on the server after the client gives up, and the servers
+# run only a couple per IP at a time: abandoned counts over the Galactic plane queued every
+# later query behind them for hours (seen 2026-10-21). So every job this run starts is
+# aborted when the run stops waiting for it -- on an error, a retry, or SIGTERM.
+_open_jobs: dict = {}  # job id -> server, for jobs this run is still waiting on
+
+
+def _abort(server: str, job_id: str) -> None:
+    # By id over UWS: astroquery's job.abort() refuses when its cached phase is stale.
+    gaia_status.abort(server, job_id)
+
+
+def _tap_async(server: str, launch) -> Table:
+    job = launch()
+    _open_jobs[job.jobid] = server
     try:
-        tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
-        res = with_retries(lambda: tap.launch_job_async(adql, maxrec=10_000_000)
-                           .get_results(), f"Heidelberg {what}", tries=3)
-        server = "Heidelberg ARI mirror"
+        return job.get_results()
+    except BaseException:
+        _abort(server, job.jobid)
+        raise
+    finally:
+        _open_jobs.pop(job.jobid, None)
+
+
+def _abort_open_jobs(signum, frame):
+    for job_id, server in list(_open_jobs.items()):
+        _abort(server, job_id)
+    os._exit(128 + signum)
+
+
+def _heidelberg(adql: str, what: str):
+    from astroquery.utils.tap.core import TapPlus
+    tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
+    return with_retries(lambda: _tap_async("heidelberg", lambda: tap.launch_job_async(adql, maxrec=10_000_000, background=True, name=gaia_status.job_name())),
+                        f"Heidelberg {what}", tries=3), "Heidelberg ARI mirror"
+
+
+def _esa(adql: str, what: str):
+    from astroquery.gaia import Gaia
+    Gaia.ROW_LIMIT = -1
+    return with_retries(lambda: _tap_async("esa", lambda: Gaia.launch_job_async(adql, background=True, name=gaia_status.job_name())),
+                        f"ESA {what}", tries=3), "ESA Gaia archive"
+
+
+GAIA_SERVERS = {"heidelberg": (HEIDELBERG_TAP, _heidelberg), "esa": (ESA_TAP, _esa)}
+_health: dict | None = None
+
+
+def gaia_health() -> dict:
+    """Server health and our job queue (scoop.gaia_status), once per run, first aborting
+    stale SCOOP jobs that would queue this run's queries behind them."""
+    global _health
+    if _health is None:
+        st = gaia_status.status(clean_up=True)
+        _health = st["servers"]
+        if st["aborted"] or any(q.get("queued") for q in st["queues"].values()):
+            for line in st["diagnosis"]:
+                print(f"  Gaia: {line}")
+    return _health
+
+
+def gaia_servers() -> list[str]:
+    """Servers to try, answering ones first: Heidelberg (usually faster) unless
+    $SCOOP_GAIA_SERVER=esa. Raises when neither answers, saying why for each."""
+    prefer_esa = os.environ.get("SCOOP_GAIA_SERVER", "").strip().lower() == "esa"
+    order = ["esa", "heidelberg"] if prefer_esa else ["heidelberg", "esa"]
+    health = gaia_health()
+    up = [s for s in order if health[s]["ok"]]
+    if not up:
+        raise RuntimeError("no Gaia server is answering (a network problem, or both archives down): " + "; ".join(
+            f"{s}: {h['error']} after {h['seconds']} s" for s, h in health.items()))
+    return up + [s for s in order if s not in up]
+
+
+def run_tap(adql: str, what: str) -> Table:
+    """The first answering Gaia server (gaia_servers), the other on failure; refuse truncated results."""
+    first, second = (GAIA_SERVERS[s][1] for s in gaia_servers())
+    try:
+        res, server = first(adql, what)
     except Exception as e:
-        from astroquery.gaia import Gaia
-        print(f"  Heidelberg failed ({e}); falling back to ESA")
-        Gaia.ROW_LIMIT = -1
-        res = with_retries(lambda: Gaia.launch_job_async(adql).get_results(),
-                           f"ESA {what}", tries=3)
-        server = "ESA Gaia archive"
+        print(f"  {what} failed on the first Gaia server ({e}); trying the other")
+        res, server = second(adql, what)
     if len(res) in TAP_ROW_LIMITS:
         raise RuntimeError(f"{what}: {len(res)} rows is a TAP output limit -- "
                            f"truncated; split the query")
     return res, server
+
+
+def left_join(a: Table, b: Table, key: str) -> Table:
+    """join(a, b, join_type="left") that also works when either table is empty (astropy
+    refuses): a small field often has no QSO or galaxy candidates at all (a 5' cone around
+    TRAPPIST-1 failed this way, 2026-10-21). b's columns are then added, all masked."""
+    from astropy.table import MaskedColumn
+    if len(a) and len(b):
+        return join(a, b, keys=key, join_type="left")
+    out = a.copy()
+    for name in b.colnames:
+        if name != key and name not in out.colnames:
+            out[name] = MaskedColumn(np.zeros(len(out), dtype=b[name].dtype), mask=np.ones(len(out), bool))
+    return out
 
 
 def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
@@ -320,8 +412,7 @@ def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
     gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
                      "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
                      f"ON g.source_id = q.source_id WHERE {circle}", "galaxy_candidates")
-    out = join(src, qso, keys="source_id", join_type="left")
-    out = join(out, gal, keys="source_id", join_type="left")
+    out = left_join(left_join(src, qso, "source_id"), gal, "source_id")
     # Known variables masquerading as QSO candidates (RR Lyrae in dSphs). Look up
     # by source_id: a spatial join against vari_rrlyrae took minutes, this < 1 s.
     cand = np.asarray(out["source_id"])[as_bool(out["in_qso_candidates"])]
@@ -398,15 +489,21 @@ def system_ca_bundle() -> str | None:
 def sdss_sql(sql: str) -> Table:
     import requests
     params = {"cmd": sql, "format": "csv"}
-    try:
-        r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
-    except requests.exceptions.SSLError:
-        ca = system_ca_bundle()
-        if ca is None:
-            raise RuntimeError("SkyServer's certificate failed verification and no system "
-                               "certificate bundle was found; set SCOOP_CA_BUNDLE to one")
-        r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=ca)
-    r.raise_for_status()
+
+    def get():
+        try:
+            r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
+        except requests.exceptions.SSLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                raise  # a dropped connection (e.g. SSLEOFError), retried below, not a certificate
+            ca = system_ca_bundle()
+            if ca is None:
+                raise RuntimeError("SkyServer's certificate failed verification and no system "
+                                   "certificate bundle was found; set SCOOP_CA_BUNDLE to one")
+            r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=ca)
+        r.raise_for_status()
+        return r
+    r = with_retries(get, "SkyServer", tries=3)
     text = r.text.split("\n", 1)[1] if r.text.startswith("#Table") else r.text
     return Table.read(text, format="ascii.csv")
 
@@ -421,6 +518,42 @@ def query_spectra(tgt, radius_deg: float, cache: Path, stars_only: bool = False)
     p_sdss, p_desi = cache / "sdss_allspec.ecsv", cache / "desi_dr1.ecsv"
     if p_sdss.exists() and p_desi.exists():
         return Table.read(p_sdss), Table.read(p_desi)
+    try:
+        sdss = query_sdss(tgt, radius_deg)
+    except Exception as e:  # one archive being down shouldn't lose the whole field
+        note(f"SDSS DR20 (SkyServer) failed ({str(e)[:120]}); this field has no SDSS spectra. "
+             "Re-run the field to try again.")
+        sdss = Table({c: np.array([], dtype=d) for c, d in SDSS_EMPTY_COLUMNS.items() if c not in MATCH_COLUMNS})
+        sdss_failed = True
+    else:
+        sdss_failed = False
+
+    try:
+        desi = query_desi(tgt, radius_deg, stars_only)
+    except Exception as e:  # one archive being down shouldn't lose the whole field
+        note(f"DESI DR1 (NOIRLab Data Lab) failed ({str(e)[:120]}); this field has no DESI spectra. "
+             "Re-run the field to try again.")
+        desi = Table({c: np.array([], dtype=d) for c, d in DESI_EMPTY_COLUMNS.items()})
+        if not sdss_failed:
+            sdss.write(p_sdss, overwrite=True)  # cache SDSS only, so a re-run retries DESI
+        return sdss, desi
+    if sdss_failed:  # cache DESI only, so a re-run retries SDSS
+        _write_str(desi, p_desi)
+        return sdss, desi
+    for t, p in ((sdss, p_sdss), (desi, p_desi)):
+        _write_str(t, p)
+    return sdss, desi
+
+
+def _write_str(t: Table, p: Path) -> None:
+    for c in t.colnames:
+        if t[c].dtype == object:
+            t[c] = t[c].astype(str)
+    t.write(p, overwrite=True)
+
+
+def query_sdss(tgt, radius_deg: float) -> Table:
+    """SDSS DR20 allspec rows in a cone, with the Gaia IDs SDSS-V records (spAll)."""
     r_arcmin = radius_deg * 60
     cone = f"dbo.fGetNearbyAllspecEq({tgt['ra']}, {tgt['dec']}, {r_arcmin}) AS n"
     n = int(sdss_sql(f"SELECT COUNT(*) AS n FROM {cone}")["n"][0])
@@ -442,21 +575,7 @@ def query_spectra(tgt, radius_deg: float, cache: Path, stars_only: bool = False)
     # Explicit int64: an empty list would otherwise become a float column (see ids.py).
     sdss["survey_gaia_id"] = np.array([gmap.get(_int(x), 0) for x in sdss["sdss_id"]], dtype=np.int64)
     sdss["survey_gaia_release"] = "unknown"   # not documented in the pages we checked
-
-    try:
-        desi = query_desi(tgt, radius_deg, stars_only)
-    except Exception as e:  # one archive being down shouldn't lose the whole field
-        note(f"DESI DR1 (NOIRLab Data Lab) failed ({str(e)[:120]}); this field has no DESI spectra. "
-             "Re-run the field to try again.")
-        desi = Table({c: np.array([], dtype=d) for c, d in DESI_EMPTY_COLUMNS.items()})
-        sdss.write(p_sdss, overwrite=True)  # cache SDSS only, so a re-run retries DESI
-        return sdss, desi
-    for t, p in ((sdss, p_sdss), (desi, p_desi)):
-        for c in t.colnames:
-            if t[c].dtype == object:
-                t[c] = t[c].astype(str)
-        t.write(p, overwrite=True)
-    return sdss, desi
+    return sdss
 
 
 OPTIONAL_ARCHIVES = {"hst_jwst": "HST/JWST observations", "qso": "QSO catalogs (MILLIQUAS, Quaia)",
@@ -492,7 +611,7 @@ def query_desi(tgt, radius_deg: float, stars_only: bool = False) -> Table:
     if mws_rows:
         from astropy.table import vstack, unique
         mws = unique(vstack(mws_rows), keys="targetid")
-        desi = join(desi, mws, keys="targetid", join_type="left")
+        desi = left_join(desi, mws, "targetid")
     # DESI's ref_cat 'G2' means the ID is a Gaia DR2 source_id.
     desi["survey_gaia_release"] = "DR2"
     desi["survey_gaia_id"] = np.array([
@@ -952,9 +1071,11 @@ def count_region(region, cuts) -> dict:
     for part in parts:
         jobs.append(adql_condition(part, "g.ra", "g.dec"))
         jobs.append(gaia_region_where(region, part, cuts))
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    # ESA answers parallel anonymous jobs with HTTP 500 (seen 2026-10-21), so one at a time there
+    with ThreadPoolExecutor(max_workers=1 if gaia_servers()[0] == "esa" else 4) as pool:
         n = list(pool.map(count, jobs))
     return {"region": region.describe(), "cuts": cuts, "gaia_all": sum(n[0::2]), "gaia_with_cuts": sum(n[1::2]),
+            "gaia_server": gaia_servers()[0], "gaia_health": gaia_health(),
             "per_part": [{"cone": p["cone"], "all": a, "with_cuts": b} for p, a, b in zip(parts, n[0::2], n[1::2])],
             "note": "with_cuts is an upper bound when a stream-frame PM window is given: the query "
                     "uses a circle that contains the window, and the exact window is applied afterwards."}
@@ -990,7 +1111,7 @@ def query_gaia_region(region, cuts, cache: Path) -> Table:
         gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
                          "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
                          f"ON g.source_id = q.source_id WHERE {where}", "galaxy_candidates")
-        part_t = join(join(src, qso, keys="source_id", join_type="left"), gal, keys="source_id", join_type="left")
+        part_t = left_join(left_join(src, qso, "source_id"), gal, "source_id")
         tables.append(part_t)
         if cuts.get("pm_window"):
             # A stream proper-motion cut removes every QSO (they don't move), so also take this
@@ -1071,6 +1192,8 @@ def main():
     p.add_argument("--dec", type=float, help="cone center Dec (deg)")
     p.add_argument("--radius-arcmin", type=float, help="cone radius (arcmin)")
     p.add_argument("--name", help="label for the cone or region (and output key)")
+    p.add_argument("--include", default="", help="cone searches: optional archives to add to Gaia and SIMBAD "
+                   "galaxies, comma-separated: " + ", ".join(OPTIONAL_ARCHIVES))
     p.add_argument("--region", type=Path,
                    help="JSON region spec (scoop/regions.py: box, polygon, band along a track), with "
                         "optional \"cuts\": {\"gmax\": G limit, \"pm_window\": [w_phi1, w_phi2] mas/yr "
@@ -1085,6 +1208,8 @@ def main():
                    help="serve the output folder locally and open the viewer in a browser")
     p.add_argument("--port", type=int, default=8765)
     args = p.parse_args()
+    import signal
+    signal.signal(signal.SIGTERM, _abort_open_jobs)  # the workspace stops a run with SIGTERM
     N_RHALF = args.n_rhalf
     cache = args.out / "cache"
     cache.mkdir(parents=True, exist_ok=True)
@@ -1131,6 +1256,14 @@ def main():
         print(f"{tgt['name']}: {json.dumps(tgt)}")
         note(f"Searched a circular cone of radius {args.radius_arcmin:g}′ around RA {args.ra:.5f}, "
              f"Dec {args.dec:+.5f} (not a Local Volume Database object).")
+        # Cones, like regions, fetch Gaia and SIMBAD galaxies unless more is asked for.
+        extras = {a.strip() for a in (args.include or "").split(",") if a.strip()}
+        unknown = extras - set(OPTIONAL_ARCHIVES)
+        if unknown:
+            raise SystemExit(f"unknown archives {sorted(unknown)}; optional ones: {OPTIONAL_ARCHIVES}")
+        skipped = [OPTIONAL_ARCHIVES[a] for a in OPTIONAL_ARCHIVES if a not in extras]
+        note("Fetched Gaia DR3 and SIMBAD galaxies" + (f"; did not look up {', '.join(skipped)} (off by default for "
+             "cone searches; ask to include them)" if skipped else "") + ".")
     else:
         tgt = load_lvdb_target(args.lvdb_key, cache)
         print(f"{tgt['name']}: {json.dumps(tgt)}")
@@ -1139,10 +1272,11 @@ def main():
     a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
     query_radius = 1.02 * a_deg            # circle enclosing the ellipse
 
-    if qregion is not None and "hst_jwst" not in extras:
-        region = region_moc(qregion)
+    if "hst_jwst" not in extras:
+        region = region_moc(qregion) if qregion is not None else ellipse_moc(tgt, N_RHALF)
         obs, planned = empty_mast(), empty_mast()
-        inside = lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float))  # noqa: E731
+        inside = (None if qregion is None else  # noqa: E731
+                  lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float)))
     elif qregion is not None:
         region = region_moc(qregion)
         obs, planned = _per_part(qregion, cache, query_mast, ("obsid", "obsid"))
@@ -1151,7 +1285,7 @@ def main():
         region = ellipse_moc(tgt, N_RHALF)
         obs, planned = query_mast(tgt, query_radius, cache)
         inside = None
-    sel, mocs, shapes = select_observations(obs, region, tgt)
+    sel, mocs, shapes = select_observations(obs, region, tgt, queried="hst_jwst" in extras)
     if len(planned):
         pm = [footprint_moc(parse_s_region(r["s_region"])) for r in planned]
         planned = planned[[m is not None and m.intersection(region).sky_fraction > 0
@@ -1197,7 +1331,7 @@ def main():
     gaia["is_rrlyrae"] = as_bool(gaia["is_rrlyrae"])
 
     # Trusted QSOs: Gaia-CRF3, Quaia (by source_id), MILLIQUAS (by position).
-    if qregion is not None and "qso" not in extras:
+    if "qso" not in extras:
         mq, quaia = _with_columns(Table(), "milliquas"), _with_columns(Table(), "quaia")
     elif qregion is not None:
         mq, quaia = _per_part(qregion, cache, query_qso_catalogs, ("Name", "GaiaDR3"))
@@ -1234,7 +1368,7 @@ def main():
     note(f"Added {len(sg)} SIMBAD galaxies (not AGN) as an independent check on Gaia's "
          f"galaxy flag: {int(sg['gaia_match'].sum())} have a Gaia source within 2″, and Gaia "
          f"flagged {int(sg['gaia_gal_cand'].sum())} of those as galaxy candidates.")
-    if qregion is not None and "spectra" not in extras:
+    if "spectra" not in extras:
         sdss = Table({c: np.array([], dtype=d) for c, d in SDSS_EMPTY_COLUMNS.items()})
         desi = Table({c: np.array([], dtype=d) for c, d in {**DESI_EMPTY_COLUMNS, **MATCH_COLUMNS}.items()})
     elif qregion is not None:

@@ -70,10 +70,39 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         args = json.loads(next(l for l in job.lines if l.startswith("args"))[5:])
         self.assertEqual(args, ["--ra", "10.6847", "--dec", "41.269", "--radius-arcmin", "20.0",
                                 "--name", "M31 QSOs 20′"])
-        for bad in ((400, 0, 5, "x"), (10, 95, 5, "x"), (10, 0, 90, "x"), (10, 0, 5, "--out /tmp"),
-                    (10, 0, 5, "; rm -rf"), (10, 0, 5, "___"), (True, 0, 5, "x")):
+        for bad in ((400, 0, 5, "x"), (10, 95, 5, "x"), (10, 0, 90, "x"), (10, 0, 5, "___"), (True, 0, 5, "x")):
             with self.assertRaises(ValueError, msg=bad):
                 manager.start_cone(*bad)
+        with self.assertRaises(ValueError):
+            manager.start_cone(10, 0, 5, "x", include=["images"])
+        # Labels are cleaned, not refused: nothing in them can read as an option or a command.
+        from scoop.server.jobs import clean_name
+        self.assertEqual(clean_name("--out /tmp"), "out -tmp")
+        self.assertEqual(clean_name("; rm -rf"), "rm -rf")
+
+    async def test_cones_ask_for_optional_archives_by_name(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "pipeline.py").write_text(ARGS_SCRIPT)
+        manager = JobManager(tmp / "fields", tmp / "pipeline.py", python=sys.executable, timeout_s=30)
+        job = manager.start_cone(10.6847, 41.2690, 20, "M31 with spectra", include=["spectra", "hst_jwst"])
+        for _ in range(300):
+            if job.status != "running":
+                break
+            await asyncio.sleep(0.02)
+        args = json.loads(next(l for l in job.lines if l.startswith("args"))[5:])
+        self.assertEqual(args[-2:], ["--include", "hst_jwst,spectra"])
+
+    async def test_failures_are_listed_and_their_logs_found(self):
+        manager, job, tmp = await self.run_job(FAIL_SCRIPT, key="nowhere_1")
+        self.assertIs(manager.find("nowhere_1"), job)
+        self.assertIs(manager.find(job.id), job)
+        recent = manager.recent_failures()
+        self.assertEqual([(r["key"], r["error"]) for r in recent],
+                         [("nowhere_1", "ValueError: LVDB key 'nowhere_1' not found")])
+        self.assertEqual(manager.recent_failures(within_s=0), [])
+        kept = list((tmp / "fields" / "_runs").glob(f"*_nowhere_1_{job.id}.json"))
+        self.assertEqual(len(kept), 1)  # kept on disk for triage
+        self.assertEqual(json.loads(kept[0].read_text())["error"], job.error)
 
     async def test_arguments_are_validated_before_anything_runs(self):
         manager = JobManager(Path("."), Path("missing.py"))
@@ -92,9 +121,11 @@ except ModuleNotFoundError:
 @unittest.skipUnless(Table, "astropy absent")
 class LVDBIndexTests(unittest.TestCase):
     def test_search_by_name_or_key(self):
+        from unittest import mock
         from scoop.lvdb import CACHE_NAME, LVDBIndex
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(LVDBIndex(Path(tmp)).search("leo"))
+            with mock.patch("scoop.pm.load_lvdb", side_effect=OSError("offline")):
+                self.assertIsNone(LVDBIndex(Path(tmp)).search("leo"))  # no copy anywhere, and offline
             (Path(tmp) / "draco" / "cache").mkdir(parents=True)
             Table({"key": ["leo_1", "leo_2", "ursa_minor_1"], "name": ["Leo I", "Leo II", "Ursa Minor"],
                    "ra": [152.1, 168.4, 227.3], "dec": [12.3, 22.2, 67.2], "rhalf": [3.6, 2.5, 18.2],
@@ -106,6 +137,24 @@ class LVDBIndexTests(unittest.TestCase):
             self.assertEqual(index.search("  "), [])
             self.assertTrue(index.has("leo_2"))
             self.assertFalse(index.has("leo_9"))
+
+    def test_a_fresh_install_uses_the_shared_copy(self):
+        # No field has cached the LVDB yet: the index reads (or fetches once) the copy the
+        # proper-motion tools keep in <fields>/lvdb_cache/.
+        from unittest import mock
+        from scoop.lvdb import LVDBIndex
+        from scoop.pm import LVDB_RELEASE
+
+        def fetch(cache):
+            cache.mkdir(parents=True, exist_ok=True)
+            Table({"key": ["draco_1"], "name": ["Draco"], "ra": [260.07], "dec": [57.92], "rhalf": [9.67],
+                   "distance": [81.6]}).write(cache / f"lvdb_{LVDB_RELEASE}_comb_all.ecsv")
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scoop.pm.load_lvdb", side_effect=fetch) as fetched:
+                index = LVDBIndex(Path(tmp))
+                self.assertEqual([r["key"] for r in index.search("Draco")], ["draco_1"])
+                self.assertTrue(index.has("draco_1"))
+            fetched.assert_called_once()
 
 
 if __name__ == "__main__":

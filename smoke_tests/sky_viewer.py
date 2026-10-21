@@ -225,17 +225,29 @@ def viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, regi
     return data
 
 
+def finite_json(obj):
+    """NaN and infinities as null: browsers' JSON.parse rejects them (e.g. an LVDB object
+    without a proper motion, seen with NGC 300 on 2026-10-21, failed to load)."""
+    if isinstance(obj, float):
+        return obj if np.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [finite_json(v) for v in obj]
+    return obj
+
+
 def write_viewer(path: Path, tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
                  decisions, ellipse_outline, query_region=None):
-    data = viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
-                       decisions, ellipse_outline, query_region=query_region)
+    data = finite_json(viewer_data(tgt, n_rhalf, sel, planned, gaia, mq, sg, sdss, desi, best, region_cov,
+                                   decisions, ellipse_outline, query_region=query_region))
     # The workspace (web/) loads this file; the page below embeds the same data.
     path.with_name(path.name.replace("_viewer.html", "_field.json")).write_text(
-        json.dumps({**data, "key": tgt["key"]}, separators=(",", ":")))
+        json.dumps({**data, "key": tgt["key"]}, separators=(",", ":"), allow_nan=False))
     title = f"{tgt['name']}: SCOOP sky view"
     page = (TEMPLATE.replace("__TITLE__", html.escape(title))
             .replace("__ALADIN_JS__", ALADIN_JS)
-            .replace("__DATA__", json.dumps(data, separators=(",", ":")).replace("</", "<\\/")))
+            .replace("__DATA__", json.dumps(data, separators=(",", ":"), allow_nan=False).replace("</", "<\\/")))
     path.write_text(page)
 
 

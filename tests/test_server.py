@@ -116,9 +116,9 @@ class ServerTests(unittest.TestCase):
             record = json.loads(audit.read_text())
 
         self.assertEqual(kinds(stream), ["tool_call", "tool_result", "artifact", "assistant", "done"])
-        # Every turn is costed before it runs, whether or not the model has a price.
-        self.assertEqual(stream[0]["type"], "cost")
-        self.assertEqual((stream[0]["phase"], stream[0]["request_id"]), ("estimate", record["request_id"]))
+        # No budget was set, so the turn is not costed at all.
+        self.assertFalse(any(event["type"] == "cost" for event in stream))
+        self.assertIsNone(record["estimated_cost_usd"])
         artifact = next(event for event in stream if event["type"] == "artifact")
         self.assertEqual(artifact["payload"]["status"], "requested")
         self.assertEqual(artifact["payload"]["actions"], [highlight])
@@ -172,6 +172,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(actual["budget"]["turns"], 1)
         self.assertIn("left of this conversation", actual["note"])
 
+    def test_without_a_budget_nothing_is_costed_or_calibrated(self):
+        from scoop.cost import CostTracker
+
+        answer = AIMessage(content="ok", usage_metadata={"input_tokens": 1000, "output_tokens": 10, "total_tokens": 1010})
+        model = ScriptedModel(answer)
+        model.model_name = "claude-opus-5-5"
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "costs.json"
+            stream = events(self.post_chat(TestClient(create_app(model=model, costs=CostTracker(state)))))
+            self.assertFalse(state.exists())  # no estimate, no pending request, no calibration
+        self.assertFalse(any(event["type"] == "cost" for event in stream))
+        self.assertEqual(kinds(stream), ["assistant", "done"])
+
     def test_a_command_the_remaining_budget_cannot_cover_does_not_run(self):
         from scoop.cost import CostTracker
 
@@ -215,6 +228,47 @@ class ServerTests(unittest.TestCase):
             zipped = client.get("/api/fields/mini_1", headers={"Accept-Encoding": "gzip"})
             self.assertEqual(zipped.headers["content-encoding"], "gzip")
             self.assertEqual(zipped.json()["key"], "mini_1")
+
+    def test_added_tables_can_be_removed_and_pipeline_tables_stay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = field_store(tmp)
+            store.add_rows("mini_1", "twomass_psc", [{"id": "J1", "ra": 260.05, "dec": 57.92}],
+                           {"label": "2MASS", "provenance": "VizieR II/246", "kind": "catalog", "columns": {},
+                            "query": {"service": "VizieR", "table": "II/246/out", "rows": 1, "truncated": False}})
+            store.add_rows("mini_1", "galex_ais", [{"id": "G1", "ra": 260.05, "dec": 57.92}],
+                           {"label": "GALEX", "provenance": "VizieR II/335", "kind": "catalog", "columns": {},
+                            "query": {"service": "VizieR", "table": "II/335", "rows": 1, "truncated": False}})
+            self.assertEqual(store.added_tables("mini_1"), ["galex_ais", "twomass_psc"])
+            client = TestClient(create_app(fields=store))
+            gone = client.request("DELETE", "/api/fields/mini_1/sources/twomass_psc").json()
+            self.assertEqual(gone, {"removed": ["twomass_psc"]})
+            tables = client.get("/api/fields/mini_1").json()["tables"]
+            self.assertNotIn("twomass_psc", tables)
+            self.assertIn("galex_ais", tables)
+            self.assertEqual(store.remove_rows("mini_1", ["gaia"]), [])  # pipeline tables are never touched
+            self.assertEqual(client.request("DELETE", "/api/fields/mini_1/sources/all").json(), {"removed": ["galex_ais"]})
+            self.assertIn("gaia", client.get("/api/fields/mini_1").json()["tables"])
+
+    def test_the_api_root_points_to_the_workspace(self):
+        page = TestClient(create_app()).get("/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("127.0.0.1:5173", page.text)
+
+    def test_fields_with_nan_are_served_as_strict_json(self):
+        # An LVDB object without a proper motion (NGC 300) has NaN pmra: Python writes it,
+        # browsers' JSON.parse rejects it, so the field failed to load.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mini").mkdir()
+            data = viewer_data()
+            data["target"] = {**data["target"], "pmra": float("nan"), "pmdec": float("inf")}
+            (Path(tmp) / "mini" / "mini_1_field.json").write_text(json.dumps(data))
+            client = TestClient(create_app(fields=FieldStore(Path(tmp))))
+            text = client.get("/api/fields/mini_1").text
+            self.assertNotIn("NaN", text)
+            self.assertNotIn("Infinity", text)
+            target = json.loads(text, parse_constant=lambda c: self.fail(f"non-standard {c}"))["target"]
+            self.assertIsNone(target["pmra"])
+            self.assertIsNone(target["pmdec"])
 
     def test_assistant_text_streams_before_the_complete_message(self):
         from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -381,8 +435,8 @@ class ServerTests(unittest.TestCase):
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
 class StartPageTests(unittest.TestCase):
     def test_tools_follow_a_field_loaded_mid_turn(self):
-        # From the start page there is no field; after load_field, the PM tools (like the
-        # map tools) must work on the newly loaded field in the same turn.
+        # From the start page there is no field; after load_field, the proper-motion agent's
+        # tools (like the map tools) must work on the newly loaded field in the same turn.
         try:
             from scoop import pm
             from tests.test_pm import lvdb_tables
@@ -391,7 +445,11 @@ class StartPageTests(unittest.TestCase):
         model = ScriptedModel(
             AIMessage(content="", tool_calls=[{"name": "load_field", "args": {"key": "mini_1"}, "id": "c1",
                                                "type": "tool_call"}]),
-            AIMessage(content="", tool_calls=[{"name": "pm_published", "args": {}, "id": "c2", "type": "tool_call"}]),
+            AIMessage(content="", tool_calls=[{"name": "ask_pm_agent", "args": {"request": "what's published?"},
+                                               "id": "c2", "type": "tool_call"}]),
+            # The proper-motion agent's own steps (it runs on the same model).
+            AIMessage(content="", tool_calls=[{"name": "pm_published", "args": {}, "id": "p1", "type": "tool_call"}]),
+            AIMessage(content="Two published measurements."),
             AIMessage(content="Done."))
         with tempfile.TemporaryDirectory() as tmp:
             store = field_store(tmp)
@@ -403,9 +461,13 @@ class StartPageTests(unittest.TestCase):
             context = {**CONTEXT, "field": None, "layers": []}
             stream = events(ServerTests.post_chat(self, TestClient(create_app(model=model, fields=store)),
                                                   context=context))
-        published = next(e for e in stream if e["type"] == "tool_result" and e["id"] == "c2")
-        self.assertEqual(published["status"], "success", published["summary"])
-        self.assertIn('"object": "Mini"', published["summary"])
+        handoff = next(e for e in stream if e["type"] == "tool_result" and e["id"] == "c2")
+        self.assertEqual(handoff["status"], "success", handoff["summary"])
+        self.assertNotIn("inner_failures", handoff)
+        sub_steps = model.calls[3]  # the PM agent's second call sees its pm_published result
+        published = next(m for m in sub_steps if getattr(m, "tool_call_id", None) == "p1")
+        self.assertEqual(published.status, "success", published.content)
+        self.assertIn('"object": "Mini"', published.content)
 
 
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
@@ -442,3 +504,17 @@ class ParallelCommandEventTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CleanNameTests(unittest.TestCase):
+    def test_agent_labels_are_cleaned_not_refused(self):
+        try:
+            from scoop.server.jobs import clean_name
+        except ModuleNotFoundError:
+            self.skipTest("server dependencies absent")
+        self.assertEqual(clean_name("COSMOS 0.5 deg² box"), "COSMOS 0.5 deg2 box")
+        self.assertEqual(clean_name("Leo I/II, combined"), "Leo I-II combined")
+        self.assertEqual(clean_name("GD-1 (PWB18) φ1∈[−42.8,−22.8]"), "GD-1 (PWB18) φ1 in -42.8 -22.8")
+        self.assertLessEqual(len(clean_name("x " * 80)), 60)
+        with self.assertRaises(ValueError):
+            clean_name(":::")

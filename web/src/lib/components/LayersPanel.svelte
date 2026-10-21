@@ -5,7 +5,8 @@
   import { adsUrl, bibcodeOf } from '../chat/markdown';
   import { download, layerCsv } from '../field/export';
   import { DEFAULT_SURVEY } from '../workspace/contracts';
-  let { workspace }: { workspace: Workspace } = $props();
+  // onask: put a request in the chat and send it (the page opens the chat drawer).
+  let { workspace, onask }: { workspace: Workspace; onask?: (text: string) => void } = $props();
   const field = $derived(workspace.field);
   const target = $derived(field?.target);
   const ready = $derived(workspace.viewerPhase === 'ready');
@@ -34,13 +35,55 @@
   let browsing = $state(false);
   const available = $derived(catalog(field, workspace.layers, query, workspace.sources.filter((s) => s.queryable)));
   let addError = $state('');
+  // Options a data source's query takes (e.g. "Tmag <" for the TIC), set before adding it
+  // or to query again; values the user typed are kept per source.
+  const optionsOf = (name: string | undefined) => workspace.sources.find((s) => s.name === name)?.options ?? [];
+  let optionValues = $state<Record<string, Record<string, number>>>({});
+  const valuesOf = (name: string) => Object.fromEntries(optionsOf(name).map((o) => [o.name, optionValues[name]?.[o.name] ?? o.default]));
+  const setOption = (name: string, option: string, value: number) => {
+    if (Number.isFinite(value)) optionValues = { ...optionValues, [name]: { ...optionValues[name], [option]: value } };
+  };
+  async function requery(name: string) { addError = (await workspace.addSource(name, valuesOf(name))) ?? ''; }
+  // Sources the exoplanet agent can filter by soft constraints ("habitable", "atmosphere
+  // claimed"): adding one with constraints adds the table, then asks the agent in the chat.
+  const CONSTRAINED = new Set(['exoplanet_hosts', 'tess_tois', 'tic']);
+  let constraints = $state<Record<string, string>>({});
   async function add(group: CatalogGroup, layers = group.layers) {
-    if (group.query) { addError = (await workspace.addSource(group.query)) ?? ''; return; }
+    if (group.query) {
+      const name = group.query;
+      addError = (await workspace.addSource(name, optionsOf(name).length ? valuesOf(name) : undefined)) ?? '';
+      const wanted = constraints[name]?.trim();
+      if (!addError && wanted && onask) {
+        constraints = { ...constraints, [name]: '' };
+        onask(`Apply these constraints to ${group.group} (${name}) in this field: ${wanted}`);
+      }
+      return;
+    }
     if (group.table) workspace.request([{ type: 'layer.add', id: `user:all-${group.table}`, table: group.table,
       label: group.group, group: group.group, style: { color: '#9fd3ff', shape: 'circle', size: 8 } }], 'user');
     else update(layers, { visible: true });
   }
 </script>
+
+{#snippet options(name: string, again: boolean)}
+  {#if optionsOf(name).length || (!again && CONSTRAINED.has(name) && onask)}
+  <div class="source-options">
+    {#each optionsOf(name) as option (option.name)}
+      <label title={option.help}>{option.label}
+        <input type="number" min={option.min} max={option.max} step={option.step} value={valuesOf(name)[option.name]}
+          aria-label={`${option.label} for ${name}`} onchange={(e) => setOption(name, option.name, e.currentTarget.valueAsNumber)} /></label>
+    {/each}
+    {#if again}<button class="text-button" title="Query again with these values" onclick={() => requery(name)}>↻ Query again</button>{/if}
+    {#if optionsOf(name)[0]?.help}<small class="muted">{optionsOf(name)[0].help}</small>{/if}
+    {#if !again && CONSTRAINED.has(name) && onask}
+      <input class="constraints" type="text" placeholder="Constraints (optional), e.g. habitable, atmosphere claimed"
+        aria-label={`Constraints for ${name}`} value={constraints[name] ?? ''}
+        oninput={(e) => (constraints = { ...constraints, [name]: e.currentTarget.value })} />
+      <small class="muted">With constraints, the exoplanet agent asks you to define or confirm them in the chat.</small>
+    {/if}
+  </div>
+  {/if}
+{/snippet}
 
 <section class="layers-panel" aria-label="Field and layers">
   <div class="field-picker">
@@ -64,6 +107,7 @@
               <span class="layer-label">{group.group}</span>
               {#if group.query}<span class="count" title="Not in this field yet: adding queries the archive">query</span>{:else}<span class="count">{group.count}</span>{/if}<span aria-hidden="true">＋</span>
             </button>
+            {#if group.query}{@render options(group.query, false)}{/if}
             {#each group.matching as layer (layer.id)}
               <button class="catalog-entry sub" onclick={() => add(group, [layer])} title={group.provenance}>
                 <span class="swatch" style={swatch(layer)}></span>
@@ -95,6 +139,7 @@
               onclick={() => { if (field) for (const file of layerCsv(field, layers)) download(file.name, file.text); }}>⤓</button>
             <button class="text-button icon remove" title="Take off the map" aria-label={`Take ${group} off the map`} onclick={() => takeOff(layers)}>×</button>
           </div>
+          {#if optionsOf(layers[0]?.table).length}{@render options(layers[0].table, true)}{/if}
           {#if expanded[group]}
             {#each layers as layer (layer.id)}
               <label class="map-layer-row sub" title={layer.note ?? layer.id}>

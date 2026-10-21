@@ -38,6 +38,27 @@ This writes `out/draco/draco_1_verify_report.md` (and `.json`, plus the
 converted `draco_1_verify_result.json`). `--only in_field id_recheck` runs a
 subset of checks. From Python: `from evaluation.verify import verify_field`.
 
+## Spot-check the agents end to end
+
+The checks above ask whether the *data* is right. `spot_checks.py` asks whether the
+*agents* behave: each check in [`spot_checks.json`](spot_checks.json) is one real chat
+turn, in a fresh conversation, against a running workspace server, and passes when the
+right agent is handed the question (e.g. `ask_pm_agent`, `ask_data_agent`), the expected
+map actions appear (a members layer, a highlight, a plot), nothing that shouldn't happen
+does (no download for an oversized request), the answer matches its patterns (a proper
+motion of the right sign and size, bibcodes, km/s), at most the allowed tool calls fail,
+and it finishes in time.
+
+```bash
+python -m scoop.server &                                  # the workspace server
+python -m evaluation.spot_checks                          # all checks -> out/spot_checks/<time>_report.md
+python -m evaluation.spot_checks --only draco_pm big_request_gated
+```
+
+Each run writes a pass/fail report and every turn's full transcript. The checks double
+as the presentation demos ([docs/demos.md](../docs/demos.md)): a run is a rehearsal,
+and its transcripts are the fallback when the network is down.
+
 ## Use it over MCP
 
 The MCP server offers six tools:

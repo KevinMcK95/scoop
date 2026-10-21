@@ -13,6 +13,7 @@ Python in that environment, not sandboxed, working in ``SCOOP_KERNEL_CWD`` (defa
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import os
 from pathlib import Path
@@ -83,7 +84,7 @@ def ads_maker(web):
 
 
 async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path, settings_path: Path,
-                 threads_path: Path) -> None:
+                 threads_path: Path, triage_every_min: float = 60.0) -> None:
     import httpx
 
     from ..fields import FieldStore
@@ -94,7 +95,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from ..lookup import simbad_query
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
-    from ..cost import DEFAULT_BUDGET_USD, CostTracker
+    from ..cost import CostTracker, load_prices
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
@@ -108,6 +109,8 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         "api_key": os.environ.get("SCOOP_MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY"),
         "ads_token": os.environ.get("ADS_API_TOKEN"), "kernel": os.environ.get("SCOOP_KERNEL"),
         "kernel_cwd": os.environ.get("SCOOP_KERNEL_CWD")})
+    # Model prices come from a public list, kept beside the settings and refreshed daily.
+    prices_from = await asyncio.to_thread(load_prices, settings_path.with_name("prices.json"))
     async with contextlib.AsyncExitStack() as stack:
         web = await stack.enter_async_context(httpx.AsyncClient(follow_redirects=True))
         # Conversations' agent state survives restarts (reopened History threads keep their memory).
@@ -142,14 +145,16 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                          make_kernel=kernel_maker(kernels), list_kernels=available_kernels,
                          list_models=model_lister(web, attribution_headers),
                          figure_store=FigureStore(settings_path.parent / "figures"),
-                         trace_store=TraceStore(settings_path.parent / "traces"))
+                         trace_store=TraceStore(settings_path.parent / "traces"),
+                         triage_dir=settings_path.parent / "triage", triage_every_s=60 * triage_every_min)
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
         print(f"kernel: {f'on ({kernels[0].kernel_name!r}, NOT sandboxed; working in {kernels[0].cwd})' if kernels else 'off (choose one in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")
+        print(f"triage agent: {f'on, at most every {triage_every_min:g} min when idle; reports in ' + str(settings_path.parent / 'triage') if triage_every_min > 0 else 'off'}")
         print(f"settings file: {settings_path}; conversations: {threads_path}")
         print(f"budgets and cost calibration: {settings_path.with_name('costs.json')} "
-              f"(default ${DEFAULT_BUDGET_USD:.2f} per command until a conversation sets its own)")
+              f"(only for conversations that set a budget; model prices: {prices_from})")
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
 
 
@@ -169,6 +174,9 @@ def main() -> None:
                         help="agent memory database (default ~/.config/scoop/threads.sqlite)")
     parser.add_argument("--fields", type=Path, default=ROOT / "out",
                         help="directory of smoke-test outputs (<dir>/*/<key>_field.json)")
+    parser.add_argument("--triage-every", type=float, default=60.0, metavar="MINUTES",
+                        help="run the triage agent on new failures at most this often, once the workspace "
+                             "has been idle 10 minutes (0: off). Reports: beside the settings, in triage/")
     args = parser.parse_args()
     args.audit_log.parent.mkdir(parents=True, exist_ok=True)
     import asyncio
@@ -176,7 +184,7 @@ def main() -> None:
     from .settings import DEFAULT_PATH
 
     asyncio.run(_serve(args.host, args.port, args.audit_log, args.fields, args.settings or DEFAULT_PATH,
-                       args.threads or DEFAULT_PATH.with_name("threads.sqlite")))
+                       args.threads or DEFAULT_PATH.with_name("threads.sqlite"), triage_every_min=args.triage_every))
 
 
 if __name__ == "__main__":

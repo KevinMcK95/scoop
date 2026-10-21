@@ -38,9 +38,10 @@
     await tick();
     await workspace.send();
   }
+  // The sky map opens on whatever is loaded (nothing after a new search): a field is
+  // chosen from the Layers menu or by a question, never the alphabetically first one.
   function explore() {
     enterWorkspace();
-    if (!workspace.field && workspace.fieldKeys.length) void workspace.loadField(workspace.fieldKeys[0]);
   }
   function continueConversation(id: string) {
     workspace.openConversation(id);
@@ -106,6 +107,12 @@
     document.getElementById('chat-draft')?.focus();
   }
   // One click: the agent checks SIMBAD and the literature at the selected row.
+  // From the Layers panel (e.g. constraints on planet hosts) to the chat, sent at once.
+  async function askInChat(text: string) {
+    workspace.draft = text;
+    chatOpen = true;
+    await workspace.send();
+  }
   async function lookupSelection() {
     const row = workspace.selectedRow;
     if (!row || workspace.busy) return;  // send() would refuse, after the user's draft was replaced
@@ -147,7 +154,7 @@
 <div class="app-shell">
   <a class="skip-link" href="#workspace">Skip to atlas workspace</a>
   <header class="app-header">
-    <h1 class="wordmark"><button class="wordmark-home" title="Start page" onclick={() => (landing = true)} disabled={landing}>◉ SCOOP <span>Sky atlas</span></button></h1>
+    <h1 class="wordmark"><button class="wordmark-home" title="Start page" onclick={() => (landing = true)} disabled={landing}><img class="wordmark-logo" src="/scoop-mark-small.svg" alt="" width="24" height="24" /> SCOOP <span>Sky atlas</span></button></h1>
     <nav aria-label="Workspace panels" hidden={landing}>
       <button aria-expanded={layersOpen} aria-controls="layers-drawer" onclick={toggleLayers}>Layers</button>
       <button aria-expanded={resultsOpen} aria-controls="results-drawer" onclick={() => showResults(!resultsOpen)}>Results</button>
@@ -171,7 +178,7 @@
     <aside id="layers-drawer" class="left-drawer" class:collapsed={!layersOpen} inert={!layersOpen} aria-hidden={!layersOpen}>
       <div class="drawer-inner">
         <button class="drawer-close" aria-label="Close layers" title="Close layers" onclick={() => layersOpen = false}>×</button>
-        <LayersPanel {workspace} />
+        <LayersPanel {workspace} onask={askInChat} />
       </div>
     </aside>
     <div class="map-column">

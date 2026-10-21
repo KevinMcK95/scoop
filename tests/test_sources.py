@@ -7,7 +7,8 @@ from scoop.sources import SOURCES, Column, Source, eq, layer, register
 from scoop.sources.exoplanets import overview_link, planet
 from scoop.fields import matches
 from exoplanets.archive import radec_box
-from scoop.sources.mast_tso import mjd_date, parse
+from exoplanets.mast import parse
+from exoplanets.tess import mjd_date
 from tests.field_fixture import viewer_data
 
 
@@ -20,7 +21,7 @@ class SourceRegistryTests(unittest.TestCase):
     def test_built_in_sources_are_discovered(self):
         self.assertEqual(set(SOURCES), {"target", "observations", "planned", "gaia", "spectra",
                                         "milliquas", "simbad_galaxies", "exoplanet_hosts", "tess_tois",
-                                        "hst_jwst_spectra"})
+                                        "hst_jwst_spectra", "tic"})
         self.assertIsNotNone(SOURCES["exoplanet_hosts"].query)  # queried on demand
         self.assertIsNotNone(SOURCES["tess_tois"].query)
 
@@ -154,7 +155,7 @@ class HstJwstSpectraTests(unittest.TestCase):
             ["JWST 11253", "Masuda", "Fluffy or Flashy?", "NIRISS/SOSS", 1, None, 1]])
 
     def test_an_incomplete_mast_answer_is_an_error_not_an_empty_field(self):
-        with self.assertRaisesRegex(RuntimeError, "did not complete"):
+        with self.assertRaisesRegex(Exception, "did not complete"):
             parse({"status": "ERROR", "msg": "timeout", "data": []})
 
     def test_mjd_to_date(self):

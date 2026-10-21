@@ -32,6 +32,18 @@ class Column:
 
 
 @dataclass(frozen=True)
+class Option:
+    """A number the user can set before a data source's query, e.g. a magnitude limit."""
+    name: str  # the query's keyword argument
+    label: str  # shown beside the input, e.g. "Tmag <"
+    default: float
+    min: float
+    max: float
+    step: float = 1
+    help: str = ""  # why the default, shown with the input
+
+
+@dataclass(frozen=True)
 class Source:
     name: str  # the table name in a field, e.g. "gaia"
     label: str
@@ -47,6 +59,8 @@ class Source:
     # Fetch rows for a field's region on demand ({"ra", "dec", "radius_deg"}), for data
     # sources the field pipeline does not query. Rows are kept next to the field.
     query: Callable[[dict], Awaitable[list[Row]]] | None = None
+    # Numbers the user can set for the query; it is then called as query(region, **values).
+    options: tuple[Option, ...] = ()
     # Small titled tables about the data source's rows, e.g. imaging coverage:
     # [{"title", "columns": [...], "rows": [[...], ...], "note"?}]
     summaries: Callable[[list[Row], dict], list[dict]] = lambda rows, data: []
@@ -103,5 +117,22 @@ def _discover() -> None:
 
 _discover()
 
-__all__ = ["Column", "ENRICHMENTS", "Enrichment", "SOURCES", "Source", "detail", "eq", "layer",
+def option_values(source: Source, given: Mapping | None) -> dict:
+    """The source's option values: defaults, overridden by `given`, each checked in range."""
+    values = {}
+    for option in source.options:
+        value = (given or {}).get(option.name, option.default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{option.name} must be a number")
+        if not option.min <= value <= option.max:
+            raise ValueError(f"{option.name} must be between {option.min:g} and {option.max:g}")
+        values[option.name] = value
+    unknown = set(given or {}) - set(values)
+    if unknown:
+        raise ValueError(f"{source.name} has no option {', '.join(sorted(unknown))}")
+    return values
+
+
+__all__ = ["Column", "ENRICHMENTS", "Enrichment", "Option", "SOURCES", "Source", "detail", "eq", "layer",
+           "option_values",
            "register", "register_enrichment"]

@@ -59,6 +59,25 @@ describe('field workspace', () => {
     expect(workspace.camera).toMatchObject({ ra: 260.05, dec: 57.92, fov: 0.8 });
   });
 
+  it('a refreshed field drops the layers of tables it no longer has', async () => {
+    const { fake } = backend([{ type: 'artifact', id: 'call-r', payload: { kind: 'field_refresh', key: 'mini_1', removed: ['milliquas'] } },
+                              { type: 'done' }]);
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+    await workspace.loadField('mini_1');
+    expect(workspace.layers.some((l) => l.table === 'milliquas')).toBe(true);
+    // The data agent removed an added table: the field comes back without it.
+    fake.getField = async (key) => {
+      const f = { ...miniField(), key };
+      const { milliquas: _gone, ...tables } = f.tables;
+      return { ...f, tables, layers: f.layers.filter((l) => l.table !== 'milliquas') };
+    };
+    workspace.draft = 'clear the extra catalogs';
+    await workspace.send();
+    await vi.waitFor(() => expect(workspace.layers.some((l) => l.table === 'milliquas')).toBe(false));
+    expect(workspace.layers.some((l) => l.table === 'gaia')).toBe(true);  // the rest stays
+  });
+
   it('a new search clears the field, layers and chat and starts a new conversation', async () => {
     const { workspace } = await ready();
     const before = workspace.conversationId;
@@ -68,6 +87,7 @@ describe('field workspace', () => {
     expect(workspace.layers).toEqual([]);
     expect(workspace.messages).toEqual([]);
     expect(workspace.conversationId).not.toBe(before);
+    expect(workspace.camera).toMatchObject({ fov: 180 });  // the whole sky, not the old field
   });
 
   it('changes the map only when the renderer resolves a request, and undo restores it', async () => {
@@ -386,7 +406,7 @@ describe('field workspace', () => {
     expect(workspace.map.highlight?.ids).toEqual(['1004']); // the view was kept
   });
 
-  it('asks for a budget before the first command, then reports cost and what is left', async () => {
+  it('reports cost and what is left once an optional budget is set', async () => {
     const cost = (phase: 'estimate' | 'actual', note: string, remaining: number): ChatEvent =>
       ({ type: 'cost', phase, note, request_id: 'r1', model: 'claude-opus-5-5',
          budget: { thread_id: 't', budget_usd: 5, spent_usd: 5 - remaining, remaining_usd: remaining, turns: 1 } });
@@ -405,25 +425,19 @@ describe('field workspace', () => {
     const workspace = createWorkspace(fake, { pollMs: 1 });
     await workspace.connect();
 
-    // Nothing is sent to the agent until the conversation has a budget.
-    expect(workspace.budgetRequired).toBe(true);
+    // A budget is optional: with none, the question goes straight to the agent.
     expect(workspace.budget).toBeNull();
-    workspace.draft = 'What is Draco?';
-    await workspace.send();
-    expect(requests).toHaveLength(0);
-    expect(workspace.messages.map((m) => m.role)).toEqual(['note']);
-    expect(workspace.messages[0].text).toMatch(/Set a budget/);
-    expect(workspace.draft).toBe('What is Draco?');  // the question is kept, not lost
 
     expect(await workspace.setBudget(5)).toBeNull();
     expect(budgets).toEqual([5]);
+    workspace.draft = 'What is Draco?';
     await workspace.send();
     expect(requests).toHaveLength(1);
 
     // One note per turn: the estimate, replaced by what the command actually cost.
     const notes = workspace.messages.filter((m) => m.role === 'note');
-    expect(notes).toHaveLength(2);  // the "set a budget" note, then this turn's cost
-    expect(notes[1].text).toMatch(/cost \$0.0500 · \$4.9500 left/);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toMatch(/cost \$0.0500 · \$4.9500 left/);
     expect(workspace.budget?.remaining_usd).toBe(4.95);
   });
 
@@ -444,6 +458,18 @@ describe('field workspace', () => {
     }
     expect(workspace.messages.filter((m) => m.role === 'note' && m.text === note)).toHaveLength(1);
     expect(workspace.messages.filter((m) => m.role === 'assistant')).toHaveLength(2);
+  });
+
+  it('passes a data source\'s options (e.g. a magnitude limit) to its query', async () => {
+    const { fake } = backend();
+    const sent: unknown[] = [];
+    fake.addSource = async (_field, source, options) => { sent.push([source, options]); return { rows: 3 }; };
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+    resolveAll(workspace);
+    expect(await workspace.addSource('tic', { tmag_max: 13 })).toBeNull();
+    expect(await workspace.addSource('exoplanet_hosts')).toBeNull();
+    expect(sent).toEqual([['tic', { tmag_max: 13 }], ['exoplanet_hosts', undefined]]);
   });
 
   it('says so instead of pretending when no agent is connected', async () => {

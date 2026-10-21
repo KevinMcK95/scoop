@@ -399,7 +399,7 @@ def build_map_tools(
     simbad: Callable[[str], Awaitable[list[dict]]] | None = None,
     jobs=None, lvdb=None,
     fetch_image: Callable[[float, float, float, str], Awaitable[bytes]] | None = None,
-    add_source: Callable[[str, str], Awaitable[int]] | None = None,
+    add_source: Callable[..., Awaitable[int]] | None = None,  # (key, source, options=None) -> rows
     read_field: Callable[[str], dict | None] | None = None,
     known_layers: dict | None = None,
 ) -> list[BaseTool]:
@@ -793,13 +793,15 @@ def build_map_tools(
         dec: Dec | None = None,
         name: str | None = None,
         label: str | None = None,
+        include: list[Literal["hst_jwst", "qso", "spectra"]] = [],
     ):
         """Query the archives in a circular cone around any position (not just
-        LVDB objects), in the background: HST/JWST, Gaia DR3 with QSO and galaxy
-        candidates, MILLIQUAS/Quaia QSOs, SIMBAD galaxies, SDSS/DESI spectra.
-        Center from ra+dec or an object name (Sesame); radius up to 60′ (larger
-        cones exceed the Gaia row limit). For boxes, polygons and stream tracks use
-        plan_region instead. The browser loads the field when ready.
+        LVDB objects), in the background: Gaia DR3 (with its QSO and galaxy
+        candidates) and SIMBAD galaxies; include adds HST/JWST observations
+        (hst_jwst), MILLIQUAS/Quaia QSOs (qso) or SDSS/DESI spectra (spectra), only
+        when the user asks. Center from ra+dec or an object name (Sesame); radius up
+        to 60′ (larger cones exceed the Gaia row limit). For boxes, polygons and
+        stream tracks use plan_region instead. The browser loads the field when ready.
         """
         if jobs is None:
             return ToolMessage(content="Running new fields is not available on this server.",
@@ -810,7 +812,7 @@ def build_map_tools(
         ra, dec, source = center
         title = label or (f"{name} {radius_arcmin:g} arcmin" if name else f"cone {ra:.4f} {dec:+.4f} {radius_arcmin:g} arcmin")
         try:
-            job = jobs.start_cone(ra, dec, radius_arcmin, title)
+            job = jobs.start_cone(ra, dec, radius_arcmin, title, include=include)
         except ValueError as exc:
             return ToolMessage(content=str(exc), tool_call_id=tool_call_id, status="error")
         return publish_result(tool_call_id, tool_call_id, {"kind": "field_job", "job": job.id, "key": job.key},
@@ -855,26 +857,39 @@ def build_map_tools(
             artifact={"image": data_url(jpeg), "survey": survey, "ra": ra, "dec": dec, "fov_arcmin": fov_arcmin})
 
     @tool
-    async def add_data(source: str, tool_call_id: Annotated[str, InjectedToolCallId]):
+    async def add_data(source: str, tool_call_id: Annotated[str, InjectedToolCallId],
+                       options: dict[str, float] | None = None):
         """Query an archive the field does not include yet, over the field's region,
         and add its table (e.g. source="exoplanet_hosts": confirmed planet hosts from
         the NASA Exoplanet Archive). The browser adds its layers to the map.
+        Some sources take options, e.g. source="tic" with options={"tmag_max": 13} for TIC
+        stars brighter than Tmag 13 (default 16). With options, a source already in the
+        field is queried again with the new values.
         """
         from ..sources import SOURCES
 
-        offered = sorted(n for n, s in SOURCES.items() if s.query and (field is None or n not in field["tables"]))
         if field is None or add_source is None:
             return ToolMessage(content="No field is loaded.", tool_call_id=tool_call_id, status="error")
+        queryable = {n: s for n, s in SOURCES.items() if s.query}
+        offered = sorted(n for n in queryable if n not in field["tables"] or (options and queryable[n].options))
         if source not in offered:
             return ToolMessage(content=f"Not available to add: {source!r}. Can add: {offered or 'nothing'}.",
                                tool_call_id=tool_call_id, status="error")
+        accepted = {o.name: f"{o.label} (default {o.default:g}, {o.min:g}-{o.max:g})" for o in queryable[source].options}
+        if options and not accepted:
+            return ToolMessage(content=f"{source!r} takes no options; add it without them.",
+                               tool_call_id=tool_call_id, status="error")
         try:
-            count = await add_source(field["key"], source)
+            count = await (add_source(field["key"], source, options) if options else add_source(field["key"], source))
+        except ValueError as exc:  # an unknown or out-of-range option
+            return ToolMessage(content=f"Invalid options for {source!r}: {exc}. It takes: {accepted}.",
+                               tool_call_id=tool_call_id, status="error")
         except Exception as exc:  # archive failure is an outcome
             return ToolMessage(content=f"The {source} query failed ({type(exc).__name__}: {exc}); say so.",
                                tool_call_id=tool_call_id, status="error")
+        used = f" with {options}" if options else ""
         return publish_result(tool_call_id, tool_call_id, {"kind": "field_refresh", "key": field["key"]},
-                              f"Added {count} {SOURCES[source].label.lower()} ({SOURCES[source].provenance}) to "
+                              f"Added {count} {SOURCES[source].label.lower()} ({SOURCES[source].provenance}){used} to "
                               f"field {field['key']!r} as table {source!r}. Use describe_field on it next turn.")
 
     return [update_map, describe_field, load_field, region, match, summarize, lookup, overlaps,

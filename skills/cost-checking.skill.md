@@ -17,8 +17,9 @@ confirmation) lives in one JSON file — `~/.config/scoop/costs.json` under
   retrieval, web fan-out, long-context calls).
 
 ## Flow (deterministic)
-1. A conversation sets a budget (`POST /api/budget/{thread}`); until it does,
-   the workspace asks for one and sends nothing.
+1. A conversation may set a budget (`POST /api/budget/{thread}`). It is
+   optional: without one, steps 2-6 do not run (no estimate, no calibration,
+   no cost events).
 2. `CostTracker.estimate(text, model, thread_id, overhead_tokens)` prices the
    user's text plus what rides along with it (system prompt, tool schemas,
    workspace context) across the expected number of model calls, multiplied by
@@ -35,7 +36,7 @@ confirmation) lives in one JSON file — `~/.config/scoop/costs.json` under
 - `query` (string), `model` (model id), `thread_id` (conversation)
 - `overhead_tokens`, `model_calls` (what the caller knows about the turn)
 - `budget_usd` (per-request override; otherwise the conversation's remaining
-  budget, otherwise `AGENT_BUDGET_USD`)
+  budget, otherwise `AGENT_BUDGET_USD` when `CostTracker` is used directly)
 
 ## Outputs
 `estimate()`: `request_id`, `estimated_input_tokens`, `estimated_output_tokens`,
@@ -52,8 +53,10 @@ confirmation) lives in one JSON file — `~/.config/scoop/costs.json` under
 
 ## Guardrails
 - Fail closed on missing pricing: an unknown model reports `priced: false` and
-  is never priced at another model's rate. `SCOOP_MODEL_PRICE_USD_PER_MTOK`
-  prices a model the table does not know.
+  is never priced at another model's rate. Prices come from a public list
+  fetched at startup (`load_prices`, cached daily); the built-in table is the
+  offline fallback. `SCOOP_MODEL_PRICE_USD_PER_MTOK` is only for a model that
+  is not listed online.
 - Round only for display, not for policy checks.
 - A cost estimate never fails a turn: state that cannot be written is dropped.
 - Unconfirmed requests are pruned, so the state file cannot grow without bound.

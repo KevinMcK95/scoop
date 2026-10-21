@@ -12,7 +12,6 @@ except ModuleNotFoundError as exc:
 
 try:
     from scoop.chat.pm_tools import build_pm_tools, field_epochs
-    from scoop.chat.prompt import WORKSPACE_PROMPT
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "astropy", "numpy"}:
         raise
@@ -294,8 +293,9 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("agent:members:gaia", result.update["artifacts"]["c2"]["actions"][0]["layerId"])
 
     def test_prompt_names_every_pm_tool(self):
+        from scoop.chat.pm_agent import PM_AGENT_PROMPT  # the proper-motion agent calls them
         for name in self.tools:
-            self.assertIn(name, WORKSPACE_PROMPT)
+            self.assertIn(name, PM_AGENT_PROMPT)
 
 
 if __name__ == "__main__":

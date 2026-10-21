@@ -20,7 +20,29 @@ KEY = re.compile(r"[a-z0-9_]{1,64}")
 NAME = re.compile(r"[^\W_][\w .+\-()′'\"]{0,59}")
 MAX_CONE_ARCMIN = 60.0  # larger cones exceed the pipeline's Gaia row-limit check
 MAX_LINES = 200
+OPTIONAL_ARCHIVES = ("hst_jwst", "qso", "spectra")  # beyond Gaia and SIMBAD galaxies, on request
 PLAN = re.compile(r"[0-9a-f]{12}")
+# Symbols agents put in labels ("0.5 deg² box", "NGC 300: 30′ cone", "Leo I/II"), mapped
+# to what NAME allows; anything else becomes a space.
+_NAME_SYMBOLS = {"°": " deg", "²": "2", "³": "3", "″": '"', "’": "'", "‘": "'", "“": '"', "”": '"',
+                 "–": "-", "—": "-", "±": "+-", "×": "x", "&": "and", "/": "-", ":": " -", ",": " ",
+                 "~": "", "≈": "", "−": "-", "∈": " in ", "=": " "}
+
+
+def clean_name(text) -> str:
+    """A label the pipeline accepts (NAME), made from whatever the agent wrote: symbols
+    mapped or dropped, spaces collapsed, at most 60 characters at a word boundary. Run
+    logs showed most failed first run_cone calls were labels with ':', ',', '°', '²' or
+    more than 60 characters (2026-10-21)."""
+    out = "".join(_NAME_SYMBOLS.get(c, c) for c in str(text or ""))
+    out = re.sub(r"[^\w .+\-()′'\"]", " ", out).replace("_", " ")
+    out = re.sub(r"\s+", " ", out).strip(" .+-()'\"")
+    if len(out) > 60:
+        out = out[:61].rsplit(" ", 1)[0] if " " in out[:61] else out[:60]
+    out = out.strip(" .+-('\"")
+    if not NAME.fullmatch(out):
+        raise ValueError("the name needs letters or digits (e.g. 'NGC 300 30 arcmin')")
+    return out
 
 
 def _key_from_name(name: str) -> str | None:
@@ -68,26 +90,46 @@ class JobManager:
             raise ValueError("n_rhalf must be between 0.5 and 10")
         return self._launch(key, float(n_rhalf), ["--lvdb-key", key, "--n-rhalf", str(float(n_rhalf))])
 
-    def start_cone(self, ra: float, dec: float, radius_arcmin: float, name: str) -> Job:
-        """Start a run over a circular cone around any position."""
+    def start_cone(self, ra: float, dec: float, radius_arcmin: float, name: str,
+                   include: list[str] | tuple = ()) -> Job:
+        """Start a run over a circular cone around any position. It fetches Gaia and SIMBAD
+        galaxies; ``include`` adds optional archives (hst_jwst, qso, spectra)."""
         number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
         if not (number(ra) and 0 <= ra < 360 and number(dec) and -90 <= dec <= 90):
             raise ValueError("ra must be in [0, 360) and dec in [-90, 90] degrees")
         if not (number(radius_arcmin) and 0 < radius_arcmin <= MAX_CONE_ARCMIN):
             raise ValueError(f"radius must be in (0, {MAX_CONE_ARCMIN:g}] arcmin")
-        if not isinstance(name, str) or not NAME.fullmatch(name):
-            raise ValueError("name must be 1-60 letters, digits, spaces or simple punctuation")
+        name = clean_name(name)
         key = _key_from_name(name)
         if key is None:
             raise ValueError("name must contain letters or digits")
+        extras = sorted(set(include or ()))
+        if set(extras) - set(OPTIONAL_ARCHIVES):
+            raise ValueError(f"unknown archives {sorted(set(extras) - set(OPTIONAL_ARCHIVES))}; "
+                             f"optional ones: {list(OPTIONAL_ARCHIVES)}")
         return self._launch(key, 1.0, ["--ra", repr(float(ra)), "--dec", repr(float(dec)),
-                                       "--radius-arcmin", repr(float(radius_arcmin)), "--name", name])
+                                       "--radius-arcmin", repr(float(radius_arcmin)), "--name", name,
+                                       *(["--include", ",".join(extras)] if extras else [])])
+
+    def find(self, ref: str) -> Job | None:
+        """A job by id, or the latest job for a field key."""
+        if ref in self.jobs:
+            return self.jobs[ref]
+        matches = [j for j in self.jobs.values() if j.key == ref]
+        return max(matches, key=lambda j: j.started) if matches else None
+
+    def recent_failures(self, within_s: float = 3600.0) -> list[dict]:
+        """Runs that failed in the last ``within_s`` seconds, newest first: what an agent
+        should know about before it starts (or retries) a field."""
+        now = time.monotonic()
+        failed = [j for j in self.jobs.values() if j.status == "failed" and j.finished and now - j.finished < within_s]
+        return [{"job": j.id, "key": j.key, "error": j.error, "minutes_ago": round((now - j.finished) / 60, 1)}
+                for j in sorted(failed, key=lambda j: j.finished, reverse=True)]
 
     # ── Regions: a plan is a saved spec (with cuts), counted before it is run ──
     def save_plan(self, spec: dict, name: str) -> str:
         """Store a region spec (validated by the caller) under a new plan id."""
-        if not isinstance(name, str) or not NAME.fullmatch(name):
-            raise ValueError("name must be 1-60 letters, digits, spaces or simple punctuation")
+        name = clean_name(name)
         plan_id = uuid.uuid4().hex[:12]
         self.plans.mkdir(parents=True, exist_ok=True)
         (self.plans / f"{plan_id}.json").write_text(json.dumps({"name": name, "spec": spec}))
@@ -109,8 +151,9 @@ class JobManager:
             async with asyncio.timeout(timeout_s):
                 output = (await process.communicate())[0].decode(errors="replace")
         except TimeoutError:
-            process.kill()
-            raise RuntimeError(f"counting timed out after {timeout_s:.0f} s")
+            await _stop(process)
+            raise RuntimeError(f"counting timed out after {timeout_s:.0f} s (a slow or unanswering Gaia server, "
+                               f"or a region with millions of stars)")
         line = next((l for l in output.splitlines() if l.startswith("COUNTS ")), None)
         if line is None:
             tail = [l for l in output.splitlines() if l.strip()][-3:]
@@ -161,12 +204,39 @@ class JobManager:
                 job.error = next((l for l in reversed(job.lines) if "Error" in l), job.lines[-1] if job.lines else
                                  f"exit code {code}")
         except TimeoutError:
-            process.kill()
+            await _stop(process)
             job.status, job.error = "failed", f"timed out after {timeout_s:.0f} s"
         except OSError as exc:
             job.status, job.error = "failed", f"could not start the pipeline: {exc}"
         finally:
             job.finished = time.monotonic()
+            if job.status == "failed":
+                self._keep_failure(job)
+
+    def _keep_failure(self, job: Job) -> None:
+        """A failed run's record and log under <fields>/_runs/, for triage after restarts."""
+        try:
+            runs = self.root / "_runs"
+            runs.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+            (runs / f"{stamp}_{job.key}_{job.id}.json").write_text(json.dumps({
+                "job": job.id, "key": job.key, "args": job.args, "error": job.error,
+                "elapsed_s": round(job.finished - job.started, 1), "failed_utc": stamp,
+                "decisions": job.decisions, "log": job.lines}, indent=1))
+        except OSError:
+            pass  # keeping the record must never break the run's own reporting
+
+
+async def _stop(process) -> None:
+    """SIGTERM first, so the pipeline aborts its server-side TAP jobs; kill if it lingers."""
+    try:
+        process.terminate()
+        await asyncio.wait_for(process.wait(), 20)
+    except (ProcessLookupError, TimeoutError):
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
 
 
 __all__ = ["Job", "JobManager"]

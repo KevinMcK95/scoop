@@ -18,7 +18,8 @@
 
 <section class="landing" aria-labelledby="landing-title">
   <div class="landing-inner">
-    <h2 id="landing-title" class="landing-title"><span aria-hidden="true">◉</span> SCOOP</h2>
+    <h2 id="landing-title" class="landing-title"><img class="landing-logo" src="/scoop-mark.svg" alt="" width="84" height="84" /><span class="landing-name">SCOOP</span></h2>
+    <p class="landing-acronym"><b>S</b>ky <b>C</b>one <b>O</b>f <b>O</b>bservations and <b>P</b>apers</p>
     <p class="landing-tagline">Ask about any patch of sky. SCOOP gathers archive data and literature, shows it on a sky map, and explains what it finds.</p>
 
     <form class="landing-ask" onsubmit={(e) => { e.preventDefault(); submit(); }}>

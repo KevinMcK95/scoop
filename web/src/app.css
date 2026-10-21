@@ -95,6 +95,11 @@ p {
   letter-spacing: 2px;
   white-space: nowrap;
 }
+.wordmark-logo {
+  width: 24px;
+  height: 24px;
+  vertical-align: -6px;
+}
 .wordmark span {
   font-size: 11px;
   letter-spacing: 0;
@@ -1316,6 +1321,29 @@ body.resizing-y * {
   visibility: visible;
 }
 .map-layer-row.sub,
+/* Options a data source's query takes, e.g. the TIC's "Tmag <" limit. */
+.source-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 2px 8px 6px 28px;
+  font-size: 0.85em;
+}
+
+.source-options input {
+  width: 4.5em;
+}
+
+.source-options small {
+  flex-basis: 100%;
+}
+
+.source-options input.constraints {
+  flex-basis: 100%;
+  width: auto;
+}
+
 .catalog-entry.sub {
   padding-left: 22px;
 }
@@ -1861,8 +1889,27 @@ body.resizing-y * {
   letter-spacing: 6px;
   text-align: center;
 }
-.landing-title span {
+.landing-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.landing-logo {
+  width: 84px;
+  height: 84px;
+}
+/* What the name stands for, right under it. */
+.landing-acronym {
+  margin: -6px 0 0;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.landing-acronym b {
   color: var(--accent);
+  font-weight: 700;
 }
 .landing-tagline {
   margin: 0 auto;

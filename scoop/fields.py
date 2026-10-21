@@ -621,19 +621,60 @@ class FieldStore:
             self._cache[key] = cached
         return cached[1]
 
-    def add_rows(self, key: str, source: str, rows: list[dict], meta: dict | None = None) -> None:
+    def add_rows(self, key: str, source: str, rows: list[dict], meta: dict | None = None,
+                 options: dict | None = None) -> None:
         """Store an on-demand query's rows for a field (replacing earlier ones).
 
         ``meta`` describes a table found by the data agent (label, provenance,
         kind, columns, layer style, the query), for sources with no plug-in.
+        ``options`` are the values the query ran with (e.g. a magnitude limit).
         """
         path = self._path(key)
         if path is None:
             raise KeyError(key)
         extra = self._extra(path)
         stored = json.loads(extra.read_text()) if extra.exists() else {}
-        stored[source] = {"rows": rows, **({"meta": meta} if meta else {})}
+        stored[source] = {"rows": rows, **({"meta": meta} if meta else {}),
+                          **({"options": options} if options else {})}
         extra.write_text(json.dumps(stored))
+
+    def added_tables(self, key: str) -> list[str]:
+        """Tables added to a field after the pipeline built it (by the data agent or a
+        plug-in query), which remove_rows can take away again."""
+        path = self._path(key)
+        extra = self._extra(path) if path is not None else None
+        return sorted(json.loads(extra.read_text())) if extra is not None and extra.exists() else []
+
+    def remove_rows(self, key: str, sources: list[str] | None = None) -> list[str]:
+        """Remove added tables from a field (all of them when ``sources`` is None); the
+        pipeline's own tables are never touched. Returns the names removed. Old fields
+        gathered every table anyone asked for, so reloading one showed them all."""
+        path = self._path(key)
+        if path is None:
+            raise KeyError(key)
+        extra = self._extra(path)
+        stored = json.loads(extra.read_text()) if extra.exists() else {}
+        gone = sorted(stored if sources is None else set(sources) & set(stored))
+        for name in gone:
+            del stored[name]
+        if stored:
+            extra.write_text(json.dumps(stored))
+        elif extra.exists():
+            extra.unlink()
+        self._cache.pop(key, None)
+        return gone
+
+
+def finite_json(obj):
+    """A copy with NaN and infinities as None: browsers' JSON.parse rejects them (an LVDB
+    object without a proper motion, NGC 300 on 2026-10-21, failed to load)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [finite_json(v) for v in obj]
+    return obj
 
 
 def field_region(field: dict) -> dict:

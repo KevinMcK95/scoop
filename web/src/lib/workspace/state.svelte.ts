@@ -7,6 +7,9 @@ import { deleteConversation, loadConversations, saveConversation, titleOf, type 
 import { figuresOf } from '../chat/figures';
 import type { Trace } from '../chat/trace';
 import { DEFAULT_SURVEY, initialViewport } from './contracts';
+
+// Where a fresh start looks: the whole sky, centred on the Galactic centre.
+const ALL_SKY = { ra: 266.405, dec: -28.936, fov: 180 };
 import { decodeView, encodeView } from './viewlink';
 import type { ActionRequest, ChatMessage, Publication, Scene, SkyViewport } from './contracts';
 
@@ -22,8 +25,6 @@ export function adsPublications(payload: ADSPayload): Publication[] {
 }
 
 const emptyMap = (): MapState => ({ layers: [], highlight: null, annotations: [], selection: null, plot: null });
-const BUDGET_NOTE = 'Set a budget for this conversation first, so SCOOP can tell you what each command costs '
-  + 'before it runs. Your question is still in the box.';
 const MAX_UNDO = 50;
 
 // Call once per page/component tree. No module-level mutable state (SSR safe).
@@ -100,7 +101,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     threadId = globalThis.crypto.randomUUID();
     messages = [];
     unreported = [];
-    budget = null;  // a new conversation asks for its own budget
+    budget = null;  // a new conversation starts without a budget
     void refreshBudget();
   }
 
@@ -190,15 +191,17 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     }
   }
 
-  /** Reload the field after it gained a table: keep the map as it is, add the new layers. */
+  /** Reload the field after it gained or lost tables: keep the map as it is, add the new
+   *  layers, and drop layers of tables the field no longer has (removed by the data agent). */
   async function refreshField(key: string, commandId?: string) {
     if (!backend || field?.key !== key) return loadField(key, commandId);
     try {
       const loaded = await track(`Updating ${key}…`, () => backend.getField(key));
-      const known = new Set(map.layers.map((layer) => layer.id));
+      const kept = map.layers.filter((layer) => !layer.table || layer.table in loaded.tables);
+      const known = new Set(kept.map((layer) => layer.id));
       const counts = new Map(loaded.layers.map((layer) => [layer.id, layer.count]));
       field = loaded;
-      map = { ...map, layers: [...map.layers.map((layer) => ({ ...layer, count: counts.get(layer.id) ?? layer.count })),
+      map = { ...map, layers: [...kept.map((layer) => ({ ...layer, count: counts.get(layer.id) ?? layer.count })),
         ...clone(loaded.layers.filter((layer) => !known.has(layer.id)))] };
       report(commandId, 'applied');
     } catch (error) {
@@ -416,13 +419,14 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       return [...tasks.map((task) => task.label),
         ...jobs.filter((job) => job.status === 'running').map((job) => `Running ${job.key} · ${job.elapsed_s.toFixed(0)} s`)];
     },
-    /** Query a data source the field lacks over its region, then add its layers. */
-    async addSource(name: string) {
+    /** Query a data source over the field's region (again, with new options, if it is
+     *  already there), then add its layers. */
+    async addSource(name: string, options?: Record<string, number>) {
       if (!backend || !field) return 'No field loaded.';
       const key = field.key;
       const label = sources.find((s) => s.name === name)?.label ?? name;
       try {
-        await track(`Querying ${label}…`, () => backend.addSource(key, name));
+        await track(`Querying ${label}…`, () => backend.addSource(key, name, options));
         await refreshField(key);
         return null;
       } catch (error) {
@@ -495,7 +499,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       survey = saved.survey;
       moveCamera(saved.viewport);
     },
-    /** What this conversation may spend; null until the user sets a budget. */
+    /** What this conversation may spend; null when the user has not set one (costing is then off). */
     get budget() { return budget; },
     /** Whether this server keeps budgets: asking for one is pointless when it does not. */
     get budgetRequired() { return !!backend?.getBudget; },
@@ -520,8 +524,9 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       persist();
       freshThread();
     },
-    /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings
-     *  (the previous conversation stays in History). The next question picks a field. */
+    /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings,
+     *  looking at the whole sky (the previous conversation stays in History). The next
+     *  question, or the field menu, picks a field. */
     newSearch() {
       if (busy) return;
       this.newConversation();
@@ -530,6 +535,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       map = emptyMap();
       undoStack = [];
       requests = [];
+      moveCamera(ALL_SKY);  // not wherever the last field was
     },
     /** Reopen a saved conversation and continue its server thread. */
     openConversation(id: string) {
@@ -590,12 +596,6 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       if (!backend || !services.chat) {
         push({ role: 'user', text });
         push({ role: 'note', text: 'No agent is connected. Start `python -m scoop.server` with SCOOP_MODEL set.' });
-        return;
-      }
-      if (!budget && backend.getBudget) {
-        // Nothing is sent and nothing is lost: the question waits in the composer for a budget.
-        draft = text;
-        if (messages.at(-1)?.text !== BUDGET_NOTE) push({ role: 'note', text: BUDGET_NOTE });
         return;
       }
       const sent = context();

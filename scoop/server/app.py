@@ -8,6 +8,7 @@ agent's tools. View commands are published as artifacts and only become
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import json
 import re
@@ -28,7 +29,10 @@ from starlette.routing import Route
 
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
-from ..chat.data_agent import build_handoff_tool
+from .. import gaia_estimate
+from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
+from ..chat.exoplanet_agent import build_exoplanet_tool
+from ..chat.pm_agent import FIELD_READ_TOOLS, build_pm_handoff_tool
 from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
@@ -36,7 +40,8 @@ from ..chat.python_tool import build_python_tools
 from ..chat.kernel_tool import build_kernel_tools
 from ..chat.web_tools import build_web_tools
 from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
-from ..fields import FieldStore, field_region
+from ..fields import FieldStore, field_region, finite_json
+from ..freshness import freshness
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
 from .ids import THREAD_ID, THREAD_ID_RULE
@@ -79,7 +84,7 @@ def _text(content: Any) -> str:
 
 
 def _sse(event: dict) -> str:
-    return f"data: {json.dumps(event)}\n\n"
+    return f"data: {json.dumps(finite_json(event), allow_nan=False)}\n\n"
 
 
 def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> list[dict]:
@@ -112,6 +117,9 @@ def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> li
                 for key in ("image", "code", "output", "error"):
                     if isinstance(artifact.get(key), str):
                         event[key] = artifact[key]
+                # Failures inside the data agent's own run, for the audit log.
+                if isinstance(artifact.get("inner_failures"), list):
+                    event["inner_failures"] = artifact["inner_failures"]
                 events.append(event)
         for artifact_id, payload in node_update.get("artifacts", {}).items():
             if artifact_id not in artifacts_seen:
@@ -134,6 +142,11 @@ def _audit_record(request_id: str, thread_id: str, started: float, events: list[
     evaluation to add; the server cannot know them when the turn ends.
     """
     results = [event for event in events if event["type"] == "tool_result"]
+    args = {event["id"]: event.get("args") for event in events if event["type"] == "tool_call"}
+
+    def call_args(call_id) -> str | None:  # what was called, so a failure can be reproduced
+        return json.dumps(args[call_id], default=str)[:1500] if args.get(call_id) is not None else None
+
     return {
         "request_id": request_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -143,8 +156,9 @@ def _audit_record(request_id: str, thread_id: str, started: float, events: list[
         "tool_calls_failed": sum(1 for event in results if event["status"] == "error"),
         "tools": [event["name"] for event in results],
         # Why tool calls failed (the tool's own short message), for improving prompts and tools.
-        "failures": [{"tool": event["name"], "reason": _reason(str(event["summary"]))}
-                     for event in results if event["status"] == "error"],
+        "failures": [{"tool": event["name"], "reason": _reason(str(event["summary"])), "args": call_args(event["id"])}
+                     for event in results if event["status"] == "error"]
+                    + [{**f, "via": event["name"]} for event in results for f in event.get("inner_failures", [])],
         "input_tokens": usage.get("input_tokens", 0),
         "cached_input_tokens": usage.get("cache_read", 0),
         "model_calls": usage.get("model_calls", 0),
@@ -181,6 +195,8 @@ def create_app(
     make_kernel: Callable[[Any], Any] | None = None,
     list_kernels: Callable[[], list[dict]] | None = None,
     list_models: Callable[[str, str | None], Any] | None = None,
+    triage_dir: Path | None = None,
+    triage_every_s: float = 0,
 ) -> Starlette:
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
@@ -215,6 +231,25 @@ def create_app(
             return []
         from ..literature.tools import build_ads_tools
         return build_ads_tools(live["ads"])
+
+    def exoplanet_model(settings):
+        """The Settings model as an agentbook model, for the exoplanet agent (or None)."""
+        if settings is None or not settings.get("model"):
+            return None
+        from agentbook.models import OpenAIModel
+
+        return OpenAIModel(settings.get("model"), base_url=settings.get("base_url"),
+                           api_key=settings.get("api_key") or "unset")
+
+    async def root(request: Request) -> Response:
+        # This port is the API; people who open it in a browser want the workspace page.
+        return Response(
+            "<!doctype html><meta charset=utf-8><title>SCOOP API</title>"
+            "<body style='font-family:system-ui;margin:3rem;max-width:40rem'><h1>SCOOP API</h1>"
+            "<p>This is SCOOP's API server. The workspace is the web page: start it with "
+            "<code>cd web &amp;&amp; npm run dev</code> and open "
+            "<a href='http://127.0.0.1:5173'>http://127.0.0.1:5173</a>.</p>"
+            "<p>Health: <a href='/api/health'>/api/health</a></p></body>", media_type="text/html")
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"chat": live["model"] is not None, "literature": live["ads"] is not None})
@@ -329,7 +364,7 @@ def create_app(
         field = fields.get(request.path_params["key"]) if fields else None
         if field is None:
             return JSONResponse({"error": "No such field."}, status_code=404)
-        body = json.dumps(field, separators=(",", ":")).encode()
+        body = json.dumps(finite_json(field), separators=(",", ":"), allow_nan=False).encode()
         # Fields reach several MB (M31's inner 10′: ~9 MB) and compress well.
         if "gzip" in request.headers.get("accept-encoding", ""):
             return Response(gzip.compress(body, compresslevel=5), media_type="application/json",
@@ -370,7 +405,8 @@ def create_app(
         try:
             body = await request.json()
             if "ra" in body:
-                job = jobs.start_cone(body["ra"], body["dec"], body["radius_arcmin"], body["name"])
+                job = jobs.start_cone(body["ra"], body["dec"], body["radius_arcmin"], body["name"],
+                                      include=body.get("include") or ())
             else:
                 key, n_rhalf = body["key"], body.get("n_rhalf", 2.0)
                 if lvdb is not None and lvdb.has(key) is False:
@@ -380,28 +416,51 @@ def create_app(
             return _bad_request(f"Cannot run field: {exc}")
         return JSONResponse(job.view())
 
-    async def add_source(key: str, name: str) -> int:
-        """Run a data source's query for a field's region and keep its rows beside the field."""
-        from ..sources import SOURCES
+    async def add_source(key: str, name: str, options: dict | None = None) -> int:
+        """Run a data source's query for a field's region and keep its rows beside the field.
+
+        ``options`` set the source's declared options (e.g. a magnitude limit); others keep
+        their defaults. Raises ValueError for an unknown or out-of-range option."""
+        from ..sources import SOURCES, option_values
 
         source = SOURCES.get(name)
         field = fields.get(key) if fields else None
         if field is None or source is None or source.query is None:
             raise KeyError(f"no field {key!r} or no queryable data source {name!r}")
-        rows = await source.query(field_region(field))
-        fields.add_rows(key, name, rows)
+        values = option_values(source, options)
+        rows = await (source.query(field_region(field), **values) if source.options
+                      else source.query(field_region(field)))
+        fields.add_rows(key, name, rows, options=values or None)
         return len(rows)
 
     async def list_sources(request: Request) -> JSONResponse:
+        from dataclasses import asdict
+
         from ..sources import SOURCES
 
         return JSONResponse({"sources": [{"name": s.name, "label": s.label, "provenance": s.provenance,
-                                          "queryable": s.query is not None} for s in SOURCES.values()]})
+                                          "queryable": s.query is not None,
+                                          **({"options": [asdict(o) for o in s.options]} if s.options else {})}
+                                         for s in SOURCES.values()]})
+
+    async def remove_source(request: Request) -> JSONResponse:
+        """Take an added table off a field (`all` for every added table)."""
+        key, name = request.path_params["key"], request.path_params["name"]
+        if fields is None or fields.get(key) is None:
+            return JSONResponse({"error": "No such field."}, status_code=404)
+        removed = fields.remove_rows(key, None if name == "all" else [name])
+        return JSONResponse({"removed": removed})
 
     async def query_source(request: Request) -> JSONResponse:
         key, name = request.path_params["key"], request.path_params["name"]
         try:
-            added = await add_source(key, name)
+            body = json.loads(await request.body() or b"{}")
+            options = body.get("options") if isinstance(body, dict) else None
+            if options is not None and not isinstance(options, dict):
+                raise ValueError("options must be an object")
+            added = await add_source(key, name, options)
+        except ValueError as exc:
+            return _bad_request(f"Cannot query {name}: {exc}")
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except Exception as exc:  # the archive failing is an outcome, not a crash
@@ -425,7 +484,32 @@ def create_app(
             return _bad_request(f"Invalid search: {exc}")
         return JSONResponse(result_payload(await ads_client.search(search)))
 
+    # The triage agent: on a timer, when the workspace is idle, it turns new failures into
+    # suggested changes (reports under triage_dir, owner-only, beside the traces).
+    triager = None
+    if triage_dir is not None and triage_every_s > 0:
+        from ..triage_agent import TriageScheduler
+        triager = TriageScheduler(model=lambda: live["model"], audit_path=audit_path,
+                                  fields_dir=Path(fields.root) if fields else None,
+                                  trace_dir=getattr(trace_store, "directory", None), out_dir=triage_dir,
+                                  every_s=triage_every_s)
+
+    async def list_triage(request: Request) -> JSONResponse:
+        if triager is None:
+            return JSONResponse({"enabled": False, "reports": []})
+        state = triager.state()
+        return JSONResponse({"enabled": True, "every_s": triager.every_s, "last_check": state.get("last_check"),
+                             "reports": triager.reports()})
+
+    async def get_triage(request: Request) -> Response:
+        text = triager.report(request.path_params["name"]) if triager else None
+        if text is None:
+            return JSONResponse({"error": "No such report."}, status_code=404)
+        return Response(text, media_type="text/markdown; charset=utf-8")
+
     async def chat(request: Request) -> StreamingResponse | JSONResponse:
+        if triager is not None:
+            triager.note_activity()  # the triage agent waits for the workspace to be idle
         model = live["model"]
         if model is None:
             return JSONResponse({"error": "No chat model is configured. Set one in Settings."},
@@ -452,6 +536,12 @@ def create_app(
         context = {**context, "kernel": await live["kernel"].describe() if live["kernel"] else None}
 
         field = fields.get(field_key) if fields and field_key else None
+        # How old the field is and what SCOOP could add to it since (file times, no network);
+        # the chat agent mentions it at the start of a conversation.
+        try:
+            context = {**context, "freshness": freshness(field, fields._path(field_key) if field else None)}
+        except OSError:
+            pass
         # The field this turn works on: load_field can switch it mid-turn (e.g. from the start
         # page), and the PM tools, the data agent and run_python follow it through current_field.
         turn = {"field": field}
@@ -479,14 +569,42 @@ def create_app(
                 current.clear()
                 current.update(refreshed)
 
-        # The data agent runs on the same model, for data the field doesn't have yet.
-        handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None)
-        # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
+        # The data agent runs on the same model and decides every download: new fields (the map
+        # tools that start runs, the region tools), sized and gated on the user's go-ahead, and
+        # data the field doesn't have yet. The chat agent keeps the rest of the map tools.
+        starters = [t for t in map_tools if t.name in FIELD_TOOLS]
+
+        def field_tools(confirmed: bool) -> list:
+            return [*size_gated(starters, confirmed=confirmed,
+                                resolver=resolver, lvdb=lvdb),
+                    *build_region_tools(jobs=jobs, resolver=resolver, confirmed=confirmed,
+                                        estimate=gaia_estimate.estimate),
+                    build_estimate_tool(resolver=resolver)]
+
+        def remove_tables(key: str, names: list[str] | None) -> list[str]:
+            gone = fields.remove_rows(key, names)
+            refreshed, current = fields.get(key), turn["field"]
+            if current is not None and refreshed is not None and current.get("key") == key:
+                current.clear()
+                current.update(refreshed)  # the rest of this turn sees the field without them
+            return gone
+
+        handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None,
+                                     field_tools=field_tools, jobs=jobs,
+                                     remove_tables=remove_tables if fields else None,
+                                     added_tables=fields.added_tables if fields else None)
+        # The proper-motion agent: the PM tools (LVDB tables cached beside the fields), the
+        # literature and a read-only view of the field; the chat agent hands PM work to it.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
-        # Fields over boxes, polygons and stream tracks: planned and counted, then run once confirmed.
-        region_tools = build_region_tools(jobs=jobs, resolver=resolver)
-        tools = [*map_tools, *region_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+        web_tools = build_web_tools(*web) if web else []
+        pm_handoff = build_pm_handoff_tool(model=model, field=current_field, layers=layers, tools=[
+            *pm_tools, *(t for t in map_tools if t.name in FIELD_READ_TOOLS), *ads_tools(),
+            *(t for t in web_tools if t.name == "web_fetch")])
+        map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
+        # Exoplanet questions go to the fact-checked exoplanet agent, on the model from Settings.
+        exoplanet = build_exoplanet_tool(field=current_field, make_model=lambda: exoplanet_model(settings))
+        tools = [*map_tools, handoff, pm_handoff, exoplanet, *ads_tools(), *web_tools,
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]
@@ -507,13 +625,17 @@ def create_app(
                 return
             async with lock:
                 request_id, started = uuid.uuid4().hex, time.monotonic()
-                # Before anything runs: what this command should cost, against what is left to spend.
-                estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
-                                          overhead_tokens=overhead, request_id=request_id)
-                yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
+                # Costing is opt-in: a conversation that never set a budget is not estimated,
+                # confirmed or calibrated at all.
+                tracked = costs.budget(thread_id) is not None
+                estimate: dict = {}
+                if tracked:
+                    # Before anything runs: what this command should cost, against what is left to spend.
+                    estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
+                                              overhead_tokens=overhead, request_id=request_id)
+                    yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
                 # An unpriced model cannot be held to a budget; the note says so instead.
-                over_budget = (estimate["priced"] and estimate["budget_scope"] == "conversation"
-                               and not estimate["within_budget"])
+                over_budget = tracked and estimate["priced"] and not estimate["within_budget"]
                 if over_budget:
                     costs.forget(request_id)
                     left = estimate["budget"]["remaining_usd"]
@@ -579,13 +701,15 @@ def create_app(
                 finally:
                     # However the turn ends, its tokens are what it cost: charge them to the
                     # conversation's budget and let the next estimate learn from them.
-                    actual = costs.confirm_usage(request_id, model_id(), usage) if usage else None
-                    if actual is None:
+                    actual = costs.confirm_usage(request_id, model_id(), usage) if tracked and usage else None
+                    if tracked and actual is None:
                         costs.forget(request_id)
+                    if triager is not None:
+                        triager.note_activity()  # idle is measured from the end of the last turn
                     # Written however the turn ends, so failures are always diagnosable.
                     if audit_path is not None:
                         record = _audit_record(request_id, thread_id, started, sent, usage, error,
-                                               cost={**estimate, **(actual or {})})
+                                               cost={**estimate, **(actual or {})} if tracked else None)
                         with audit_path.open("a", encoding="utf-8") as log:
                             log.write(json.dumps(record) + "\n")
                     if tracer is not None:
@@ -603,7 +727,19 @@ def create_app(
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache"})
 
-    return Starlette(routes=[
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(triager.loop()) if triager is not None else None
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+
+    return Starlette(lifespan=lifespan, routes=[
+        Route("/", root),
+        Route("/api/triage", list_triage),
+        Route("/api/triage/{name}", get_triage),
         Route("/api/health", health),
         Route("/api/settings", get_settings),
         Route("/api/settings", put_settings, methods=["POST"]),
@@ -613,6 +749,7 @@ def create_app(
         Route("/api/fields", list_fields),
         Route("/api/fields/{key}", get_field),
         Route("/api/fields/{key}/sources/{name}", query_source, methods=["POST"]),
+        Route("/api/fields/{key}/sources/{name}", remove_source, methods=["DELETE"]),
         Route("/api/sources", list_sources),
         Route("/api/jobs", start_job, methods=["POST"]),
         Route("/api/jobs/{id}", get_job),
