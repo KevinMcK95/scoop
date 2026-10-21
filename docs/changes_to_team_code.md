@@ -353,3 +353,19 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
 - `scoop/server/app.py` (`triage_dir`, `triage_every_s`, lifespan task, routes, activity
   notes), `scoop/server/__main__.py` (`--triage-every`). `tests/test_triage_agent.py` (new).
 - `README.md`: six agents.
+
+## Spot checks, demos, and how fresh a field is
+
+- `evaluation/spot_checks.py`, `evaluation/spot_checks.json` (new): end-to-end checks of
+  the agents against a running server (the right hand-off, map actions, no download when
+  one shouldn't start, answer patterns, failures, time), each also a demo; a report and
+  every transcript per run. `evaluation/README.md`: a section on them (additive).
+- `docs/demos.md` (new): an 11-step presentation sequence with prompts, what to point at,
+  timings and fallbacks.
+- `scoop/freshness.py` (new): each turn's context carries `freshness`: the field's age,
+  plug-ins and survey skills SCOOP gained since it was built, and the dataset scout's last
+  scan; the chat agent mentions it once at the start of a conversation and offers a
+  refresh through the data agent (`scoop/chat/prompt.py`, `scoop/chat/data_agent.py`,
+  `scoop/server/app.py`). `tests/test_freshness.py` (new).
+- `scoop/chat/data_agent.py`: the prompt lists `add_data`'s source names from the plug-in
+  registry (the triage agent's first report: the data agent guessed "toi" and "tess").

@@ -52,7 +52,12 @@ paper (points, width and source from a tool result, never from memory), and gals
 streams. Stream cuts are in the stream frame (gmax, pm_window [w_phi1, w_phi2] mas/yr \
 around the track's motion). Region fields fetch only Gaia and SIMBAD galaxies unless the \
 user asked for more (include: hst_jwst, qso, spectra). SCOOP never downloads images.
-- add_data: an archive SCOOP has a plug-in for (e.g. exoplanet_hosts) over the loaded field.
+- Refreshing an old field: run_field with refresh=true for an LVDB object (its archives \
+are queried again), or a new run_cone / plan_region over the same area; say what the new \
+run will add before starting it.
+- add_data: an archive SCOOP has a plug-in for, over the loaded field, by its exact name: \
+{sources}. Anything else (e.g. TESS light curves or pixel files) is found with \
+find_services / query_service.
 - Size first. estimate_gaia gives a cone's Gaia source count in seconds; run_cone, \
 run_field and plan_region size themselves. Above {cone:,} estimated sources for a cone \
 or LVDB field (no row cap) or {confirm:,} for a region (capped at {slow:,} after its cuts) \
@@ -136,8 +141,20 @@ query's limits (row limit reached? cuts applied?). Then anything you found but d
 add, anything that failed, what you couldn't do, and whether you saved a draft skill. \
 Keep it short and factual.
 """
+
+
+def _plugin_sources() -> str:
+    """The add_data names, from the plug-in registry (the triage agent found the data agent
+    guessing "toi" and "tess" for tess_tois, 2026-10-21)."""
+    try:
+        from ..sources import SOURCES
+    except Exception:  # an optional plug-in's import failing must not take the prompt down
+        return "see add_data's error message for the list"
+    return "; ".join(f"{name} ({s.label})" for name, s in sorted(SOURCES.items()) if s.query)
+
+
 for _k, _v in {"{max_steps}": str(MAX_STEPS), "{confirm:,}": f"{CONFIRM_ABOVE:,}",
-               "{cone:,}": f"{60_000:,}", "{slow:,}": f"{60_000:,}"}.items():
+               "{cone:,}": f"{60_000:,}", "{slow:,}": f"{60_000:,}", "{sources}": _plugin_sources()}.items():
     DATA_AGENT_PROMPT = DATA_AGENT_PROMPT.replace(_k, _v)
 
 

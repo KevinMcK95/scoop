@@ -368,6 +368,12 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         sized = next(m for m in model.last if getattr(m, "tool_call_id", None) == "c2")
         self.assertIn("about 2,000,000 Gaia sources", sized.content)
 
+    def test_the_prompt_names_every_add_data_source(self):
+        from scoop.sources import SOURCES
+        for name, source in SOURCES.items():
+            if source.query:
+                self.assertRegex(DATA_AGENT_PROMPT, rf"\b{name} \(", name)
+
     def test_prompts_describe_every_tool(self):
         self.assertRegex(WORKSPACE_PROMPT, r"\bask_data_agent\b")
         field = field_from_viewer_data(viewer_data())

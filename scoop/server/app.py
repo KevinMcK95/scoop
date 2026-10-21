@@ -41,6 +41,7 @@ from ..chat.kernel_tool import build_kernel_tools
 from ..chat.web_tools import build_web_tools
 from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
 from ..fields import FieldStore, field_region, finite_json
+from ..freshness import freshness
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
 from .settings import BASE_URL
@@ -517,6 +518,12 @@ def create_app(
         context = {**context, "kernel": await live["kernel"].describe() if live["kernel"] else None}
 
         field = fields.get(field_key) if fields and field_key else None
+        # How old the field is and what SCOOP could add to it since (file times, no network);
+        # the chat agent mentions it at the start of a conversation.
+        try:
+            context = {**context, "freshness": freshness(field, fields._path(field_key) if field else None)}
+        except OSError:
+            pass
         # The field this turn works on: load_field can switch it mid-turn (e.g. from the start
         # page), and the PM tools, the data agent and run_python follow it through current_field.
         turn = {"field": field}
