@@ -30,6 +30,7 @@ from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from .. import gaia_estimate
 from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
+from ..chat.pm_agent import FIELD_READ_TOOLS, build_pm_handoff_tool
 from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
@@ -519,11 +520,16 @@ def create_app(
 
         handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None,
                                      field_tools=field_tools, jobs=jobs)
-        map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
-        # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
+        # The proper-motion agent: the PM tools (LVDB tables cached beside the fields), the
+        # literature and a read-only view of the field; the chat agent hands PM work to it.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
-        tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+        web_tools = build_web_tools(*web) if web else []
+        pm_handoff = build_pm_handoff_tool(model=model, field=current_field, layers=layers, tools=[
+            *pm_tools, *(t for t in map_tools if t.name in FIELD_READ_TOOLS), *ads_tools(),
+            *(t for t in web_tools if t.name == "web_fetch")])
+        map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
+        tools = [*map_tools, handoff, pm_handoff, *ads_tools(), *web_tools,
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]

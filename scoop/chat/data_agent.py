@@ -16,15 +16,14 @@ import re
 from pathlib import Path
 from typing import Annotated, Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
-from langgraph.errors import GraphRecursionError
 from pydantic import Field
 
 from .. import discovery, gaia_estimate
 from ..fields import field_region
-from .graph import build_chat_graph
 from .region_tools import CONFIRM_ABOVE
+from .subagent import attach, run_subagent
 from .tools import publish_result
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
@@ -524,15 +523,6 @@ def build_estimate_tool(*, resolver=None, estimate=None):
     return estimate_gaia
 
 
-def _failures(messages: list) -> list[dict]:
-    """The data agent's failed tool calls: tool, reason and the arguments it passed."""
-    calls = {c["id"]: c for m in messages if isinstance(m, AIMessage) for c in m.tool_calls}
-    return [{"tool": calls.get(m.tool_call_id, {}).get("name") or m.name,
-             "reason": str(m.content)[:400],
-             "args": json.dumps(calls.get(m.tool_call_id, {}).get("args"), default=str)[:1500]}
-            for m in messages if isinstance(m, ToolMessage) and m.status == "error"]
-
-
 def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None, jobs=None):
     """The chat agent's ``ask_data_agent`` tool: runs the data agent for one request.
     ``field`` is the field, or a function returning the turn's current field.
@@ -565,7 +555,6 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
             tools += field_tools(user_confirmed)
         if jobs is not None:
             tools.append(build_job_log_tool(jobs))
-        graph = build_chat_graph(model, tools, system_prompt=DATA_AGENT_PROMPT)
         # Runs that failed recently, so the data agent notices them without being told.
         failures = jobs.recent_failures() if jobs is not None else []
         context = {"user_confirmed": user_confirmed, "recent_failed_runs": failures[:5],
@@ -574,36 +563,19 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
             "region": field_region(field),
             "tables": {n: {"label": t["label"], "provenance": t["provenance"], "rows": len(t["rows"])}
                        for n, t in field["tables"].items()}}}
-        message = HumanMessage(content=f"{request}\n<context>{json.dumps(context, default=str)}</context>")
-        artifacts: dict = {}
-        inner_failures: list[dict] = []
-        try:
-            result = await graph.ainvoke({"messages": [message], "artifacts": {}},
-                                         config={"recursion_limit": 2 * MAX_STEPS + 1})
-            artifacts = dict(result.get("artifacts") or {})
-            inner_failures = _failures(result["messages"])
-            final = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage) and m.content),
-                         None)
-            report = final.content if final and isinstance(final.content, str) else str(final.content if final else "")
-        except GraphRecursionError:
-            report = f"The data agent stopped after {MAX_STEPS} steps without finishing."
-        except Exception as exc:  # e.g. the model endpoint unreachable: a report, not a dead turn
-            report = (f"The data agent failed ({type(exc).__name__}: {exc or 'no message'}); nothing was "
-                      "started. A ConnectError usually means this machine's network dropped; try again.")
-        started = [p["key"] for p in artifacts.values() if p.get("kind") == "field_job"]
-        summary = (f"Data agent report:\n{report or '(no report)'}\nTables added: {added or 'none'}."
+        result = await run_subagent(model, tools, DATA_AGENT_PROMPT,
+                                    f"{request}\n<context>{json.dumps(context, default=str)}</context>",
+                                    max_steps=MAX_STEPS, name="data agent")
+        started = [p["key"] for p in result.artifacts.values() if p.get("kind") == "field_job"]
+        summary = (f"Data agent report:\n{result.report or '(no report)'}\nTables added: {added or 'none'}."
                    + (f" Fields started: {started} (not loaded yet; the browser loads them when ready)."
                       if started else ""))
         key = field["key"] if field is not None else None
         payload = ({"kind": "field_refresh", "key": key, "added": added} if added
                    else {"kind": "data_agent_report", "key": key})
-        command = publish_result(tool_call_id, tool_call_id, payload, summary)
-        if inner_failures:  # the audit log records them with the chat agent's call
-            command.update["messages"][0].artifact = {"inner_failures": inner_failures}
         # What the data agent showed or started (plan outlines, focus, field jobs) reaches
         # the browser as this turn's artifacts, before the hand-off's own.
-        command.update["artifacts"] = {**artifacts, **command.update["artifacts"]}
-        return command
+        return attach(publish_result(tool_call_id, tool_call_id, payload, summary), result)
 
     return ask_data_agent
 

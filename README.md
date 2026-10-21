@@ -339,7 +339,7 @@ scoop chat   # interactive session
 
 ### What runs today
 
-SCOOP has **four agents** (a model working in a loop with tools). Two serve the
+SCOOP has **five agents** (a model working in a loop with tools). Three serve the
 workspace; two run on their own. Everything else (the field pipeline, data-source
 plug-ins, budgets, Gaia sizing and health checks, evaluation) is ordinary code the
 agents call or that checks them.
@@ -349,7 +349,9 @@ flowchart LR
     U(["User"]) <--> C
     subgraph WS["Web workspace (every chat turn)"]
         C["Chat agent<br/>talks, analyses, shows"] ==>|"ask_data_agent"| D["Data agent<br/>decides every download"]
+        C ==>|"ask_pm_agent"| P["Proper-motion agent<br/>members, fits, planning"]
     end
+    P -->|"Members (SCOOP) layer"| C
     D --> J[["Field pipeline and<br/>data-source plug-ins"]]
     J --> FS[("Fields")]
     FS --> C
@@ -359,13 +361,14 @@ flowchart LR
     TR["/triage<br/>(Claude Code skill, on request;<br/>not a SCOOP agent)"] -->|"tested fixes"| PR
     FS -.->|"failed runs, audit log"| TR
     classDef agent fill:#fde7c8,stroke:#c77700,stroke-width:2px,color:#000
-    class C,D,X,SC agent
+    class C,D,P,X,SC agent
 ```
 
 | Agent | Runs | Built on | Started by |
 | --- | --- | --- | --- |
 | **Chat agent** | in the workspace | LangGraph ([`scoop/chat/graph.py`](scoop/chat/graph.py)) | every user message |
 | **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/data_agent.py`](scoop/chat/data_agent.py)) | the chat agent's `ask_data_agent` |
+| **Proper-motion agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/pm_agent.py`](scoop/chat/pm_agent.py)) | the chat agent's `ask_pm_agent` |
 | **Exoplanet agent** | standalone (not yet in the workspace) | [`agentbook`](agentbook/loop.py) ([`exoplanets/agent.py`](exoplanets/agent.py)) | Python, its benchmark |
 | **Dataset scout** | GitHub Actions, monthly | `agentbook` ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
 
@@ -375,10 +378,13 @@ fixes when a person runs it.
 
 #### The workspace agents
 
-The chat agent and the data agent are LangGraph agents with typed tools
-(`START → agent → tools → agent → END`; see the [layout](docs/langgraph_chat.md)).
+The chat agent, the data agent and the proper-motion agent are LangGraph agents with
+typed tools (`START → agent → tools → agent → END`; see the [layout](docs/langgraph_chat.md)).
 The **chat agent** talks to the user and works on the loaded field; the **data agent**
-decides everything that is downloaded. Archive access stays in deterministic tools,
+decides everything that is downloaded; the **proper-motion agent** selects members and
+measures and plans proper motions. The two specialists run inside the chat agent's turn
+([`scoop/chat/subagent.py`](scoop/chat/subagent.py)): what they show reaches the map,
+and their failed calls reach the audit log. Archive access stays in deterministic tools,
 the field pipeline and data-source modules; the agents choose and explain, they never
 invent data.
 
@@ -389,7 +395,9 @@ flowchart LR
     C -->|"update_map: layers, focus,<br/>highlight, plots"| W
     C --> F["Field analysis<br/>describe_field · summarize · region<br/>match · overlaps · load_field"]
     C --> LK["Sky and objects<br/>lookup (SIMBAD) · sky_image (HiPS)"]
-    C --> PM["Proper motions<br/>pm_expectations · pm_published · pm_new_epoch<br/>pm_wait_time · fit_members · auto_members"]
+    C ==>|"ask_pm_agent"| PA["Proper-motion agent"]
+    PA --> PM["Proper motions<br/>pm_expectations · pm_published · pm_new_epoch<br/>pm_wait_time · fit_members · auto_members"]
+    PA --> PL["Literature for priors<br/>ads_search · ads_paper · web_fetch<br/>describe_field · summarize (read-only)"]
     C --> LIT["Literature and web<br/>ads_search · ads_paper · ads_citations<br/>web_search · web_fetch"]
     C --> PY["Computation<br/>run_python (sandbox) · run_kernel (your env)"]
     C ==>|"ask_data_agent<br/>(every download; user_confirmed<br/>once the user agrees)"| D["Data agent"]
@@ -405,7 +413,8 @@ flowchart LR
 
 | Agent | What it does |
 | --- | --- |
-| **Chat agent** ([prompt](scoop/chat/prompt.py)) | Answers from the loaded field and shows the answer on the map: layers, highlights, plots (CMD, proper motions, RVs), annotations. Analyses what is there (counts, statistics, overlaps and time baselines of HST/JWST footprints, cross-matches), plans and fits proper motions (expected precision, new-epoch value, member selection and population fits against the literature), reads the literature (ADS) and the web, and runs Python. It never starts a download: it passes the user's request to the data agent in plain words, relays its plan or report, and asks the user to confirm large requests. |
+| **Chat agent** ([prompt](scoop/chat/prompt.py)) | Answers from the loaded field and shows the answer on the map: layers, highlights, plots (CMD, proper motions, RVs), annotations. Analyses what is there (counts, statistics, overlaps and time baselines of HST/JWST footprints, cross-matches), reads the literature (ADS) and the web, and runs Python. It never starts a download and doesn't do proper-motion work itself: it passes those requests to the data agent and the proper-motion agent in plain words, relays their reports, asks the user to confirm large downloads and the assumptions behind a measurement, and shows the results. |
+| **Proper-motion agent** ([prompt and tools](scoop/chat/pm_agent.py)) | For Local Volume Database objects: what a measurement could reach (internal dispersion, reflex and perspective, published errors, stars needed), what a new HST/JWST epoch or waiting would give, what has been published and whether it agrees, member selection of its own (radius, parallax, proper motion, empirical CMD region, velocities; shown as "Members (SCOOP)"), and maximum-likelihood fits of those or the user's Members (bulk motion, dispersion, RVs) against each paper, rerun without the priors or with inflated errors to show what the result depends on. Position errors and floors are inputs it states, never picks silently. |
 | **Data agent** ([prompt and tools](scoop/chat/data_agent.py)) | Decides what is fetched, from where and how much. Sizes every request first (Gaia counts in about a second); starts new fields for an LVDB object, a cone, a box, polygon or stellar-stream band (with cuts in the stream's frame), and adds data the field lacks from SCOOP's archive plug-ins, VizieR or any TAP service, following SCOOP's skills. Large requests come back as a plan for the user (above 60,000 Gaia sources for a cone or LVDB field, 500,000 for a region). Checks the Gaia servers and its own job queue, reads failed runs' logs, retries transient failures once and reports SCOOP bugs with their traceback. Defaults: Gaia and SIMBAD galaxies; HST/JWST observations, QSO catalogs and spectra only when asked; images are never downloaded. |
 
 Around them:

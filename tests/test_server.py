@@ -410,8 +410,8 @@ class ServerTests(unittest.TestCase):
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")
 class StartPageTests(unittest.TestCase):
     def test_tools_follow_a_field_loaded_mid_turn(self):
-        # From the start page there is no field; after load_field, the PM tools (like the
-        # map tools) must work on the newly loaded field in the same turn.
+        # From the start page there is no field; after load_field, the proper-motion agent's
+        # tools (like the map tools) must work on the newly loaded field in the same turn.
         try:
             from scoop import pm
             from tests.test_pm import lvdb_tables
@@ -420,7 +420,11 @@ class StartPageTests(unittest.TestCase):
         model = ScriptedModel(
             AIMessage(content="", tool_calls=[{"name": "load_field", "args": {"key": "mini_1"}, "id": "c1",
                                                "type": "tool_call"}]),
-            AIMessage(content="", tool_calls=[{"name": "pm_published", "args": {}, "id": "c2", "type": "tool_call"}]),
+            AIMessage(content="", tool_calls=[{"name": "ask_pm_agent", "args": {"request": "what's published?"},
+                                               "id": "c2", "type": "tool_call"}]),
+            # The proper-motion agent's own steps (it runs on the same model).
+            AIMessage(content="", tool_calls=[{"name": "pm_published", "args": {}, "id": "p1", "type": "tool_call"}]),
+            AIMessage(content="Two published measurements."),
             AIMessage(content="Done."))
         with tempfile.TemporaryDirectory() as tmp:
             store = field_store(tmp)
@@ -432,9 +436,13 @@ class StartPageTests(unittest.TestCase):
             context = {**CONTEXT, "field": None, "layers": []}
             stream = events(ServerTests.post_chat(self, TestClient(create_app(model=model, fields=store)),
                                                   context=context))
-        published = next(e for e in stream if e["type"] == "tool_result" and e["id"] == "c2")
-        self.assertEqual(published["status"], "success", published["summary"])
-        self.assertIn('"object": "Mini"', published["summary"])
+        handoff = next(e for e in stream if e["type"] == "tool_result" and e["id"] == "c2")
+        self.assertEqual(handoff["status"], "success", handoff["summary"])
+        self.assertNotIn("inner_failures", handoff)
+        sub_steps = model.calls[3]  # the PM agent's second call sees its pm_published result
+        published = next(m for m in sub_steps if getattr(m, "tool_call_id", None) == "p1")
+        self.assertEqual(published.status, "success", published.content)
+        self.assertIn('"object": "Mini"', published.content)
 
 
 @unittest.skipUnless(HAS_SERVER_DEPS, "optional server dependencies absent")

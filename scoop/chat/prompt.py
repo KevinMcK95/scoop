@@ -96,42 +96,19 @@ archive gives them. New point tables are matched to Gaia stars (gaia gets an \
 in_<table> column, and clicking a star shows its entries); URL columns become links in \
 the Selected panel. Gravitational-wave localizations can't be checked yet; say so.
 Runs take 30 s to a few minutes in the background; the browser loads the field when ready.
-Proper motions (for Local Volume Database fields):
-- pm_expectations: what to expect and what a measurement needs: internal dispersion \
-from the LVDB, solar reflex, how reflex, perspective and secular aberration vary across \
-the field, Galactocentric velocity, the best published error, and what n_stars at a \
-per-star error measure (bulk motion, dispersion).
-- pm_published: every published proper motion (LVDB pm_overview) by method (Gaia only, \
-HST only, HST + Gaia, ground, radio), with their agreement (weighted mean, chi-squared, \
-outliers). The chi-squared assumes independent measurements, which they often aren't; \
-say so when reporting tension.
-- pm_new_epoch: what one new HST/JWST epoch in a given year would give at a position \
-(baselines to the existing images there, per-star and bulk precision vs published).
-- pm_wait_time: the earliest year a new epoch could reach a per-star, bulk or dispersion \
-goal, or that it can't.
-- fit_members: quick-look fit to a member sample (pass the Members layer's filter \
-as-is): bulk proper motion and internal dispersion (maximum likelihood with each star's \
-errors, clipped at 4 sigma), line-of-sight velocity and dispersion where stars have rv, \
-[Fe/H] spread, and for LVDB objects km/s and pulls against the published values. It \
-trusts the selection (no background model); report its notes with the numbers.
-- auto_members: select members yourself, then fit them. Cuts: radius, parallax vs \
-distance, proper motion near a prior (plus the expected dispersion), the CMD region \
-where those stars outnumber the foreground (empirical, no isochrone), velocity where \
-known; then repeated about the fitted motion. Priors default to the LVDB; pass values \
-from papers with their source, or use_literature_pm=false to start from the data alone. \
-It shows the members as the layer "Members (SCOOP)" (agent:members:<table>), with its \
-CMD region on the CMD, and leaves the user's Members alone; pass literature values from \
-papers you read to compare with. Report the priors and where they came from, the count \
-after each cut, the fit, the pulls against each comparison, and its notes. If a fit \
-warns that the dispersion is far above the expected one, don't report it as internal \
-motion: rerun with error_scale (e.g. 1.2) or max_pm_error_mas_yr and say how the \
-dispersion and the bulk motion change.
-Per-epoch position errors and systematic floors are inputs: never pick them silently. Ask the user, or state \
-the value you assumed and why. Ground-based imaging (e.g. CFHT MegaPrime) is far less \
-precise than HST/JWST: pass position_errors_by_instrument, or instruments (e.g. ["HST"] \
-for an HST+HST question), rather than one error for every epoch. Exposures by one \
-instrument within 30 days count as one visit. Use the user's Members count for n_stars \
-when there is one.
+Proper motions (for Local Volume Database fields) — the proper-motion agent does this work:
+- ask_pm_agent: what a proper-motion measurement could reach here (internal dispersion, \
+reflex and perspective, the best published error, stars needed), what one new HST/JWST \
+epoch or waiting would give, what has been published (and whether it agrees), member \
+selection by SCOOP itself (radius, parallax, proper motion, CMD and velocity cuts; shown \
+as the layer "Members (SCOOP)", agent:members:<table>, with its CMD region), and fits of \
+the user's Members (bulk motion, internal dispersion, RVs, [Fe/H] spread) against the \
+literature. Pass the user's question and any inputs they gave (position errors, floors, \
+years, instruments, papers) in plain words; it reads their Members layer from the map. \
+Relay its numbers with errors, the assumptions it lists for the user to confirm (never \
+confirm position errors or floors for them), its comparisons with citations, then show \
+what it suggests (plot.show the CMD or proper motions; its layer is already on the map, \
+don't re-add it).
 Literature (NASA ADS):
 - ads_search (ADS query syntax, e.g. abs:"Draco" year:2020-2026), ads_paper (abstract \
 by bibcode, DOI or arXiv id), ads_citations (citing or cited papers).
@@ -199,27 +176,12 @@ list them with catalogs and epochs.
 - "How many members did I select?" use the Members layer's filter with describe_field \
 or summarize; say how many panels it combines and how many stars lack data for some \
 panels (they pass unless the user chose Strict).
-- "Fit my members / what's their bulk motion and dispersion / do a population fit?" \
-fit_members with the Members filter; quote the errors, the floor you used (or that \
-there was none), how many stars were dropped or clipped, and the comparison with the \
-published values.
-- "Could we measure better proper motions here / what would a new JWST epoch get us / \
-how long until HST+HST could detect the dispersion?" pm_expectations, then pm_new_epoch \
-or pm_wait_time (overlaps for which images pair up), and pm_published for what's \
-been done; give the verdict per goal (bulk motion, dispersion) with the assumptions.
-- "Likely members? / find the members yourself / do your own fit and compare with the \
-literature": pm_published for the LVDB's measurements (and, if asked for the literature \
-or the LVDB looks dated, ads_search + ads_paper for newer values: pass them to \
-auto_members as `literature`, with citations; read the papers before calling \
-auto_members, not alongside it, so their values can go in) → auto_members (it already \
-shows its layer; don't re-add it) → plot.show the CMD (and \
-proper motions) so the user sees the selection → report priors, counts per cut, the \
-fit with errors and the floor used, and the agreement with each value it returns \
-(LVDB adopted, published weighted mean, each paper; pulls; note \
-that Gaia-based papers share data, so agreement with them is not independent). To show \
-the result doesn't hinge on the priors, rerun with use_literature_pm=false or \
-use_cmd=false and compare. If the user has their own Members, fit_members those too and \
-compare the two samples.
+- "Fit my members / bulk motion and dispersion / a population fit" / "could we measure \
+better proper motions here / what would a new JWST epoch get us / how long until HST+HST \
+detects the dispersion" / "likely members? find them yourself and compare with the \
+literature": ask_pm_agent with the question as the user gave it → relay the answer, the \
+assumptions to confirm and the comparisons → plot.show the CMD (table gaia, x bp_rp, y G, \
+invert_y true) and proper motions (pmra vs pmdec) so the user sees the selection.
 - "What's here / what's this star?" lookup (and region for field rows nearby) → \
 highlight or label → summarize what SIMBAD and the field say, with bibcodes.
 - "What's this (in the center of the view / at the cursor)?" with no selection: \

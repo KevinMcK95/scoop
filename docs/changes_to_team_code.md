@@ -311,3 +311,18 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   table of what each agent does, the pieces around them (field pipeline, budgets, the
   exoplanet agent) and the maintenance loop (triage, dataset scout, evaluation). The
   team's specialized-agent diagram stays, under "Longer-term sketch".
+
+## A proper-motion agent
+
+- `scoop/chat/pm_agent.py` (new): the proper-motion agent, a sub-agent like the data agent,
+  with the six PM tools (`scoop/chat/pm_tools.py`, unchanged), ADS, `web_fetch` and
+  read-only `describe_field` / `summarize`. The chat agent hands it proper-motion requests
+  with `ask_pm_agent`; its context carries the user's Members selection and SCOOP's member
+  layers; its prompt holds the proper-motion instructions moved out of
+  `scoop/chat/prompt.py`.
+- `scoop/chat/subagent.py` (new): running a sub-agent in a chat turn (report, artifacts to
+  the browser, failed calls to the audit log, errors as reports), now used by both the data
+  agent and the proper-motion agent.
+- `scoop/server/app.py`: the chat agent gets `ask_pm_agent` instead of the PM tools.
+  `tests/test_pm_agent.py` (new); `tests/test_pm.py`, `tests/test_server.py` follow the move.
+- `README.md`: five agents.
