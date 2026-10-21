@@ -238,7 +238,6 @@ def select_observations(obs: Table, region_moc, tgt):
     keep &= ~low
     obs = obs[keep]
 
-    region_area = region_moc.sky_fraction
     rows, mocs = [], []
     for r in obs:
         shapes = parse_s_region(r["s_region"])
