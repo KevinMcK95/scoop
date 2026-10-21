@@ -381,6 +381,7 @@ describe('field workspace', () => {
 
     expect(await workspace.setBudget(5)).toBeNull();
     expect(budgets).toEqual([5]);
+    workspace.draft = 'What is Draco?';
     await workspace.send();
     expect(requests).toHaveLength(1);
 
