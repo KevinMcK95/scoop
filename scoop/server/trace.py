@@ -22,8 +22,9 @@ from typing import Any
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import BaseMessage, ToolMessage
 
+from .ids import THREAD_ID
+
 DEFAULT_DIR = Path.home() / ".config" / "scoop" / "traces"
-THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 MAX_TEXT = 20_000  # characters kept of any one message or result
 MAX_TRACES = 50  # per conversation, newest kept
 

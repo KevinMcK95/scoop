@@ -1,4 +1,3 @@
-import json
 import re
 import unittest
 from unittest import mock

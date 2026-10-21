@@ -33,7 +33,7 @@ literature-and-summary half of the tool.
 > its agents, the field pipeline and the evaluation run today (see
 > [What you can do today](#what-you-can-do-today)); parts of the original vision, such
 > as a Python API, a command-line tool, NED profiles, X-ray/radio archives and
-> multi-messenger localizations, are still planned (see [Roadmap](#roadmap)).
+> multi-messenger localizations, are still planned.
 
 SCOOP is being built as part of the
 [Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
@@ -156,7 +156,7 @@ line), a sketch of the fix and a test (reports beside the traces, listed at
 #### The workspace agents
 
 The chat agent, the data agent and the proper-motion agent are LangGraph agents with
-typed tools (`START → agent → tools → agent → END`; see the [layout](docs/langgraph_chat.md)).
+typed tools (`START → agent → tools → agent → END`; [`scoop/chat/graph.py`](scoop/chat/graph.py)).
 The **chat agent** talks to the user and works on the loaded field; the **data agent**
 decides everything that is downloaded; the **proper-motion agent** selects members and
 measures and plans proper motions. These two run inside the chat agent's turn
@@ -334,8 +334,8 @@ between calls. It is **not sandboxed** and is off until you choose a kernel in �
 
 ```bash
 pip install -e '.[kernel]'
-# once, inside the analysis environment:  python -m ipykernel install --user --name so
-python -m scoop.server   # then ⚙ Settings → Analysis kernel: so
+# once, inside the analysis environment:  python -m ipykernel install --user --name myenv
+python -m scoop.server   # then ⚙ Settings → Analysis kernel: myenv
 ```
 
 See [`scoop/kernel.py`](scoop/kernel.py).
@@ -344,10 +344,8 @@ Server options: `python -m scoop.server --help` (port, where fields, settings,
 conversations and the audit log live, and `--triage-every`). Developer mode (⚙ Settings)
 adds a Debug tab with every step of each turn.
 
-See the [workspace architecture](docs/web_workspace.md), the
-[map and agent interaction design](docs/map_interaction.md), the
-[shared ADS service](docs/ads_service.md), and the
-[changes made to teammates' code](docs/changes_to_team_code.md).
+See the [map and agent interaction design](docs/map_interaction.md) and the
+[shared ADS service](docs/ads_service.md).
 
 ## Data coverage
 
@@ -468,39 +466,6 @@ reviewing a scan: [skills/meta/dataset_scout.md](skills/meta/dataset_scout.md).
   python smoke_tests/lvdb_field.py --out out/draco --serve                       # an LVDB object (Draco)
   python smoke_tests/lvdb_field.py --out out/t1 --ra 346.62 --dec -5.04 --radius-arcmin 5 --name "TRAPPIST-1"
   ```
-
-- **Planned: a Python API and a command line.** Not built yet; this is how they are meant
-  to look.
-
-```python
-from scoop import scoop
-
-result = scoop("M87", radius="2 arcmin")
-
-result.objects        # known sources, with merged SIMBAD + NED profiles
-result.observations   # observation records, grouped by facility
-result.spectra        # spectra with download links
-result.images         # image cutouts / previews
-result.localizations  # GW / neutrino / GRB / FRB regions containing the position
-result.papers         # ADS/arXiv records, ranked by relevance
-result.proposals      # observing programs targeting the region, incl. not-yet-executed ones
-result.telegrams      # ATels / GCN Circulars about transients in the region
-print(result.summary) # natural-language digest
-
-result.download("m87_data/", kinds=["spectra", "images"])  # fetch the files
-
-# Natural-language queries and follow-ups
-qsos = scoop.ask("QSOs within 1 degree radius of the center of M31")
-qsos = qsos.refine("only those with SDSS or DESI spectra")
-```
-
-And from the command line:
-
-```bash
-scoop "187.7059 +12.3911" --radius 2arcmin --out m87_scoop/ --download
-scoop chat   # interactive session
-```
-
 
 ## Inspiration: Aladin
 
@@ -625,91 +590,7 @@ coordinates and a radius), SCOOP:
 - **Downloads.** Each result keeps the access URL (DataLink, SIA/SSA, archive
   APIs) for its products, so files can be fetched on demand, with caching.
 
-## Roadmap
-
-- [x] Initial query and result models ([scope and limitations](docs/core_data_model.md))
-- [x] Chat interface with follow-up refinement (the web workspace)
-- [x] Name resolution (Sesame, with SIMBAD as a fallback) and SIMBAD lookups
-- [x] MAST (HST, JWST) observations, footprints, planned programs and spectra; TESS sectors and TOIs
-- [x] SDSS / DESI spectra; literature RV catalogs through VizieR
-- [x] ADS literature retrieval (search, abstracts, citations)
-- [x] Aladin Lite sky view (the workspace map)
-- [x] Regions beyond cones: boxes, polygons, stellar streams with stream-frame cuts
-- [x] A data agent that sizes every request and asks before large downloads
-- [x] Proper-motion planning, member selection and population fits against the literature
-- [x] Exoplanet answers with every claim checked
-- [x] Monthly dataset scout: find missing or superseded datasets and draft the
-      skill, data source and probe for each ([docs](docs/dataset_scout.md))
-- [x] Failures logged and triaged into suggested fixes; behaviour spot checks and data checks
-- [ ] Orchestrator and a shared message format for passing tasks and results between agents
-- [ ] Natural-language query parsing into structured query plans shown for approval
-- [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
-- [ ] NED, and merged SIMBAD + NED object profiles with provenance and conflict flags
-- [ ] IRSA, HEASARC and ESA archive modules
-- [ ] GW sky-map containment checks (GraceDB) and other multi-messenger alerts
-- [ ] LLM-generated, citation-backed summaries of a field
-- [ ] Topic-based literature summaries
-- [ ] Observing proposals (HST, JWST, Chandra, ALMA, …), including not-yet-executed programs
-- [ ] Astronomer's Telegrams and GCN Circulars for transients
-- [ ] Direct download of images, spectra and tables
-- [ ] CLI, Python API and HTML report
-- [ ] Caching and rate-limit handling across archives
-
 ## Contributing
 
 Ideas, issues and new source modules are welcome. If there's an archive you'd
 want SCOOP to cover, open an issue.
-
-
-## Team and workstreams
-
-- **Radha Mastandrea** — agent orchestration, safety/budget controls, and evaluation metrics.
-- **Yilun Guan** — the web workspace (sky map, chat, start page, settings), the workspace server and `run_kernel`.
-- **Kevin McKinnon** — astrometry, Local Volume structures, and imaging inventory.
-- **Duo Xu** — deterministic evaluation and benchmarking.
-- **Xuan Ji** — exoplanet-host agent.
-
-Detailed work plans:
-- [plans/kevin_mckinnon.md](plans/kevin_mckinnon.md)
-- [plans/duo_xu.md](plans/duo_xu.md)
-- [plans/xuanji.md](plans/xuanji.md)
-
-## Duo's plan
-
-Duo Xu is working on **evaluation and benchmarking**: checking that every
-object, dataset, file and paper SCOOP returns is real (it exists in the archive
-it came from), lies in the requested field of view, is complete (nothing the
-archives hold is silently missing) and has correct values. This includes a
-benchmark set of test queries and a scorecard. Agents need to attach
-provenance (archive, native ID, query, access URL) to every record for these
-checks to work. Full plan: [plans/duo_xu.md](plans/duo_xu.md).
-
-(Data reduction and cross-matching, the original plan, were dropped to keep
-the two-day workshop focused on data gathering.)
-
-## Kevin's plan
-
-Kevin McKinnon is working on **astrometry and Local Volume structures**: Gaia
-sources and proper motions, proper motions of dwarf galaxies, globular
-clusters and streams, checking the Local Volume Database on every query, QSO
-catalogs and their references, an inventory of HST/JWST imaging (depth,
-estimated precision, epochs and time baselines), and toggleable sky overlays
-of nearby structures. Full plan:
-[plans/kevin_mckinnon.md](plans/kevin_mckinnon.md).
-
-## Natural-language layer (shared)
-
-Several team members are working on the **natural-language layer**: the
-LangGraph chat agent (the default framework; see [Agent architecture](#agent-architecture))
-answering requests like "display data within 2 degrees of the GD-1 spur
-feature" by calling the data tools, and asking the user when a request is
-ambiguous or expensive. It includes a proper-motion agent. Shared plan:
-[plans/natural_language_queries.md](plans/natural_language_queries.md).
-
-## Yilun's idea
-- [ ] orchastration of literature, data agents.
-
-
-## Xuan's idea
-
-- [ ] locate the exoplanet hosts??

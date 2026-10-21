@@ -45,6 +45,12 @@ def clean_name(text) -> str:
     return out
 
 
+def _key_from_name(name: str) -> str | None:
+    """The field key the pipeline derives from a run's name, or None if it has no letters or digits."""
+    key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    return key if KEY.fullmatch(key) else None
+
+
 @dataclass
 class Job:
     id: str
@@ -94,9 +100,8 @@ class JobManager:
         if not (number(radius_arcmin) and 0 < radius_arcmin <= MAX_CONE_ARCMIN):
             raise ValueError(f"radius must be in (0, {MAX_CONE_ARCMIN:g}] arcmin")
         name = clean_name(name)
-        # The pipeline derives the output key from the name the same way.
-        key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-        if not KEY.fullmatch(key):
+        key = _key_from_name(name)
+        if key is None:
             raise ValueError("name must contain letters or digits")
         extras = sorted(set(include or ()))
         if set(extras) - set(OPTIONAL_ARCHIVES):
@@ -159,8 +164,8 @@ class JobManager:
         plan = self.load_plan(plan_id)
         if plan is None:
             raise ValueError(f"no region plan {plan_id!r}")
-        key = re.sub(r"[^a-z0-9]+", "_", plan["name"].lower()).strip("_")
-        if not KEY.fullmatch(key):
+        key = _key_from_name(plan["name"])
+        if key is None:
             raise ValueError("the plan's name must contain letters or digits")
         return self._launch(key, 1.0, ["--region", str(self.plans / f"{plan_id}.json"), "--name", plan["name"],
                                        "--max-gaia-rows", str(int(max_gaia_rows))], timeout_s=max(self.timeout_s, 2400))

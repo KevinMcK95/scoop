@@ -32,7 +32,7 @@
         </div>
       {/each}
     {/each}
-    <button onclick={onlookup} disabled={!workspace.services.chat}>What's known here?</button>
+    <button onclick={onlookup} disabled={!workspace.services.chat || workspace.busy}>What's known here?</button>
     <button onclick={onask}>Ask about this object</button>
     <button class="text-button icon" title="Clear selection" aria-label="Clear selection" onclick={() => workspace.selectRow(null)}>×</button>
   {:else}

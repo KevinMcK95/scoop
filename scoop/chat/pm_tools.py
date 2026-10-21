@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..fields import matches, validate_filter
 from ..spatial import footprint_contains
-from .tools import publish_result
+from .tools import publish_result, tool_error
 from .visual import Clause
 
 ASSUMPTIONS = (
@@ -53,16 +53,8 @@ class LiteraturePM(BaseModel):
 LiteratureList = Annotated[list[LiteraturePM] | None, Field(max_length=20)]
 
 
-def _err(text: str, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
-
-
 def _ok(obj, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=json.dumps(obj, default=_json_default), tool_call_id=tool_call_id)
-
-
-def _json_default(v):
-    return None if isinstance(v, float) and not math.isfinite(v) else str(v)
+    return ToolMessage(content=json.dumps(obj, default=str), tool_call_id=tool_call_id)
 
 
 def _clean(obj):
@@ -182,7 +174,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         published error, and what n_stars at star_error_mas_yr (plus a floor) measure."""
         found, problem = await target_row()
         if problem:
-            return _err(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         row, pms = found
         out = await asyncio.to_thread(pm.expectations, row, n_stars=n_stars, star_error=star_error_mas_yr,
                                       floor=floor_mas_yr, published_rows=pm.published(pms, row["key"]))
@@ -198,7 +190,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         outliers. floor_mas_yr adds a systematic floor to every error."""
         found, problem = await target_row()
         if problem:
-            return _err(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         row, pms = found
         rows = pm.published(pms, row["key"])
         if not rows:
@@ -231,7 +223,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         position_errors_by_instrument or restrict instruments. Say what you assumed."""
         field = current_field()
         if field is None:
-            return _err("No field is loaded.", tool_call_id)
+            return tool_error("No field is loaded.", tool_call_id)
         ra, dec = point(ra, dec)
         epochs = visits(field_epochs(field, ra, dec), instruments)
         existing = _epoch_errors(epochs, existing_position_error_mas, position_errors_by_instrument)
@@ -248,8 +240,9 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
             found, problem = await target_row()
             if found:
                 row, pms = found
-                exp = pm.expectations(row, n_stars=n_stars, star_error=after, floor=floor_mas_yr,
-                                      published_rows=pm.published(pms, row["key"]), n_mc=4000)
+                exp = await asyncio.to_thread(pm.expectations, row, n_stars=n_stars, star_error=after,
+                                              floor=floor_mas_yr, published_rows=pm.published(pms, row["key"]),
+                                              n_mc=4000)
                 out["with_new_epoch"] = {k: exp.get(k) for k in ("sample", "internal_dispersion_uas_yr",
                                                                  "best_published")}
             else:
@@ -279,24 +272,24 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         the new epoch, or that it is out of reach and why."""
         field = current_field()
         if field is None:
-            return _err("No field is loaded.", tool_call_id)
+            return tool_error("No field is loaded.", tool_call_id)
         ra, dec = point(ra, dec)
         epochs = visits(field_epochs(field, ra, dec), instruments)
         if not epochs:
-            return _err("No existing imaging (of those instruments) covers that position; with no first "
+            return tool_error("No existing imaging (of those instruments) covers that position; with no first "
                         "epoch there is no baseline to wait for.", tool_call_id)
         needed, why = target, None
         if goal in ("bulk", "dispersion"):
             if not n_stars:
-                return _err(f"goal={goal!r} needs n_stars (e.g. the user's Members count).", tool_call_id)
+                return tool_error(f"goal={goal!r} needs n_stars (e.g. the user's Members count).", tool_call_id)
             found, problem = await target_row()
             if problem:
-                return _err(problem, tool_call_id)
+                return tool_error(problem, tool_call_id)
             row, _ = found
-            exp = pm.expectations(row, n_stars=n_stars, n_mc=4000)
+            exp = await asyncio.to_thread(pm.expectations, row, n_stars=n_stars, n_mc=4000)
             disp = exp.get("internal_dispersion_uas_yr")
             if not disp:
-                return _err("The LVDB has no velocity dispersion for this object.", tool_call_id)
+                return tool_error("The LVDB has no velocity dispersion for this object.", tool_call_id)
             sigma_int = disp[0] / 1e3
             if goal == "bulk":
                 needed = pm.star_error_for_bulk(target, sigma_int, n_stars, floor_mas_yr)
@@ -326,7 +319,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         """Fit a member sample and compare with the LVDB and any literature values given."""
         import numpy as np
 
-        from .. import members, pm
+        from .. import members
 
         num = members._finite
         dropped = {"no proper motion or error": 0, "not clean": 0, "error above max_pm_error_mas_yr": 0}
@@ -433,21 +426,21 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         underestimated errors)."""
         field = current_field()
         if field is None:
-            return _err("No field is loaded.", tool_call_id)
+            return tool_error("No field is loaded.", tool_call_id)
         if table not in field["tables"]:
-            return _err(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
+            return tool_error(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
         t = field["tables"][table]
         clauses = [c.model_dump(exclude_unset=True) for c in filter]
         try:
             validate_filter(clauses, {"id", *t["columns"]})
         except ValueError as exc:
-            return _err(f"Invalid filter: {exc}", tool_call_id)
+            return tool_error(f"Invalid filter: {exc}", tool_call_id)
         selected = [r for r in t["rows"] if matches(r, clauses)]
         out, problem = await fit_report(selected, floor=floor_mas_yr, clip_sigma=clip_sigma,
                                         require_clean=require_clean, max_pm_error=max_pm_error_mas_yr,
                                         literature=literature, error_scale=error_scale)
         if problem:
-            return _err(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         return _ok(_clean({"table": table, "filter": clauses, **out}), tool_call_id)
 
     @tool
@@ -487,13 +480,13 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         published values and `literature`. With show, the members appear on the map as
         the layer "Members (SCOOP)", with its CMD region drawn on the CMD; the user's own
         Members layer is not changed."""
-        from .. import members, pm
+        from .. import members
 
         field = current_field()
         if field is None:
-            return _err("No field is loaded.", tool_call_id)
+            return tool_error("No field is loaded.", tool_call_id)
         if table not in field["tables"]:
-            return _err(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
+            return tool_error(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.", tool_call_id)
         rows = field["tables"][table]["rows"]
         found, _ = await target_row()
         row = found[0] if found else None
@@ -523,7 +516,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         priors["sigma_pm"] = {"value": sigma_pm_mas_yr, "unit": "mas/yr",
                               "from": "vlos_sigma / (4.74 d)" if sv and d else "given or 0"}
         if not any(members._finite(r.get("r_ell")) for r in rows):
-            return _err("This table has no r_ell (elliptical radius) column, so stars can't be ordered by "
+            return tool_error("This table has no r_ell (elliptical radius) column, so stars can't be ordered by "
                         "distance from the target; select members by hand on the plots.", tool_call_id)
         try:
             sel = await asyncio.to_thread(
@@ -531,14 +524,14 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
                 r_max=r_max or float(field.get("n_rhalf") or 3.0), vlos=v0, vlos_sigma=sv,
                 require_clean=require_clean, use_cmd=use_cmd)
         except ValueError as exc:
-            return _err(f"Selection failed: {exc}.", tool_call_id)
+            return tool_error(f"Selection failed: {exc}.", tool_call_id)
         chosen = sel.pop("members")
         out, problem = await fit_report(chosen, floor=floor_mas_yr, clip_sigma=4.0, require_clean=require_clean,
                                         max_pm_error=max_pm_error_mas_yr, literature=literature,
                                         distance=(d, priors["distance"]["from"]) if d else None,
                                         error_scale=error_scale)
         if problem:
-            return _err(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         polygons = sel.pop("cmd_polygons")
         result = {"table": table, "priors": priors, "selection": {**sel, "n_members": len(chosen),
                                                                   "cmd_polygons": len(polygons)},
@@ -564,7 +557,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         return publish_result(tool_call_id, tool_call_id, payload, json.dumps(
             _clean({**result, "layer": {"id": layer_id, "label": label,
                                         "note": "requested; shown once the browser acknowledges it"}}),
-            default=_json_default))
+            default=str))
 
     return [pm_expectations, pm_published, pm_new_epoch, pm_wait_time, fit_members, auto_members]
 

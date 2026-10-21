@@ -57,8 +57,6 @@ export interface ChatRequest {
   thread_id: string;
   message: string;
   context: Record<string, unknown>;
-  // Sent with the first message of a conversation, once the user has set one.
-  budget_usd?: number;
 }
 
 // Subset of scoop/literature/serialization.py:result_payload used by the panel.

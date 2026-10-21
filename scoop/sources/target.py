@@ -1,4 +1,5 @@
 """The field's target: an LVDB object (center, half-light ellipses) or a cone."""
+from ..lvdb import LVDB_RELEASE
 from . import Source, eq, layer, register
 from ._palette import COLORS
 
@@ -34,5 +35,5 @@ def layers(rows: list[dict], data: dict) -> list[dict]:
     ]
 
 
-register(Source(name="target", label="Target", provenance="Local Volume Database v1.1.1",
+register(Source(name="target", label="Target", provenance=f"Local Volume Database {LVDB_RELEASE}",
                 kind="annotation", order=0, rows=rows, layers=layers))

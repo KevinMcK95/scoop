@@ -73,7 +73,6 @@ def read_skymap(path: Path) -> dict:
         if "UNIQ" in cols:  # multi-order map
             uniq = np.asarray(data["UNIQ"], np.int64)
             level = (np.floor(np.log2(uniq / 4)) // 2).astype(int)
-            ipix = uniq - 4 * 4**level.astype(np.int64)
             area = 4 * np.pi / (12 * 4.0**level)
             density = np.asarray(data["PROBDENSITY"], float)
             prob = density * area

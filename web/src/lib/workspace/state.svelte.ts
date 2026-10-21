@@ -1,3 +1,4 @@
+import { errorText } from '../errors';
 import { applyAction, checkAction, circleCounts, circleLabel, clone, describeStyle, layerRows, regionCounts, regionLabel, rowsOf } from '../field/actions';
 import type { Camera, Field, MapAction, MapState, Origin, Row, RowRef } from '../field/types';
 import type { ADSPayload, ActionAcknowledgment, Backend, BudgetView, ChatEvent, JobView, SourceInfo } from '../api/client';
@@ -95,6 +96,15 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       updatedAt: Date.now(), messages: clone(messages) });
   }
 
+  /** A new, empty server thread; nothing from the previous one is reported to it. */
+  function freshThread() {
+    threadId = globalThis.crypto.randomUUID();
+    messages = [];
+    unreported = [];
+    budget = null;  // a new conversation starts without a budget
+    void refreshBudget();
+  }
+
   function push(message: Omit<ChatMessage, 'id'>) {
     messages.push({ id: ++sequence, ...message });
     return messages[messages.length - 1];
@@ -176,7 +186,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       moveCamera({ ra: loaded.target.ra, dec: loaded.target.dec, fov: loaded.fov });
       report(commandId, 'applied');
     } catch (error) {
-      fieldStatus = `Could not load ${key}: ${error instanceof Error ? error.message : error}`;
+      fieldStatus = `Could not load ${key}: ${errorText(error)}`;
       report(commandId, 'failed', fieldStatus);
     }
   }
@@ -195,7 +205,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         ...clone(loaded.layers.filter((layer) => !known.has(layer.id)))] };
       report(commandId, 'applied');
     } catch (error) {
-      report(commandId, 'failed', `Could not update ${key}: ${error instanceof Error ? error.message : error}`);
+      report(commandId, 'failed', `Could not update ${key}: ${errorText(error)}`);
     }
   }
 
@@ -206,7 +216,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       let view: JobView;
       try { view = await backend.getJob(id); }
       catch (error) {
-        report(commandId, 'failed', `Lost track of the run: ${error instanceof Error ? error.message : error}`);
+        report(commandId, 'failed', `Lost track of the run: ${errorText(error)}`);
         jobs = jobs.filter((job) => job.id !== id);
         return;
       }
@@ -354,7 +364,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         handle(event, tools);
       }
     } catch (error) {
-      if (!signal.aborted) push({ role: 'error', text: `Connection lost: ${error instanceof Error ? error.message : error}` });
+      if (!signal.aborted) push({ role: 'error', text: `Connection lost: ${errorText(error)}` });
     } finally {
       for (const message of tools.values()) if (message.status === 'running') message.status = 'error';
       // A stream cut off mid-answer keeps its text but is marked unfinished.
@@ -420,7 +430,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         await refreshField(key);
         return null;
       } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return errorText(error);
       }
     },
     /** Start a pipeline run from the interface (no agent needed). */
@@ -432,7 +442,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         void trackJob(view.id, view.key);
         return null;
       } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return errorText(error);
       }
     },
     request,
@@ -503,7 +513,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
         budget = await backend.setBudget(threadId, usd);
         return null;
       } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return errorText(error);
       }
     },
     get conversations() { return conversations; },
@@ -512,11 +522,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
     newConversation() {
       if (busy) return;
       persist();
-      threadId = globalThis.crypto.randomUUID();
-      messages = [];
-      unreported = [];
-      budget = null;  // a new conversation starts without a budget
-      void refreshBudget();
+      freshThread();
     },
     /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings,
      *  looking at the whole sky (the previous conversation stays in History). The next
@@ -543,16 +549,13 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       unreported = [];
       void refreshBudget();  // the server still holds what this conversation has spent
     },
+    /** Delete a saved conversation; the current one only between turns (a running turn would save it again). */
     deleteConversation(id: string) {
+      if (busy && id === threadId) return;
       conversations = deleteConversation(id);
       void backend?.deleteFigures?.(id);
       void backend?.deleteTraces?.(id);
-      if (id === threadId && !busy) {
-        threadId = globalThis.crypto.randomUUID();
-        messages = [];
-        budget = null;
-        void refreshBudget();
-      }
+      if (id === threadId) freshThread();
     },
     selectRow(ref: RowRef | null) {
       if (ref === null || rowsOf(field, ref.table).some((row) => row.id === ref.id)) map.selection = ref;
@@ -584,7 +587,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       if (!backend || !services.literature || !query.trim()) return;
       literatureNote = `Searching ADS for ${query.trim()}…`;
       try { showPapers(await track('Searching ADS…', () => backend.searchLiterature(query.trim()))); }
-      catch (error) { literatureNote = `ADS search failed: ${error instanceof Error ? error.message : error}`; }
+      catch (error) { literatureNote = `ADS search failed: ${errorText(error)}`; }
     },
     async send() {
       const text = draft.trim();

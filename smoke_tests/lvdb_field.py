@@ -42,10 +42,10 @@ from ids import check_id_columns, to_int_id
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the scoop package, for regions
 from scoop import gaia_status  # noqa: E402
+from scoop.lvdb import CACHE_NAME as LVDB_CACHE_NAME, LVDB_BASE, LVDB_RELEASE  # noqa: E402
 from scoop.regions import Region, adql_condition, read_spec  # noqa: E402
 
-LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
-            "v1.1.1/comb_all.ecsv")
+LVDB_URL = LVDB_BASE + "comb_all.ecsv"
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
 TAP_ROW_LIMITS = (2_000, 100_000, 3_000_000, 10_000_000)  # a result this long is truncated
 GAIA_DR3_EPOCH = 2016.0
@@ -79,7 +79,7 @@ def note(msg: str) -> None:
 # ── Target and region ────────────────────────────────────────────────────────
 
 def load_lvdb_target(key: str, cache: Path) -> dict:
-    path = cache / "lvdb_comb_all_v1.1.1.ecsv"
+    path = cache / LVDB_CACHE_NAME
     if not path.exists():
         import urllib.request
         urllib.request.urlretrieve(LVDB_URL, path)
@@ -246,7 +246,6 @@ def select_observations(obs: Table, region_moc, tgt, queried: bool = True):
     keep &= ~low
     obs = obs[keep]
 
-    region_area = region_moc.sky_fraction
     rows, mocs = [], []
     for r in obs:
         shapes = parse_s_region(r["s_region"])
@@ -1269,7 +1268,7 @@ def main():
         tgt = load_lvdb_target(args.lvdb_key, cache)
         print(f"{tgt['name']}: {json.dumps(tgt)}")
         note(f"Took {tgt['name']}'s center and structure from the Local Volume Database "
-             f"(v1.1.1; structure ref {tgt['ref_structure']}); r_half is the semi-major axis.")
+             f"({LVDB_RELEASE}; structure ref {tgt['ref_structure']}); r_half is the semi-major axis.")
     a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
     query_radius = 1.02 * a_deg            # circle enclosing the ellipse
 

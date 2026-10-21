@@ -64,6 +64,7 @@
             <small>{conversation.field ?? 'no field'} · {when(conversation.updatedAt)} · {conversation.messages.filter((m) => m.role === 'user').length} questions</small>
           </button>
           <button class="text-button icon remove" title="Delete conversation" aria-label={`Delete ${conversation.title}`}
+            disabled={workspace.busy && conversation.id === workspace.conversationId}
             onclick={() => workspace.deleteConversation(conversation.id)}>×</button>
         </div>
       {:else}

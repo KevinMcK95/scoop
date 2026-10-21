@@ -105,7 +105,8 @@ export type MapAction =
   | { type: 'plot.hide' };
 
 // A scatter (x, y) or histogram (x only) of one table, drawn with the map's layers.
-export interface PlotSpec { table: string; x: string; y?: string; invert_x?: boolean; invert_y?: boolean; equal?: boolean; title?: string }
+// A preset drawn from one table.
+export type PlotSpec = Omit<Preset, 'label'> & { table: string };
 
 export interface Camera { ra: number; dec: number; fov: number }
 

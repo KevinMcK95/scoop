@@ -24,7 +24,7 @@ from .. import discovery, gaia_estimate
 from ..fields import field_region
 from .region_tools import CONFIRM_ABOVE
 from .subagent import attach, run_subagent
-from .tools import publish_result
+from .tools import publish_result, tool_error
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 MAX_SKILL_CHARS = 15000
@@ -133,8 +133,8 @@ the combined rows (a where condition) when you can, and say which you kept.
 8. If something isn't available through these tools (e.g. gravitational-wave \
 localizations), say so plainly and say where it lives; don't approximate it.
 9. Be economical: a typical request needs 3–8 tool calls ({max_steps} at most).
-9. Skills: say in your report when you followed a skill with status: draft (unreviewed). After adding data \
-from a survey with no reviewed skill, call save_skill_draft once with what you verified.
+10. Skills: say in your report when you followed a skill with status: draft (unreviewed). After adding data \
+from a survey with no reviewed skill, call save_skill_draft once.
 
 # Report (your final message, read by the chat agent)
 For a new field: what you started (key, centre, radius or region, archives, cuts) or, \
@@ -163,10 +163,6 @@ for _k, _v in {"{max_steps}": str(MAX_STEPS), "{confirm:,}": f"{CONFIRM_ABOVE:,}
 
 def _ok(text: str, tool_call_id: str) -> ToolMessage:
     return ToolMessage(content=text, tool_call_id=tool_call_id)
-
-
-def _error(text: str, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
 
 
 def _json(obj) -> str:
@@ -219,14 +215,14 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         if roles:
             unknown = [c for c in roles.values() if c not in keys]
             if unknown:
-                return _error(f"roles name columns the rows don't have: {unknown}; columns: {keys[:40]}",
+                return tool_error(f"roles name columns the rows don't have: {unknown}; columns: {keys[:40]}",
                               tool_call_id)
             meta["roles"] = dict(roles)
         measurements = measurement_roles(keys, roles) if meta.get("kind", "catalog") == "catalog" else {}
         try:
             await store_rows(field["key"], name, rows, meta)
         except Exception as exc:
-            return _error(f"Could not store the table ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"Could not store the table ({type(exc).__name__}: {exc}).", tool_call_id)
         added.append(name)
         q = meta["query"]
         note = " Row limit reached: more rows exist; narrow the query to see them." if q["truncated"] else ""
@@ -244,7 +240,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         target = (skills_dir / f"{path.strip().strip('/')}.md").resolve()
         if not target.is_relative_to(skills_dir.resolve()) or not target.is_file():
             names = sorted(str(p.relative_to(skills_dir))[:-3] for p in skills_dir.rglob("*.md"))
-            return _error(f"No skill {path!r}. Available: {names}", tool_call_id)
+            return tool_error(f"No skill {path!r}. Available: {names}", tool_call_id)
         text = target.read_text()
         cut = f"\n[... truncated at {MAX_SKILL_CHARS} characters]" if len(text) > MAX_SKILL_CHARS else ""
         return _ok(text[:MAX_SKILL_CHARS] + cut, tool_call_id)
@@ -262,13 +258,13 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         template's sections (What's here, Coverage check, How to query, Gotchas, Default
         decisions, Not yet verified); sources_checked lists the URLs/ids you queried."""
         if not NAME.fullmatch(name or ""):
-            return _error("name must be snake_case, 2-40 characters, starting with a letter", tool_call_id)
+            return tool_error("name must be snake_case, 2-40 characters, starting with a letter", tool_call_id)
         if list(skills_dir.rglob(f"{name}.md")):
-            return _error(f"A skill {name!r} already exists; it is never overwritten. Report what "
+            return tool_error(f"A skill {name!r} already exists; it is never overwritten. Report what "
                           "should change instead.", tool_call_id)
         if (len(body) > MAX_DRAFT_CHARS or len(description) > 300 or len(survey) > 80
                 or not sources_checked or len(sources_checked) > 20):
-            return _error(f"Keep it short (body ≤ {MAX_DRAFT_CHARS} characters, description ≤ 300) "
+            return tool_error(f"Keep it short (body ≤ {MAX_DRAFT_CHARS} characters, description ≤ 300) "
                           "and list at least one source you checked.", tool_call_id)
         from datetime import date
         today = date.today().isoformat()
@@ -295,7 +291,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             inv = await asyncio.to_thread(discovery.survey_inventory, region, per_regime)
         except Exception as exc:
-            return _error(f"The MOC server query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The MOC server query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         return _ok(_json(inv), tool_call_id)
 
     @tool
@@ -305,7 +301,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             return _ok(_json(await asyncio.to_thread(discovery.find_catalogs, keywords)), tool_call_id)
         except Exception as exc:
-            return _error(f"VizieR search failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"VizieR search failed ({type(exc).__name__}: {exc}).", tool_call_id)
 
     @tool
     async def describe_catalog(catalog: str, tool_call_id: Annotated[str, InjectedToolCallId]):
@@ -313,7 +309,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             return _ok(_json(await asyncio.to_thread(discovery.describe_catalog, catalog)), tool_call_id)
         except Exception as exc:
-            return _error(f"{type(exc).__name__}: {exc}", tool_call_id)
+            return tool_error(f"{type(exc).__name__}: {exc}", tool_call_id)
 
     @tool
     async def query_catalog(
@@ -329,12 +325,12 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         "rv_err": "e_RVel", "feh": "[Fe/H]", "feh_err": "e_[Fe/H]"}), so the RV plots,
         summaries and member fits use them."""
         if problem := check_name(name):
-            return _error(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         try:
             rows, meta = await asyncio.to_thread(discovery.query_catalog, table, region, label=label,
                                                  columns=columns, id_col=id_col, limit=limit)
         except Exception as exc:
-            return _error(f"The VizieR query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The VizieR query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         if not rows:
             return _ok(f"No rows from {table} in the field's region (radius "
                        f"{region['radius_deg']:.3f} deg); nothing stored.", tool_call_id)
@@ -349,7 +345,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
             return _ok(_json(await asyncio.to_thread(discovery.find_services, keywords, servicetype)),
                        tool_call_id)
         except Exception as exc:
-            return _error(f"Registry search failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"Registry search failed ({type(exc).__name__}: {exc}).", tool_call_id)
 
     @tool
     async def describe_service(url: str, tool_call_id: Annotated[str, InjectedToolCallId],
@@ -360,7 +356,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
             return _ok(_json(await asyncio.to_thread(discovery.describe_service, url, table, search)),
                        tool_call_id)
         except Exception as exc:
-            return _error(f"{type(exc).__name__}: {exc}", tool_call_id)
+            return tool_error(f"{type(exc).__name__}: {exc}", tool_call_id)
 
     @tool
     async def query_service(
@@ -376,14 +372,14 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         (e.g. "calib_level = 2"). count_only=true returns the number of matches only.
         roles: as for query_catalog (velocity / metallicity columns)."""
         if not count_only and (problem := check_name(name)):
-            return _error(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         try:
             result = await asyncio.to_thread(
                 discovery.query_service, url, table, region, label=label, columns=columns, ra_col=ra_col,
                 dec_col=dec_col, region_col=region_col, id_col=id_col, where=where, limit=limit,
                 count_only=count_only)
         except Exception as exc:
-            return _error(f"The TAP query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The TAP query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         if count_only:
             count, adql = result
             return _ok(_json({"count": count, "adql": adql}), tool_call_id)
@@ -469,10 +465,10 @@ def size_gated(tools: list, *, confirmed: bool, resolver=None, lvdb=None, estima
                     est = await asyncio.to_thread(estimate, Region.from_spec(spec))
                 except Exception as exc:
                     from .region_tools import diagnose_failure
-                    return _error("Could not size the request, so nothing was started: "
+                    return tool_error("Could not size the request, so nothing was started: "
                                   + await diagnose_failure(exc), tool_call_id)
                 if est["sources"] > CONE_CONFIRM_ABOVE and not confirmed:
-                    return _error(_needs_go_ahead(est, what), tool_call_id)
+                    return tool_error(_needs_go_ahead(est, what), tool_call_id)
             result = await t.ainvoke({"type": "tool_call", "name": t.name, "id": tool_call_id, "args": kwargs})
             if est is not None and hasattr(result, "update"):
                 slow = (f" That is more than {SLOW_IN_BROWSER:,}: the map will be slow; say so."
@@ -494,7 +490,7 @@ def build_job_log_tool(jobs):
         traceback when it failed. Read it before reporting or retrying a failed field."""
         job = jobs.find(ref) if jobs is not None else None
         if job is None:
-            return _error(f"No run {ref!r} on this server (since it started). Recent failures: "
+            return tool_error(f"No run {ref!r} on this server (since it started). Recent failures: "
                           f"{jobs.recent_failures() if jobs is not None else []}", tool_call_id)
         return _ok(_json({"job": job.id, "key": job.key, "status": job.status, "error": job.error,
                           "args": job.args, "decisions": job.decisions[-15:], "log": job.lines[-lines:]}),
@@ -524,18 +520,18 @@ def build_estimate_tool(*, resolver=None, estimate=None):
             try:
                 found = await resolver(name)
             except Exception as exc:
-                return _error(f"Name resolution failed ({type(exc).__name__}); give ra and dec.", tool_call_id)
+                return tool_error(f"Name resolution failed ({type(exc).__name__}); give ra and dec.", tool_call_id)
             if found is None:
-                return _error(f"Sesame could not resolve {name!r}; give ra and dec.", tool_call_id)
+                return tool_error(f"Sesame could not resolve {name!r}; give ra and dec.", tool_call_id)
             ra, dec = found["ra"], found["dec"]
         if ra is None or dec is None:
-            return _error("Give ra and dec, or a name.", tool_call_id)
+            return tool_error("Give ra and dec, or a name.", tool_call_id)
         try:
             est = await asyncio.to_thread(estimate, Region.from_spec(
                 {"kind": "cone", "ra": ra, "dec": dec, "radius_deg": radius_arcmin / 60}), gmax)
         except Exception as exc:
             from .region_tools import diagnose_failure
-            return _error("Could not estimate: " + await diagnose_failure(exc), tool_call_id)
+            return tool_error("Could not estimate: " + await diagnose_failure(exc), tool_call_id)
         return _ok(_json({**est, "needs_confirmation_as_a_cone": est["sources"] > CONE_CONFIRM_ABOVE,
                           "needs_confirmation_as_a_region": est["sources"] > CONFIRM_ABOVE,
                           "slow_in_browser": est["sources"] > SLOW_IN_BROWSER}), tool_call_id)
@@ -557,11 +553,11 @@ def build_remove_tool(*, field: dict, remove_tables, added_tables, removed: list
         pipeline tables (gaia, observations, spectra, ...) are never removed. Use when the
         user asks to clear, reset or remove added data. Added now: {added}."""
         if names is not None and (bad := sorted(set(names) - set(added))):
-            return _error(f"Not added tables (or not in this field): {bad}. Added: {added or 'none'}.", tool_call_id)
+            return tool_error(f"Not added tables (or not in this field): {bad}. Added: {added or 'none'}.", tool_call_id)
         try:
             gone = remove(field["key"], names)
         except Exception as exc:
-            return _error(f"Could not remove ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"Could not remove ({type(exc).__name__}: {exc}).", tool_call_id)
         removed.extend(gone)
         return _ok(f"Removed {gone or 'nothing (no added tables)'} from {field['key']}; the pipeline's tables "
                    "are unchanged.", tool_call_id)
@@ -595,7 +591,7 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
         report; fields it starts load in the browser when ready."""
         field = current_field()
         if model is None or (field is None and field_tools is None):
-            return _error("No field is loaded (or the data agent isn't available).", tool_call_id)
+            return tool_error("No field is loaded (or the data agent isn't available).", tool_call_id)
         added: list[str] = []
         tools = build_data_tools(field=field, store_rows=store_rows, added=added, skills_dir=skills_dir) \
             if store_rows is not None or field is None else []

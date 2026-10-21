@@ -1,7 +1,7 @@
 """Stand-in for SCOOP's data agents: gather real data for one target.
 
 The real data agents don't exist yet, so this script builds an example result
-in the provenance format from ``plans/duo_xu.md`` for ``run_checks.py`` to
+in the provenance format ``run_checks.py`` expects, for it to
 verify. It collects:
 
 - the resolved target position (Sesame),

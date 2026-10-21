@@ -1,14 +1,17 @@
 """Find Local Volume Database objects by name, for choosing a field to run.
 
 Reads the LVDB table the smoke-test pipeline caches under
-``<fields>/<dir>/cache/lvdb_comb_all_v1.1.1.ecsv`` (astropy needed to read it).
+``<fields>/<dir>/cache/`` (``CACHE_NAME``) (astropy needed to read it).
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-CACHE_NAME = "lvdb_comb_all_v1.1.1.ecsv"
+# The Local Volume Database release every part of SCOOP reads (pipeline, name search, PM tools).
+LVDB_RELEASE = "v1.1.1"
+LVDB_BASE = f"https://github.com/apace7/local_volume_database/releases/download/{LVDB_RELEASE}/"
+CACHE_NAME = f"lvdb_comb_all_{LVDB_RELEASE}.ecsv"  # as the pipeline caches comb_all.ecsv
 
 
 def _norm(text: str) -> str:

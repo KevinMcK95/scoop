@@ -53,7 +53,6 @@ that may already have fixed it (`git log -S '<distinctive text>'`).
   or a wrapper, and name it in the summary.
 - Run every suite: `python -m pytest -q` (in both the full and the light environment if
   both exist), and `npx vitest run` and `npx svelte-check` in `web/` if the web changed.
-- Add an entry to `docs/changes_to_team_code.md`.
 
 ## 4. Propose
 

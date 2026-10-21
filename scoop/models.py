@@ -1,4 +1,8 @@
-"""Small, archive-neutral models shared by handlers and adapters."""
+"""Small, archive-neutral models: provenance, search status, native entities, publications.
+
+Native records are identified by (kind, archive, native_id); names and proximity
+alone are not identity evidence. A successful query is not a claim of completeness.
+"""
 
 from __future__ import annotations
 

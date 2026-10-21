@@ -20,6 +20,7 @@ import time
 from datetime import date
 from pathlib import Path
 
+from ..cost import price_for
 from ..literature.ads import ADSClient
 from .candidates import harvest
 from .coverage import STALE_AFTER_DAYS, read_coverage
@@ -57,10 +58,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="age at which a skill's facts are reported as due for re-checking")
     parser.add_argument("--model", default="claude-opus-5-5")
     parser.add_argument("--model-provider", choices=("anthropic", "openai"), default="anthropic")
-    parser.add_argument("--usd-per-mtok-in", type=float, default=USD_PER_MTOK_IN)
-    parser.add_argument("--usd-per-mtok-out", type=float, default=USD_PER_MTOK_OUT)
+    parser.add_argument("--usd-per-mtok-in", type=float, default=None,
+                        help="default: the model's price in scoop.cost")
+    parser.add_argument("--usd-per-mtok-out", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="print the scan summary as JSON")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    price = price_for(args.model)
+    if args.usd_per_mtok_in is None:
+        args.usd_per_mtok_in = price.input if price else USD_PER_MTOK_IN
+    if args.usd_per_mtok_out is None:
+        args.usd_per_mtok_out = price.output if price else USD_PER_MTOK_OUT
+    return args
 
 
 def build_model(provider: str, name: str):
@@ -110,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         text = report_markdown(scan=scan, candidates=candidates, coverage=coverage, since=since,
                                until=until, today=until, warnings=warnings, model=args.model,
                                dry_run=args.dry_run, usd_in=args.usd_per_mtok_in,
-                               usd_out=args.usd_per_mtok_out)
+                               usd_out=args.usd_per_mtok_out, stale_after_days=args.stale_days)
         report_path = write_report(root, text, until)
 
     record = audit_record(scan=scan, candidates=candidates, latency_ms=latency_ms,

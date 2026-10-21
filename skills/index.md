@@ -8,7 +8,7 @@ cite it.
 
 Whatever skill is used, every record an agent returns must carry its
 provenance (archive, native ID, position, footprint, query, access URL) so the
-evaluation checks in [Duo's plan](../plans/duo_xu.md) can verify it against the
+evaluation checks in [`evaluation/`](../evaluation/README.md) can verify it against the
 archive.
 
 ## Surveys and archives (`surveys/`)

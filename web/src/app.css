@@ -198,26 +198,6 @@ body.resizing-y #results-content {
 input {
   accent-color: var(--accent);
 }
-.list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px;
-}
-.source-list {
-  display: grid;
-  gap: 6px;
-}
-.source-row {
-  display: grid;
-  gap: 4px;
-  text-align: left;
-  padding: 10px;
-}
-.source-row small {
-  font-size: 10px;
-  color: var(--muted);
-}
 .selected {
   border-color: var(--accent) !important;
   background: #1a353e !important;
@@ -261,23 +241,6 @@ input {
 }
 .sky-panel h2 {
   font-size: 12px;
-}
-.badge {
-  font: 10px var(--mono);
-  color: var(--muted);
-}
-.sky-toolbar {
-  position: absolute;
-  left: 12px;
-  bottom: 38px;
-  z-index: 2;
-  font-size: 10px;
-  background: #101c2be8;
-  padding: 5px 8px;
-  pointer-events: none;
-}
-.sky-toolbar .badge {
-  display: none;
 }
 .map-actions {
   position: absolute;
@@ -377,13 +340,6 @@ input {
   border-left: 1px solid var(--line);
   background: var(--panel);
 }
-.chat-drawer-tools {
-  padding: 7px 9px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border-bottom: 1px solid var(--line);
-}
 .chat-panel {
   display: flex;
   flex-direction: column;
@@ -445,9 +401,6 @@ input {
 }
 .context-strip .budget-left {
   font-size: 10px;
-}
-.orbit-mark {
-  display: none;
 }
 .message {
   margin-top: 14px;
@@ -647,8 +600,7 @@ textarea {
   font-size: 13px;
 }
 .empty-state,
-.object-detail,
-.activity-list {
+.object-detail {
   padding: 12px;
   font-size: 12px;
   color: var(--muted);
@@ -658,9 +610,6 @@ textarea {
 }
 .object-detail button {
   margin-top: 8px;
-}
-.activity-list p {
-  margin-bottom: 5px;
 }
 .sr-only {
   position: absolute;
@@ -743,9 +692,6 @@ textarea {
   }
   .right-drawer {
     right: 0;
-  }
-  .chat-drawer-tools {
-    justify-content: flex-end;
   }
   .map-actions {
     gap: 4px;
@@ -1253,7 +1199,7 @@ body.resizing-y * {
   margin: 10px 0 4px;
 }
 .markdown code {
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   background: #0d1723;
   padding: 1px 4px;
   border-radius: 3px;
@@ -1340,13 +1286,6 @@ body.resizing-y * {
   border-radius: 4px;
   font-size: 11px;
 }
-.catalog-group h3 {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin: 4px 0 2px;
-}
 .catalog-entry {
   display: flex;
   align-items: center;
@@ -1429,12 +1368,8 @@ body.resizing-y * {
 .markdown .katex {
   font-size: 1.05em;
 }
-.composer textarea,
 #chat-draft {
   font-size: 13.5px;
-}
-.markdown code {
-  font-size: 12px;
 }
 .primary.stop {
   background: #d08770;

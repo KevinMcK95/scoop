@@ -1,4 +1,4 @@
-"""Publishing contract for injected tools; no live archive tools are defined.
+"""Publishing contract for tools whose results carry an artifact for the browser.
 
 Tools should obtain the real call ID through ``ToolRuntime.tool_call_id`` or an
 ``Annotated[str, InjectedToolCallId]`` argument, then return ``publish_result``.
@@ -11,6 +11,11 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from .state import _copy_payload, _nonempty_text
+
+
+def tool_error(text: str, tool_call_id: str) -> ToolMessage:
+    """A tool result the model should read and correct, not an exception."""
+    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
 
 
 def publish_result(

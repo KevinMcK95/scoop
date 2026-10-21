@@ -8,7 +8,7 @@ the scout needs to read them.
 This is a deliberately narrower thing than ``scoop/web.py``, which gives the
 chat agent the open web (any public host, on a user's request, with a person
 reading the answer). The scout runs unattended on a schedule, so the controls
-from ``SAFETY_CHECKLIST_TODO.md`` apply in full: an allowlist of archive and
+for unattended agents apply in full: an allowlist of archive and
 publisher domains, robots.txt, a per-host rate limit, a response size cap and a
 content-type cap. HTML becomes text through ``scoop.web.html_to_text``, so there
 is one such parser in the repository and not two. Everything refused is refused
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from ..web import check_url, html_to_text
@@ -28,6 +28,7 @@ USER_AGENT = "SCOOP-dataset-scout/0.1 (+https://github.com/KevinMcK95/scoop)"
 MAX_BYTES = 400_000
 MAX_CHARS = 20_000
 MIN_INTERVAL_SECONDS = 1.0  # per host
+MAX_REDIRECTS = 5  # each hop is checked like the first URL
 TEXT_TYPES = ("text/html", "text/plain", "text/xml", "application/xml", "application/json",
               "application/xhtml+xml", "application/x-votable+xml")
 
@@ -78,6 +79,11 @@ def to_text(body: str, content_type: str) -> str:
     return html_to_text(body)
 
 
+def _redirect(response) -> str | None:
+    """Where a redirect response points, or None if it is not one."""
+    return response.headers.get("location") if 300 <= response.status_code < 400 else None
+
+
 @dataclass
 class Fetcher:
     """One fetcher per scan; it carries the robots and rate-limit state.
@@ -98,24 +104,21 @@ class Fetcher:
         if self.client is None:
             import httpx
 
-            self.client = httpx.Client(timeout=20.0, follow_redirects=True,
+            self.client = httpx.Client(timeout=20.0, follow_redirects=False,
                                        headers={"User-Agent": USER_AGENT})
 
     def get(self, url: str) -> str:
         """Readable text for ``url``, or raise ``FetchError`` saying why not."""
-        if not allowed(url):
-            self.refused.append(url)
-            raise FetchError(
-                f"{url} is not an allowed source. The scout may only read https pages on archive, "
-                f"observatory and publisher domains ({', '.join(ALLOWED_DOMAINS[:8])}, ...). "
-                "Use the archive's own documentation page instead.")
-        host = urlparse(url).hostname or ""
-        if not self._robots_allow(host, url):
-            self.refused.append(url)
-            raise FetchError(f"{host}/robots.txt disallows {url} for automated clients. "
-                             "Try a different page on this archive.")
-        self._throttle(host)
-        response = self._request(url)
+        for _ in range(MAX_REDIRECTS + 1):
+            self._check(url)
+            self._throttle(urlparse(url).hostname or "")
+            response = self._request(url)
+            location = _redirect(response)
+            if location is None:
+                break
+            url = urljoin(url, location)
+        else:
+            raise FetchError(f"{url} redirected more than {MAX_REDIRECTS} times.")
         content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
         if content_type and not any(content_type == t for t in TEXT_TYPES):
             self.refused.append(url)
@@ -128,12 +131,26 @@ class Fetcher:
             text = text[:self.max_chars] + f"\n[... truncated at {self.max_chars} characters]"
         return text
 
+    def _check(self, url: str) -> None:
+        """Refuse a URL off the allowlist or disallowed by its host's robots.txt."""
+        if not allowed(url):
+            self.refused.append(url)
+            raise FetchError(
+                f"{url} is not an allowed source. The scout may only read https pages on archive, "
+                f"observatory and publisher domains ({', '.join(ALLOWED_DOMAINS[:8])}, ...). "
+                "Use the archive's own documentation page instead.")
+        host = urlparse(url).hostname or ""
+        if not self._robots_allow(host, url):
+            self.refused.append(url)
+            raise FetchError(f"{host}/robots.txt disallows {url} for automated clients. "
+                             "Try a different page on this archive.")
+
     def _request(self, url: str):
         try:
             response = self.client.get(url)
         except Exception as exc:  # network failures are an outcome the model handles
             raise FetchError(f"Could not reach {url}: {type(exc).__name__}") from exc
-        if not 200 <= response.status_code < 300:
+        if _redirect(response) is None and not 200 <= response.status_code < 300:
             raise FetchError(f"{url} returned HTTP {response.status_code}.")
         return response
 
@@ -153,8 +170,16 @@ class Fetcher:
 
     def _read_robots(self, host: str) -> RobotFileParser | None:
         """None when there is no usable robots.txt, which means no restrictions."""
+        url = f"https://{host}/robots.txt"
         try:
-            response = self.client.get(f"https://{host}/robots.txt")
+            for _ in range(MAX_REDIRECTS):  # e.g. to www.; only within the allowlist
+                response = self.client.get(url)
+                location = _redirect(response)
+                if location is None:
+                    break
+                url = urljoin(url, location)
+                if not allowed(url):
+                    return None
         except Exception:
             return None
         if response.status_code != 200:

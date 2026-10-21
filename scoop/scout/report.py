@@ -18,11 +18,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .candidates import Candidate
-from .coverage import Coverage
+from .coverage import STALE_AFTER_DAYS, Coverage
 from .triage import Scan
 
-# The default agent model's published prices, in USD per million tokens. Override
-# from the CLI when you run the scan on a different model.
+# USD per million tokens for a model scoop.cost does not price. Override from the CLI.
 USD_PER_MTOK_IN = 3.0
 USD_PER_MTOK_OUT = 15.0
 
@@ -44,7 +43,7 @@ def _table(header: tuple[str, ...], rows: list[tuple[str, ...]]) -> str:
 def report_markdown(*, scan: Scan, candidates: tuple[Candidate, ...], coverage: Coverage,
                     since: date, until: date, today: date, warnings: tuple[str, ...],
                     model: str, dry_run: bool, usd_in: float = USD_PER_MTOK_IN,
-                    usd_out: float = USD_PER_MTOK_OUT) -> str:
+                    usd_out: float = USD_PER_MTOK_OUT, stale_after_days: int = STALE_AFTER_DAYS) -> str:
     titles = {c.bibcode: c for c in candidates}
     verdicts = sorted(scan.verdicts, key=lambda v: (VERDICT_ORDER.get(v.verdict, 9), v.bibcode))
     unjudged = [c for c in candidates if not any(v.bibcode == c.bibcode for v in scan.verdicts)]
@@ -94,7 +93,7 @@ def report_markdown(*, scan: Scan, candidates: tuple[Candidate, ...], coverage: 
     parts.append(_table(("Skill", "Status", "Last checked", "Days"),
                         [(f"`{s.name}`", s.status, (s.sources_checked or "never").split(" ")[0],
                           str(s.stale_days(today)) if s.stale_days(today) is not None else "—")
-                         for s in coverage.stale(today)]))
+                         for s in coverage.stale(today, after_days=stale_after_days)]))
     parts.append("\nRegistered data sources: "
                  + ", ".join(f"`{name}`" for name in coverage.source_modules) + "\n")
     if coverage.to_write:

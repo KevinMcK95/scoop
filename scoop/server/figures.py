@@ -14,8 +14,9 @@ import shutil
 import uuid
 from pathlib import Path
 
+from .ids import THREAD_ID
+
 DEFAULT_DIR = Path.home() / ".config" / "scoop" / "figures"
-THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 NAME = re.compile(r"[A-Za-z0-9_-]{1,80}\.(png|jpg)")
 KINDS = {"image/png": "png", "image/jpeg": "jpg"}
 MEDIA = {"png": "image/png", "jpg": "image/jpeg"}
