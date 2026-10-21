@@ -33,11 +33,13 @@ from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
+from ..chat.kernel_tool import build_kernel_tools
 from ..chat.web_tools import build_web_tools
 from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
+from .settings import BASE_URL
 from .trace import TurnTracer
 
 THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
@@ -46,6 +48,9 @@ MAX_MESSAGE_CHARS = 8000
 RECURSION_LIMIT = 2 * 12 + 1
 MAX_CONSECUTIVE_FAILURES = 4
 
+
+
+MODEL_LIST_TTL = 600.0  # seconds an endpoint's model list is reused
 
 
 def _bad_request(message: str) -> JSONResponse:
@@ -166,18 +171,25 @@ def create_app(
     fetch_image: Any = None,
     web: tuple[Any, Any] | None = None,
     python: Any = None,
+    kernel: Any = None,
     figure_store: Any = None,
     trace_store: Any = None,
     settings: Any = None,
     costs: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
+    make_kernel: Callable[[Any], Any] | None = None,
+    list_kernels: Callable[[], list[dict]] | None = None,
+    list_models: Callable[[str, str | None], Any] | None = None,
 ) -> Starlette:
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
     a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
+    ``kernel`` an AnalysisKernel in the user's own environment (off unless given, or made
+    from settings by ``make_kernel``; ``list_kernels`` names the kernels Settings may choose);
+    ``list_models`` an async ``(base_url, api_key) -> models`` for the Settings model search;
     ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
     ``trace_store`` keeps developer traces of each turn for the Debug tab. With
     ``audit_path``, each turn appends one JSON line (no message text). ``costs`` is a
@@ -188,10 +200,15 @@ def create_app(
     costs = costs if costs is not None else CostTracker()
     locks: dict[str, asyncio.Lock] = {}
     # The model and ADS client can be replaced from the Settings tab while running.
-    live = {"model": model, "ads": ads_client}
+    live = {"model": model, "ads": ads_client, "kernel": kernel}
     if settings is not None:
         live["model"] = model if model is not None else (make_model(settings) if make_model else None)
         live["ads"] = ads_client if ads_client is not None else (make_ads(settings) if make_ads else None)
+        if kernel is None and make_kernel:
+            try:
+                live["kernel"] = make_kernel(settings)
+            except Exception as exc:  # e.g. the saved kernel was uninstalled
+                print(f"kernel: off ({exc})")
 
     def ads_tools() -> list:
         if live["ads"] is None:
@@ -212,7 +229,7 @@ def create_app(
     async def get_settings(request: Request) -> JSONResponse:
         if settings is None:
             return JSONResponse({"error": "Settings are not available."}, status_code=404)
-        return JSONResponse(settings.public())
+        return JSONResponse({**settings.public(), "kernels": list_kernels() if list_kernels else []})
 
     async def put_settings(request: Request) -> JSONResponse:
         if settings is None:
@@ -220,10 +237,24 @@ def create_app(
         if not same_site(request) or request.headers.get("content-type", "").split(";")[0] != "application/json":
             return JSONResponse({"error": "Settings can only be changed from the SCOOP workspace."}, status_code=403)
         try:
-            settings.update(await request.json())
+            changes = await request.json()
+            kernels = {k["name"] for k in list_kernels()} if list_kernels else set()
+            if isinstance(changes, dict) and changes.get("kernel") not in (None, "", "off", *kernels):
+                raise ValueError(f"no installed Jupyter kernel named {changes['kernel']!r}")
+            before = (settings.get("kernel"), settings.get("kernel_cwd"))
+            settings.update(changes)
         except (ValueError, TypeError) as exc:
             return _bad_request(f"Invalid settings: {exc}")
         problems = []
+        if make_kernel and (settings.get("kernel"), settings.get("kernel_cwd")) != before:
+            # A new kernel or working directory: the old kernel and its variables end.
+            if live["kernel"] is not None:
+                await live["kernel"].close()
+            try:
+                live["kernel"] = make_kernel(settings)
+            except Exception as exc:
+                live["kernel"] = None
+                problems.append(f"kernel: {exc}")
         for name, make in (("model", make_model), ("ads", make_ads)):
             try:
                 live[name] = make(settings) if make else live[name]
@@ -231,7 +262,32 @@ def create_app(
                 live[name] = None
                 problems.append(f"{name}: {type(exc).__name__}: {exc}")
         return JSONResponse({**settings.public(), "chat": live["model"] is not None,
-                             "literature": live["ads"] is not None, "problems": problems})
+                             "literature": live["ads"] is not None, "kernel_on": live["kernel"] is not None,
+                             "kernels": list_kernels() if list_kernels else [], "problems": problems})
+
+    model_lists: dict[tuple[str, bool], tuple[float, list]] = {}  # (endpoint, with key) -> (time, models)
+
+    async def get_models(request: Request) -> JSONResponse:
+        """The models an endpoint offers: the one given (?base_url=), else the saved one."""
+        if settings is None or list_models is None:
+            return JSONResponse({"error": "Model lists are not available."}, status_code=404)
+        if not same_site(request):
+            return JSONResponse({"error": "Model lists are only for the SCOOP workspace."}, status_code=403)
+        base_url = request.query_params.get("base_url") or settings.get("base_url")
+        if not base_url:
+            return JSONResponse({"base_url": None, "models": []})
+        if not BASE_URL.fullmatch(base_url):
+            return _bad_request("base_url must be an https:// URL")
+        # The saved API key is sent only to the saved endpoint.
+        key = settings.get("api_key") if base_url == settings.get("base_url") else None
+        cached = model_lists.get((base_url, bool(key)))
+        if cached is None or time.monotonic() - cached[0] > MODEL_LIST_TTL:
+            try:
+                cached = model_lists[(base_url, bool(key))] = (time.monotonic(), await list_models(base_url, key))
+            except Exception as exc:  # the endpoint is down, rejects the key, or has no /models
+                return JSONResponse({"error": f"Could not list the models at {base_url} ({type(exc).__name__})."},
+                                    status_code=502)
+        return JSONResponse({"base_url": base_url, "models": cached[1]})
 
     def model_id() -> str:
         """The model id turns are priced against: what Settings holds, else what the client reports."""
@@ -392,6 +448,8 @@ def create_app(
                 costs.set_budget(thread_id, float(budget))
         except (KeyError, ValueError, TypeError) as exc:
             return _bad_request(f"Invalid chat request: {exc}")
+        # Which analysis environment run_kernel uses (null: off) comes from the server, never the browser.
+        context = {**context, "kernel": await live["kernel"].describe() if live["kernel"] else None}
 
         field = fields.get(field_key) if fields and field_key else None
         # The field this turn works on: load_field can switch it mid-turn (e.g. from the start
@@ -430,6 +488,7 @@ def create_app(
         region_tools = build_region_tools(jobs=jobs, resolver=resolver)
         tools = [*map_tools, *region_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, current_field) if python else []),
+                 *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
@@ -448,13 +507,17 @@ def create_app(
                 return
             async with lock:
                 request_id, started = uuid.uuid4().hex, time.monotonic()
-                # Before anything runs: what this command should cost, against what is left to spend.
-                estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
-                                          overhead_tokens=overhead, request_id=request_id)
-                yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
+                # Costing is opt-in: a conversation that never set a budget is not estimated,
+                # confirmed or calibrated at all.
+                tracked = costs.budget(thread_id) is not None
+                estimate: dict = {}
+                if tracked:
+                    # Before anything runs: what this command should cost, against what is left to spend.
+                    estimate = costs.estimate(text, model=model_id(), thread_id=thread_id,
+                                              overhead_tokens=overhead, request_id=request_id)
+                    yield _sse({"type": "cost", "phase": "estimate", "note": describe_cost(estimate), **estimate})
                 # An unpriced model cannot be held to a budget; the note says so instead.
-                over_budget = (estimate["priced"] and estimate["budget_scope"] == "conversation"
-                               and not estimate["within_budget"])
+                over_budget = tracked and estimate["priced"] and not estimate["within_budget"]
                 if over_budget:
                     costs.forget(request_id)
                     left = estimate["budget"]["remaining_usd"]
@@ -520,13 +583,13 @@ def create_app(
                 finally:
                     # However the turn ends, its tokens are what it cost: charge them to the
                     # conversation's budget and let the next estimate learn from them.
-                    actual = costs.confirm_usage(request_id, model_id(), usage) if usage else None
-                    if actual is None:
+                    actual = costs.confirm_usage(request_id, model_id(), usage) if tracked and usage else None
+                    if tracked and actual is None:
                         costs.forget(request_id)
                     # Written however the turn ends, so failures are always diagnosable.
                     if audit_path is not None:
                         record = _audit_record(request_id, thread_id, started, sent, usage, error,
-                                               cost={**estimate, **(actual or {})})
+                                               cost={**estimate, **(actual or {})} if tracked else None)
                         with audit_path.open("a", encoding="utf-8") as log:
                             log.write(json.dumps(record) + "\n")
                     if tracer is not None:
@@ -548,6 +611,7 @@ def create_app(
         Route("/api/health", health),
         Route("/api/settings", get_settings),
         Route("/api/settings", put_settings, methods=["POST"]),
+        Route("/api/models", get_models),
         Route("/api/budget/{thread}", get_budget),
         Route("/api/budget/{thread}", put_budget, methods=["POST"]),
         Route("/api/fields", list_fields),

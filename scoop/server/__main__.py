@@ -5,10 +5,15 @@ Configuration lives on the server; the browser never receives a secret:
 - the workspace's Settings tab (saved to ~/.config/scoop/settings.json, mode 600);
 - seeded from ``SCOOP_MODEL``, ``SCOOP_MODEL_BASE_URL`` (any OpenAI-compatible
   endpoint), ``SCOOP_MODEL_API_KEY`` (or ``OPENAI_API_KEY``) and ``ADS_API_TOKEN``.
+
+A Jupyter kernel chosen in Settings (seeded from ``SCOOP_KERNEL``) turns on run_kernel:
+Python in that environment, not sandboxed, working in ``SCOOP_KERNEL_CWD`` (default
+~/.cache/scoop/kernel).
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import os
 from pathlib import Path
@@ -46,6 +51,24 @@ def make_model(settings):
                       stream_usage=True, default_headers=attribution_headers(base_url) or None)
 
 
+def kernel_maker(made: list):
+    """Analysis kernels from settings (off without one); ``made`` collects them to close at exit."""
+
+    def make(settings):
+        from ..kernel import DEFAULT_CWD, AnalysisKernel
+
+        name = settings.get("kernel")
+        if not name or name == "off":  # "off" saved in Settings overrides SCOOP_KERNEL
+            return None
+        kernel = AnalysisKernel(name, cwd=settings.get("kernel_cwd") or DEFAULT_CWD)
+        if kernel.problem():
+            raise ValueError(kernel.problem())
+        made.append(kernel)
+        return kernel
+
+    return make
+
+
 def ads_maker(web):
     """ADS clients sharing the server's HTTP client (the server owns its lifetime)."""
 
@@ -66,15 +89,17 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
 
     from ..fields import FieldStore
     from ..images import cutout_fetcher
+    from ..kernel import available_kernels
     from ..sandbox import PythonSandbox
     from ..web import page_reader, web_searcher
     from ..lookup import simbad_query
     from ..lvdb import LVDBIndex
     from ..resolve import sesame_resolver
-    from ..cost import DEFAULT_BUDGET_USD, CostTracker
+    from ..cost import CostTracker, load_prices
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
+    from .model_list import model_lister
     from .trace import TraceStore
     from .settings import Settings
 
@@ -82,7 +107,10 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     settings = Settings(settings_path, defaults={
         "model": os.environ.get("SCOOP_MODEL"), "base_url": os.environ.get("SCOOP_MODEL_BASE_URL"),
         "api_key": os.environ.get("SCOOP_MODEL_API_KEY") or os.environ.get("OPENAI_API_KEY"),
-        "ads_token": os.environ.get("ADS_API_TOKEN")})
+        "ads_token": os.environ.get("ADS_API_TOKEN"), "kernel": os.environ.get("SCOOP_KERNEL"),
+        "kernel_cwd": os.environ.get("SCOOP_KERNEL_CWD")})
+    # Model prices come from a public list, kept beside the settings and refreshed daily.
+    prices_from = await asyncio.to_thread(load_prices, settings_path.with_name("prices.json"))
     async with contextlib.AsyncExitStack() as stack:
         web = await stack.enter_async_context(httpx.AsyncClient(follow_redirects=True))
         # Conversations' agent state survives restarts (reopened History threads keep their memory).
@@ -100,6 +128,13 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         else:
             print("python: on (Pyodide sandbox, no network)")
             stack.push_async_callback(python.close)
+        kernels: list = []  # every kernel made (Settings can switch them); all closed at exit
+
+        async def close_kernels() -> None:
+            for kernel in kernels:
+                await kernel.close()
+
+        stack.push_async_callback(close_kernels)
         script = Path(__file__).resolve().parents[2] / "smoke_tests" / "lvdb_field.py"
         jobs = JobManager(fields_dir, script) if script.exists() else None
         app = create_app(audit_path=audit_path, fields=fields, settings=settings, make_model=make_model,
@@ -107,14 +142,17 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
                          jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
                          web=(web_searcher(web), page_reader(web)), python=python,
+                         make_kernel=kernel_maker(kernels), list_kernels=available_kernels,
+                         list_models=model_lister(web, attribution_headers),
                          figure_store=FigureStore(settings_path.parent / "figures"),
                          trace_store=TraceStore(settings_path.parent / "traces"))
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "
               f"literature: {'on' if settings.get('ads_token') else 'off (set an ADS token in Settings)'}")
+        print(f"kernel: {f'on ({kernels[0].kernel_name!r}, NOT sandboxed; working in {kernels[0].cwd})' if kernels else 'off (choose one in Settings)'}")
         print(f"fields in {fields_dir}: {[f['key'] for f in fields.keys()] or 'none'}")
         print(f"settings file: {settings_path}; conversations: {threads_path}")
         print(f"budgets and cost calibration: {settings_path.with_name('costs.json')} "
-              f"(default ${DEFAULT_BUDGET_USD:.2f} per command until a conversation sets its own)")
+              f"(only for conversations that set a budget; model prices: {prices_from})")
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
 
 

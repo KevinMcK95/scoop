@@ -38,6 +38,57 @@ class PricingTests(unittest.TestCase):
             cost.cost_from_usage("claude-opus-5-5", input_tokens=1_000_000, output_tokens=1_000_000), 24.0)
 
 
+class OnlinePriceTests(unittest.TestCase):
+    LIST = {
+        "claude-opus-5-5": {"mode": "chat", "input_cost_per_token": 7e-06, "output_cost_per_token": 3e-05,
+                            "cache_read_input_token_cost": 7e-07},
+        "us.anthropic.claude-opus-5-5": {"mode": "chat", "input_cost_per_token": 9e-06, "output_cost_per_token": 9e-05},
+        "brand-new-model": {"mode": "chat", "input_cost_per_token": 1e-06, "output_cost_per_token": 4e-06},
+        "free-local": {"mode": "chat", "input_cost_per_token": 0, "output_cost_per_token": 0},
+        "text-embedding": {"mode": "embedding", "input_cost_per_token": 1e-07},
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "prices.json"
+        self.addCleanup(cost.load_prices, Path(self.tmp.name) / "none.json", 0, lambda: None)
+
+    def test_online_prices_replace_the_built_in_table_and_add_models(self):
+        self.assertEqual(cost.load_prices(self.path, fetch=lambda: self.LIST), "online")
+        price = cost.price_for("claude-opus-5-5-20260401")
+        self.assertEqual((price.input, price.output, price.cache_read), (7.0, 30.0, 0.7))  # the bare id wins
+        self.assertEqual(cost.price_for("brand-new-model").output, 4.0)
+        self.assertIsNone(cost.price_for("free-local"))
+        self.assertIsNone(cost.price_for("text-embedding"))
+        self.assertEqual(cost.price_for("gpt-4"), cost.MODEL_PRICING["gpt-4"])  # not listed: built-in stays
+
+    def test_a_fresh_copy_on_disk_is_used_without_downloading(self):
+        cost.load_prices(self.path, fetch=lambda: self.LIST)
+        def unreachable():
+            raise AssertionError("downloaded again")
+        self.assertEqual(cost.load_prices(self.path, fetch=unreachable), "cache")
+        self.assertEqual(cost.price_for("brand-new-model").input, 1.0)
+
+    def test_offline_keeps_an_old_copy_or_falls_back_to_the_table(self):
+        cost.load_prices(self.path, fetch=lambda: self.LIST)
+        def offline():
+            raise OSError("no network")
+        self.assertEqual(cost.load_prices(self.path, max_age=0, fetch=offline), "cache")
+        self.assertEqual(cost.price_for("brand-new-model").input, 1.0)
+        self.assertEqual(cost.load_prices(Path(self.tmp.name) / "missing.json", fetch=offline), "built-in")
+        self.assertIsNone(cost.price_for("brand-new-model"))
+        self.assertEqual(cost.price_for("claude-opus-5-5"), cost.MODEL_PRICING["claude-opus-5-5"])
+
+    def test_a_garbled_download_is_ignored(self):
+        self.assertEqual(cost.load_prices(self.path, fetch=lambda: {"x": "not a model"}), "built-in")
+        self.assertFalse(self.path.exists())
+
+    def test_a_dotted_model_name_is_not_mistaken_for_a_provider_prefix(self):
+        self.assertEqual(cost.normalise_model("gpt-3.5-turbo"), "gpt-3.5-turbo")
+        self.assertEqual(cost.price_for("gpt-3.5-turbo"), cost.MODEL_PRICING["gpt-3.5"])
+
+
 class TrackerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

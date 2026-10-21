@@ -92,7 +92,9 @@ export interface Backend {
   getSettings(): Promise<SettingsView>;
   listSources(): Promise<SourceInfo[]>;
   addSource(field: string, source: string): Promise<{ rows: number }>;
-  saveSettings(changes: Partial<Record<'model' | 'base_url' | 'api_key' | 'ads_token', string>>): Promise<SettingsView>;
+  saveSettings(changes: Partial<Record<SettingName, string>>): Promise<SettingsView>;
+  // The models an endpoint offers (the saved one when baseUrl is omitted); optional for test doubles.
+  listModels?(baseUrl?: string): Promise<ModelInfo[]>;
   getJob(id: string): Promise<JobView>;
   // Budgets: present whenever the server supports them (a test double may leave them out).
   getBudget?(thread: string): Promise<BudgetReport>;
@@ -105,6 +107,11 @@ export interface Backend {
 // A data source the server knows; queryable ones can be added to a field on demand.
 export interface SourceInfo { name: string; label: string; provenance: string; queryable: boolean }
 
+// One model an OpenAI-compatible endpoint lists at GET /models.
+export interface ModelInfo { id: string; name: string | null; context_length: number | null }
+
+export type SettingName = 'model' | 'base_url' | 'api_key' | 'ads_token' | 'kernel' | 'kernel_cwd';
+
 // What the server tells the browser about its settings: never secret values.
 export interface SettingsView {
   model: string | null;
@@ -113,9 +120,14 @@ export interface SettingsView {
   api_key_hint: string | null;
   ads_token_set: boolean;
   ads_token_hint: string | null;
+  // The Jupyter kernel run_kernel uses (null: off), its working directory, and the installed kernels.
+  kernel?: string | null;
+  kernel_cwd?: string | null;
+  kernels?: { name: string; display_name: string }[];
   // Where each value comes from: saved in Settings, the server's environment, or unset.
-  sources?: Record<'model' | 'base_url' | 'api_key' | 'ads_token', 'settings' | 'environment' | null>;
+  sources?: Partial<Record<SettingName, 'settings' | 'environment' | null>>;
   chat?: boolean;
+  kernel_on?: boolean;
   literature?: boolean;
   problems?: string[];
 }
@@ -225,6 +237,12 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
       });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
+    },
+    async listModels(baseUrl) {
+      const query = baseUrl ? `?base_url=${encodeURIComponent(baseUrl)}` : '';
+      const response = await fetcher(`${base}/models${query}`);
+      if (!response.ok) throw new Error(await errorText(response));
+      return (await response.json()).models;
     },
     async startJob(key, nRhalf = 2) {
       const response = await fetcher(`${base}/jobs`, {

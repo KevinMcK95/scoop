@@ -31,9 +31,10 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         view = settings.public()
         self.assertEqual(view, {"model": "openai/gpt-6-luna", "base_url": "https://openrouter.ai/api/v1",
+                                "kernel": None, "kernel_cwd": None,
                                 "api_key_set": True, "api_key_hint": "…cdef", "ads_token_set": False, "ads_token_hint": None,
                                 "sources": {"model": "environment", "base_url": "settings", "api_key": "settings",
-                                            "ads_token": None}})
+                                            "ads_token": None, "kernel": None, "kernel_cwd": None}})
         # The file holds only what was set here, never environment values.
         self.assertEqual(set(json.loads(self.path.read_text())), {"api_key", "base_url"})
         self.assertNotIn(KEY, json.dumps(view))
@@ -50,7 +51,7 @@ class SettingsStoreTests(unittest.TestCase):
         settings.update({"ads_token": ""})
         self.assertEqual((settings.get("api_key"), settings.get("ads_token")), (KEY, None))
         for bad in ({"password": "x"}, {"model": "two words"}, {"base_url": "http://plain.example"},
-                    {"api_key": "line\nbreak"}, {"api_key": 5}, []):
+                    {"api_key": "line\nbreak"}, {"api_key": 5}, {"kernel": "rm -rf"}, {"kernel_cwd": "relative/dir"}, []):
             with self.assertRaises(ValueError, msg=bad):
                 settings.update(bad)
 
@@ -97,6 +98,99 @@ class SettingsEndpointTests(unittest.TestCase):
         self.assertEqual(self.post({"model": "bad model"}).status_code, 400)
 
 
+class ModelListParsingTests(unittest.TestCase):
+    def test_only_well_formed_entries_are_kept_sorted_and_deduplicated(self):
+        from scoop.server.model_list import parse_models
+
+        payload = {"data": [{"id": "z/b", "name": "B", "context_length": 128000}, {"id": "A/a"}, {"id": ""},
+                            {"name": "no id"}, "junk", {"id": "z/b"}, {"id": "c", "context_length": True}]}
+        self.assertEqual(parse_models(payload), [
+            {"id": "A/a", "name": None, "context_length": None},
+            {"id": "c", "name": None, "context_length": None},
+            {"id": "z/b", "name": None, "context_length": None}])
+        self.assertEqual(parse_models({"data": "nope"}), [])
+        self.assertEqual(parse_models([]), [])
+
+
+@unittest.skipUnless(HAS_SERVER, "optional server dependencies absent")
+class ModelListEndpointTests(unittest.TestCase):
+    SAVED = "https://openrouter.ai/api/v1"
+
+    def setUp(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "settings.json"
+        self.calls = []
+
+        async def list_models(base_url, api_key):
+            self.calls.append((base_url, api_key))
+            if "down" in base_url:
+                raise ConnectionError("refused")
+            return [{"id": f"{base_url}-model", "name": None, "context_length": None}]
+
+        settings = Settings(path)
+        settings.update({"base_url": self.SAVED, "api_key": KEY})
+        self.client = TestClient(create_app(settings=settings, make_model=lambda s: None, make_ads=lambda s: None,
+                                            list_models=list_models))
+
+    def get(self, query="", origin="http://127.0.0.1:5173"):
+        return self.client.get(f"/api/models{query}", headers={"Origin": origin})
+
+    def test_the_key_goes_only_to_the_saved_endpoint_and_lists_are_cached(self):
+        saved = self.get()
+        self.assertEqual(saved.json(), {"base_url": self.SAVED, "models": [{"id": f"{self.SAVED}-model", "name": None,
+                                                                             "context_length": None}]})
+        self.assertNotIn(KEY, saved.text)
+        self.get(f"?base_url={self.SAVED}")  # cached: no second request
+        other = "https://inference.example.org/v1"
+        self.get(f"?base_url={other}")
+        self.assertEqual(self.calls, [(self.SAVED, KEY), (other, None)])
+
+    def test_bad_urls_failures_and_other_sites_are_refused(self):
+        self.assertEqual(self.get("?base_url=http://plain.example").status_code, 400)
+        down = self.get("?base_url=https://down.example/v1")
+        self.assertEqual(down.status_code, 502)
+        self.assertIn("ConnectionError", down.json()["error"])
+        self.assertEqual(self.get(origin="https://evil.example").status_code, 403)
+
+
+class FakeKernel:
+    def __init__(self, name):
+        self.kernel_name, self.closed = name, False
+
+    async def close(self):
+        self.closed = True
+
+
+@unittest.skipUnless(HAS_SERVER, "optional server dependencies absent")
+class KernelSettingTests(unittest.TestCase):
+    def setUp(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "settings.json"
+        self.made = []
+
+        def make_kernel(settings):
+            if settings.get("kernel") in (None, "off"):
+                return None
+            self.made.append(FakeKernel(settings.get("kernel")))
+            return self.made[-1]
+
+        self.client = TestClient(create_app(settings=Settings(path), make_model=lambda s: None, make_ads=lambda s: None,
+                                            make_kernel=make_kernel,
+                                            list_kernels=lambda: [{"name": "analysis", "display_name": "Analysis"}]))
+
+    def post(self, body):
+        return self.client.post("/api/settings", json=body, headers={"Origin": "http://127.0.0.1:5173"})
+
+    def test_only_installed_kernels_can_be_chosen_and_switching_closes_the_old_one(self):
+        self.assertEqual(self.client.get("/api/settings").json()["kernels"], [{"name": "analysis", "display_name": "Analysis"}])
+        self.assertEqual(self.post({"kernel": "python9"}).status_code, 400)
+        self.assertEqual(self.made, [])
+        chosen = self.post({"kernel": "analysis"}).json()
+        self.assertEqual((chosen["kernel"], chosen["kernel_on"], chosen["sources"]["kernel"]), ("analysis", True, "settings"))
+        self.post({"kernel_cwd": "~/scratch"})  # a new working directory means a new kernel
+        self.assertEqual((len(self.made), self.made[0].closed), (2, True))
+        self.post({"model": "openai/gpt-6-luna"})  # other settings leave the kernel alone
+        self.assertEqual((len(self.made), self.made[1].closed), (2, False))
+        off = self.post({"kernel": "off"}).json()
+        self.assertEqual((off["kernel"], off["kernel_on"], self.made[1].closed), ("off", False, True))
 
 
 class AttributionTests(unittest.TestCase):

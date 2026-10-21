@@ -6,11 +6,13 @@ tracked by request id. When the turn ends the server knows the real token
 counts, so the estimate is confirmed against them and a per-model correction
 factor is nudged towards the truth. The next estimate uses it.
 
-Prices are USD per million tokens. A model with no price is reported as
-unknown rather than priced as some other model: a confident wrong number is
-worse than "no price for this model". Set ``SCOOP_MODEL_PRICE_USD_PER_MTOK``
-("input,output" or "input,output,cached") to price a model this table does not
-know, such as a local or self-hosted endpoint.
+Prices are USD per million tokens. They are looked up online (LiteLLM's public
+price list, refreshed daily by ``load_prices`` and kept on disk), so nothing has
+to be configured; the table below is the offline fallback. A model with no price
+anywhere is reported as unknown rather than priced as some other model: a
+confident wrong number is worse than "no price for this model". Only a model
+that is not listed online, such as a self-hosted endpoint, needs
+``SCOOP_MODEL_PRICE_USD_PER_MTOK`` ("input,output" or "input,output,cached").
 
 ``python -m scoop.cost "a prompt"`` prints one estimate.
 """
@@ -20,6 +22,8 @@ import json
 import os
 import re
 import threading
+import time
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,8 +44,8 @@ class Price:
         return self.cached if self.cached is not None else self.input * 0.1
 
 
-# Anthropic rates are first-party API prices; the OpenAI rows are the public list
-# prices for those models. Keys are matched after normalise_model().
+# The offline fallback: used until (or unless) the online list loads. Keys are
+# matched after normalise_model(); a price found online replaces the row.
 MODEL_PRICING: dict[str, Price] = {
     "claude-fable-5-1": Price(10.0, 50.0, 0.25),
     "claude-fable-5": Price(10.0, 50.0),
@@ -95,8 +99,90 @@ def normalise_model(model: str) -> str:
     """``openai/GPT-4`` and ``us.anthropic.claude-opus-5-5-20260401`` -> table keys."""
     name = str(model or "").strip().lower()
     name = name.rsplit("/", 1)[-1]  # openai/gpt-4, anthropic/claude-...
-    name = name.rsplit(".", 1)[-1]  # us.anthropic.claude-...
+    if "anthropic." in name:
+        name = name.split("anthropic.", 1)[-1]  # us.anthropic.claude-... (not gpt-3.5's dot)
     return _DATE_SUFFIX.sub("", name)
+
+
+# -- prices found online -------------------------------------------------------
+PRICES_URL = os.environ.get(
+    "SCOOP_PRICES_URL",
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
+PRICES_MAX_AGE_SECONDS = 24 * 3600
+_online: dict[str, Price] = {}
+_merged: dict[str, Price] | None = None  # built-in rows under the online ones, built on first use
+
+
+def _parse_prices(raw: Any) -> dict[str, Price]:
+    """LiteLLM's list (USD per token) -> prices per million tokens, keyed like MODEL_PRICING."""
+    if not isinstance(raw, dict):
+        return {}
+    # Bare ids first, so "claude-opus-5-5" wins over a regional "us.anthropic.claude-opus-5-5".
+    ordered = sorted(raw, key=lambda key: ("." in str(key) or "/" in str(key)))
+    prices: dict[str, Price] = {}
+    for key in ordered:
+        entry = raw[key]
+        if not isinstance(entry, dict) or entry.get("mode") not in (None, "chat", "responses", "completion"):
+            continue
+        try:
+            fresh, out = float(entry["input_cost_per_token"]), float(entry["output_cost_per_token"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (fresh > 0 and out > 0):
+            continue  # unpriced or free-to-run entries say nothing useful about a bill
+        hit = entry.get("cache_read_input_token_cost")
+        cached = float(hit) * 1e6 if isinstance(hit, (int, float)) and hit > 0 else None
+        prices.setdefault(normalise_model(str(key)), Price(round(fresh * 1e6, 9), round(out * 1e6, 9),
+                                                         None if cached is None else round(cached, 9)))
+    return prices
+
+
+def _download_prices(url: str = PRICES_URL, timeout: float = 5.0) -> Any:
+    with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - a fixed https URL
+        return json.loads(response.read().decode("utf-8"))
+
+
+def load_prices(path: Path | str | None = None, max_age: float = PRICES_MAX_AGE_SECONDS,
+                fetch: Callable[[], Any] = _download_prices) -> str:
+    """Use the online price list: from the on-disk copy when fresh, else download it.
+
+    Returns where the prices came from: ``"cache"``, ``"online"`` or ``"built-in"``
+    (offline with no copy: the table above still prices the models it knows).
+    Never raises; a failed download keeps whatever copy there is, however old.
+    """
+    global _online, _merged
+    cache = Path(path) if path is not None else Path.home() / ".config" / "scoop" / "prices.json"
+    stored: Any = None
+    try:
+        stored = json.loads(cache.read_text(encoding="utf-8"))
+        fresh = time.time() - cache.stat().st_mtime < max_age
+    except (OSError, ValueError):
+        fresh = False
+    source = "cache"
+    if not fresh:
+        try:
+            downloaded = fetch()
+            if _parse_prices(downloaded):
+                stored, source = downloaded, "online"
+                temp = cache.with_suffix(cache.suffix + f".{os.getpid()}.tmp")
+                try:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    temp.write_text(json.dumps(downloaded), encoding="utf-8")
+                    os.replace(temp, cache)
+                except OSError:
+                    temp.unlink(missing_ok=True)  # the prices still apply; only the copy is lost
+        except Exception:  # noqa: BLE001 - offline, blocked, or a bad payload: fall back quietly
+            pass
+    _online = _parse_prices(stored)
+    _merged = None
+    return source if _online else "built-in"
+
+
+def _known_prices() -> dict[str, Price]:
+    global _merged
+    if _merged is None:
+        _merged = {**MODEL_PRICING, **_online}
+    return _merged
 
 
 def _price_from_env() -> Price | None:
@@ -115,12 +201,13 @@ def _price_from_env() -> Price | None:
 def price_for(model: str) -> Price | None:
     """The price of a model, or None when nothing here knows it."""
     name = normalise_model(model)
-    if name in MODEL_PRICING:
-        return MODEL_PRICING[name]
+    known = _known_prices()
+    if name in known:
+        return known[name]
     # A longest-prefix match, so a dated or sized variant still prices.
-    matches = [key for key in MODEL_PRICING if name.startswith(key)]
+    matches = [key for key in known if name.startswith(key)]
     if matches:
-        return MODEL_PRICING[max(matches, key=len)]
+        return known[max(matches, key=len)]
     return _price_from_env()
 
 
@@ -496,8 +583,7 @@ def describe(estimate: dict[str, Any], actual: dict[str, Any] | None = None) -> 
                 text += " (budget spent)"
         return text
     if not estimate.get("priced"):
-        return (f"No price is known for {estimate.get('model')}, so this command cannot be costed. "
-                "Set SCOOP_MODEL_PRICE_USD_PER_MTOK to price it.")
+        return (f"No price is known for {estimate.get('model')}, so this command cannot be costed.")
     scope = "left in this conversation" if estimate.get("budget_scope") == "conversation" else "budget"
     text = (f"Estimated cost ${estimate['estimated_cost_usd']:.4f} "
             f"of ${estimate['budget_usd']:.4f} {scope}")
@@ -508,13 +594,14 @@ def describe(estimate: dict[str, Any], actual: dict[str, Any] | None = None) -> 
 
 __all__ = ["CostTracker", "MODEL_PRICING", "Price", "check_budget", "confirm_actual_cost", "cost_from_usage",
            "default_state_path", "describe", "estimate_actual_cost_from_usage", "estimate_cost", "estimate_tokens",
-           "get_model_calibration", "normalise_model", "price_for", "reset_calibration",
+           "get_model_calibration", "load_prices", "normalise_model", "price_for", "reset_calibration",
            "run_with_auto_calibration"]
 
 
 if __name__ == "__main__":
     import sys
 
+    load_prices()
     prompt = sys.argv[1] if len(sys.argv) > 1 else "Summarize the latest arXiv paper on transformers."
     model = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_MODEL
     budget = float(sys.argv[3]) if len(sys.argv) > 3 else None
