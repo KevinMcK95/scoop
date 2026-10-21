@@ -31,9 +31,10 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
         view = settings.public()
         self.assertEqual(view, {"model": "openai/gpt-6-luna", "base_url": "https://openrouter.ai/api/v1",
+                                "kernel": None, "kernel_cwd": None,
                                 "api_key_set": True, "api_key_hint": "…cdef", "ads_token_set": False, "ads_token_hint": None,
                                 "sources": {"model": "environment", "base_url": "settings", "api_key": "settings",
-                                            "ads_token": None}})
+                                            "ads_token": None, "kernel": None, "kernel_cwd": None}})
         # The file holds only what was set here, never environment values.
         self.assertEqual(set(json.loads(self.path.read_text())), {"api_key", "base_url"})
         self.assertNotIn(KEY, json.dumps(view))
@@ -50,7 +51,7 @@ class SettingsStoreTests(unittest.TestCase):
         settings.update({"ads_token": ""})
         self.assertEqual((settings.get("api_key"), settings.get("ads_token")), (KEY, None))
         for bad in ({"password": "x"}, {"model": "two words"}, {"base_url": "http://plain.example"},
-                    {"api_key": "line\nbreak"}, {"api_key": 5}, []):
+                    {"api_key": "line\nbreak"}, {"api_key": 5}, {"kernel": "rm -rf"}, {"kernel_cwd": "relative/dir"}, []):
             with self.assertRaises(ValueError, msg=bad):
                 settings.update(bad)
 
@@ -97,6 +98,45 @@ class SettingsEndpointTests(unittest.TestCase):
         self.assertEqual(self.post({"model": "bad model"}).status_code, 400)
 
 
+class FakeKernel:
+    def __init__(self, name):
+        self.kernel_name, self.closed = name, False
+
+    async def close(self):
+        self.closed = True
+
+
+@unittest.skipUnless(HAS_SERVER, "optional server dependencies absent")
+class KernelSettingTests(unittest.TestCase):
+    def setUp(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "settings.json"
+        self.made = []
+
+        def make_kernel(settings):
+            if settings.get("kernel") in (None, "off"):
+                return None
+            self.made.append(FakeKernel(settings.get("kernel")))
+            return self.made[-1]
+
+        self.client = TestClient(create_app(settings=Settings(path), make_model=lambda s: None, make_ads=lambda s: None,
+                                            make_kernel=make_kernel,
+                                            list_kernels=lambda: [{"name": "so", "display_name": "SO (pixell)"}]))
+
+    def post(self, body):
+        return self.client.post("/api/settings", json=body, headers={"Origin": "http://127.0.0.1:5173"})
+
+    def test_only_installed_kernels_can_be_chosen_and_switching_closes_the_old_one(self):
+        self.assertEqual(self.client.get("/api/settings").json()["kernels"], [{"name": "so", "display_name": "SO (pixell)"}])
+        self.assertEqual(self.post({"kernel": "python9"}).status_code, 400)
+        self.assertEqual(self.made, [])
+        chosen = self.post({"kernel": "so"}).json()
+        self.assertEqual((chosen["kernel"], chosen["kernel_on"], chosen["sources"]["kernel"]), ("so", True, "settings"))
+        self.post({"kernel_cwd": "~/scratch"})  # a new working directory means a new kernel
+        self.assertEqual((len(self.made), self.made[0].closed), (2, True))
+        self.post({"model": "openai/gpt-6-luna"})  # other settings leave the kernel alone
+        self.assertEqual((len(self.made), self.made[1].closed), (2, False))
+        off = self.post({"kernel": "off"}).json()
+        self.assertEqual((off["kernel"], off["kernel_on"], self.made[1].closed), ("off", False, True))
 
 
 class AttributionTests(unittest.TestCase):

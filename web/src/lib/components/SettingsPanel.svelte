@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Workspace } from '../workspace/state.svelte';
-  import type { SettingsView } from '../api/client';
+  import type { SettingName, SettingsView } from '../api/client';
   let { workspace }: { workspace: Workspace } = $props();
   // Endpoints and models offered by default; anything OpenAI-compatible works.
   const ENDPOINTS = [
@@ -13,10 +13,12 @@
   let baseUrl = $state('');
   let apiKey = $state('');
   let adsToken = $state('');
+  let kernel = $state('');
+  let kernelCwd = $state('');
   let status = $state('');
   let saving = $state(false);
   const endpoint = $derived(ENDPOINTS.find((e) => e.url === baseUrl));
-  const from = (name: 'model' | 'base_url' | 'api_key' | 'ads_token') =>
+  const from = (name: SettingName) =>
     view?.sources?.[name] === 'settings' ? 'set here' : view?.sources?.[name] === 'environment' ? 'from environment' : '';
 
   async function load() {
@@ -24,6 +26,8 @@
       view = await workspace.backend!.getSettings();
       model = view.model ?? '';
       baseUrl = view.base_url ?? '';
+      kernel = view.kernel ?? 'off';
+      kernelCwd = view.kernel_cwd ?? '';
     } catch (error) {
       status = `Settings unavailable: ${error instanceof Error ? error.message : error}`;
     }
@@ -37,11 +41,15 @@
     if (baseUrl !== (view?.base_url ?? '')) changes.base_url = baseUrl.trim();
     if (apiKey) changes.api_key = apiKey.trim();
     if (adsToken) changes.ads_token = adsToken.trim();
+    if (kernel !== (view?.kernel ?? 'off')) changes.kernel = kernel;
+    if (kernelCwd !== (view?.kernel_cwd ?? '')) changes.kernel_cwd = kernelCwd.trim();
     if (!Object.keys(changes).length) { status = 'Nothing changed.'; return; }
     saving = true;
     try {
       view = await workspace.backend!.saveSettings(changes);
       apiKey = adsToken = '';
+      kernel = view.kernel ?? 'off';
+      kernelCwd = view.kernel_cwd ?? '';
       await workspace.refreshServices();
       status = view.problems?.length ? `Saved, but: ${view.problems.join('; ')}` : 'Saved ✓';
     } catch (error) {
@@ -83,6 +91,16 @@
     {#if view?.sources?.ads_token === 'settings'}<button type="button" class="text-button icon" title="Remove the token saved here (falls back to the server's environment, if set)" aria-label="Remove saved ADS token" onclick={() => save({ ads_token: '' })}>×</button>{/if}
   </div>
   <p class="muted">Get one at <a href="https://ui.adsabs.harvard.edu/user/settings/token" target="_blank" rel="noreferrer">ui.adsabs.harvard.edu</a>.</p>
+
+  <label for="set-kernel">Analysis kernel (run_kernel)</label>
+  <select id="set-kernel" bind:value={kernel}>
+    <option value="off">Off</option>
+    {#each view?.kernels ?? [] as k}<option value={k.name}>{k.display_name} ({k.name})</option>{/each}
+    {#if kernel !== 'off' && !(view?.kernels ?? []).some((k) => k.name === kernel)}<option value={kernel}>{kernel} (not installed)</option>{/if}
+  </select>
+  <label for="set-kernel-cwd">Kernel working directory</label>
+  <input id="set-kernel-cwd" bind:value={kernelCwd} placeholder="~/.cache/scoop/kernel" />
+  <p class="muted">{from('kernel') === 'from environment' ? 'From SCOOP_KERNEL. ' : ''}The agent's code runs in this Jupyter kernel with your packages and files: <strong>not sandboxed</strong>. Variables are kept between calls; changing the kernel or directory starts a fresh one. Add an environment with <code>python -m ipykernel install --user --name &lt;name&gt;</code> inside it.{view?.kernel && view.kernel_on === false ? ' The chosen kernel did not start; see the message below.' : ''}</p>
 
   <div class="settings-actions">
     <span class="muted" role="status">{status}</span>

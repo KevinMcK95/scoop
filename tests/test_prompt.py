@@ -5,6 +5,7 @@ try:
     from scoop.chat.prompt import WORKSPACE_PROMPT
     from scoop.chat.visual import build_map_tools
     from scoop.chat.python_tool import build_python_tools
+    from scoop.chat.kernel_tool import build_kernel_tools
     from scoop.chat.web_tools import build_web_tools
     from scoop.literature.tools import build_ads_tools
 except ModuleNotFoundError as exc:
@@ -23,6 +24,7 @@ class PromptTests(unittest.TestCase):
         names |= {t.name for t in build_ads_tools(object())}
         names |= {t.name for t in build_web_tools(object(), object())}
         names |= {t.name for t in build_python_tools(object())}
+        names |= {t.name for t in build_kernel_tools(object())}
         missing = [n for n in sorted(names) if not re.search(rf"\b{n}\b", WORKSPACE_PROMPT)]
         self.assertEqual(missing, [], "describe these tools in scoop/chat/prompt.py")
 

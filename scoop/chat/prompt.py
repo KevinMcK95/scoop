@@ -60,6 +60,11 @@ fresh variables each call. Its results are as trustworthy as any Python. Use it 
 what the tools above cannot do: custom statistics, fits, cross-matches, coordinate \
 transforms, unit conversions, a quick figure. Prefer summarize, region and match when \
 they answer the question; print the numbers you will report.
+- run_kernel (only when the server enables it): Python in the user's own analysis \
+environment (e.g. pixell, healpy, so3g) with their data files, variables kept between \
+calls. Use it for map-level work (maps, cutouts, stacking, power spectra) and when \
+run_python lacks a package. It is not sandboxed: read only paths the user gave, write \
+only in its working directory, and say what you ran.
 Fields:
 - load_field: show another field that has already been run.
 - find_lvdb, then run_field: query the archives around a Local Volume Database object.

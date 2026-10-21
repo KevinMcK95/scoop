@@ -280,6 +280,24 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(list(sandbox.tables), ["gaia"])
         self.assertEqual(model.calls[1][-1].content[1]["image_url"]["url"], "data:image/png;base64,iVBOR")
 
+    def test_run_kernel_is_offered_only_when_a_kernel_is_given(self):
+        ask = AIMessage(content="", tool_calls=[{"name": "run_kernel", "args": {"code": "imap.shape"},
+                                                 "id": "k-1", "type": "tool_call"}])
+        model = ScriptedModel(ask, AIMessage(content="The map is 3 x 1000 x 2000."))
+
+        class Kernel:
+            async def run(self, code, tables):
+                return {"output": "(3, 1000, 2000)\n", "error": None, "figures": [], "figure_count": 0}
+
+        stream = events(self.post_chat(TestClient(create_app(model=model, kernel=Kernel()))))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual((result["name"], result["status"], result["output"]), ("run_kernel", "success", "(3, 1000, 2000)\n"))
+
+        model = ScriptedModel(ask, AIMessage(content="No kernel."))
+        stream = events(self.post_chat(TestClient(create_app(model=model))))
+        result = next(e for e in stream if e["type"] == "tool_result")
+        self.assertEqual(result["status"], "error")
+
     def test_figures_are_stored_and_served_by_url(self):
         from scoop.server.figures import FigureStore
 

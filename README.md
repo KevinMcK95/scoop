@@ -208,6 +208,19 @@ matplotlib and scikit-learn in Pyodide (Python in WebAssembly), with the field's
 tables and no network or file access. It needs macOS and Node; set it up once with
 `cd sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/sandbox.py`](scoop/sandbox.py).
 
+For map-level work (pixell, healpy, so3g and your own data files), `run_kernel` runs the
+agent's code in a persistent Jupyter kernel in your own environment, keeping variables
+between calls. It is **not sandboxed** and is off until you choose a kernel in ⚙ Settings (or set
+`SCOOP_KERNEL`, which Settings overrides):
+
+```bash
+pip install -e '.[kernel]'
+# once, inside the analysis environment:  python -m ipykernel install --user --name so
+python -m scoop.server   # then ⚙ Settings → Analysis kernel: so
+```
+
+See [`scoop/kernel.py`](scoop/kernel.py).
+
 See the [workspace architecture](docs/web_workspace.md), the
 [map and agent interaction design](docs/map_interaction.md), the
 [shared ADS service](docs/ads_service.md), and the

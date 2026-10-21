@@ -1,4 +1,4 @@
-"""Model and archive credentials, set from the workspace's Settings tab.
+"""Model and archive credentials and the analysis kernel, set from the workspace's Settings tab.
 
 A value saved from the tab wins; otherwise the server's environment value at
 startup is used; otherwise the setting is off. Removing a saved value falls
@@ -14,9 +14,10 @@ import re
 from pathlib import Path
 
 DEFAULT_PATH = Path.home() / ".config" / "scoop" / "settings.json"
-FIELDS = ("model", "base_url", "api_key", "ads_token")
+FIELDS = ("model", "base_url", "api_key", "ads_token", "kernel", "kernel_cwd")
 SECRETS = ("api_key", "ads_token")
 MODEL_ID = re.compile(r"[\w.:/@+-]{1,120}")
+KERNEL_NAME = re.compile(r"[\w.-]{1,64}")  # a Jupyter kernel spec name
 
 
 def _validate(name: str, value: str) -> None:
@@ -26,6 +27,10 @@ def _validate(name: str, value: str) -> None:
         raise ValueError("model must be a model id like openai/gpt-6-luna")
     if name == "base_url" and value and not re.fullmatch(r"https://[^\s/]+(/[^\s]*)?", value):
         raise ValueError("base_url must be an https:// URL")
+    if name == "kernel" and value and not KERNEL_NAME.fullmatch(value):
+        raise ValueError("kernel must be a Jupyter kernel name like so or python3, or off")
+    if name == "kernel_cwd" and value and not value.startswith(("/", "~")):
+        raise ValueError("kernel_cwd must be an absolute path (or start with ~)")
 
 
 class Settings:

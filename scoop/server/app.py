@@ -33,6 +33,7 @@ from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
 from ..chat.python_tool import build_python_tools
+from ..chat.kernel_tool import build_kernel_tools
 from ..chat.web_tools import build_web_tools
 from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
 from ..fields import FieldStore, field_region
@@ -166,18 +167,23 @@ def create_app(
     fetch_image: Any = None,
     web: tuple[Any, Any] | None = None,
     python: Any = None,
+    kernel: Any = None,
     figure_store: Any = None,
     trace_store: Any = None,
     settings: Any = None,
     costs: Any = None,
     make_model: Callable[[Any], Any] | None = None,
     make_ads: Callable[[Any], Any] | None = None,
+    make_kernel: Callable[[Any], Any] | None = None,
+    list_kernels: Callable[[], list[dict]] | None = None,
 ) -> Starlette:
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
     a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
+    ``kernel`` an AnalysisKernel in the user's own environment (off unless given, or made
+    from settings by ``make_kernel``; ``list_kernels`` names the kernels Settings may choose);
     ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
     ``trace_store`` keeps developer traces of each turn for the Debug tab. With
     ``audit_path``, each turn appends one JSON line (no message text). ``costs`` is a
@@ -188,10 +194,15 @@ def create_app(
     costs = costs if costs is not None else CostTracker()
     locks: dict[str, asyncio.Lock] = {}
     # The model and ADS client can be replaced from the Settings tab while running.
-    live = {"model": model, "ads": ads_client}
+    live = {"model": model, "ads": ads_client, "kernel": kernel}
     if settings is not None:
         live["model"] = model if model is not None else (make_model(settings) if make_model else None)
         live["ads"] = ads_client if ads_client is not None else (make_ads(settings) if make_ads else None)
+        if kernel is None and make_kernel:
+            try:
+                live["kernel"] = make_kernel(settings)
+            except Exception as exc:  # e.g. the saved kernel was uninstalled
+                print(f"kernel: off ({exc})")
 
     def ads_tools() -> list:
         if live["ads"] is None:
@@ -212,7 +223,7 @@ def create_app(
     async def get_settings(request: Request) -> JSONResponse:
         if settings is None:
             return JSONResponse({"error": "Settings are not available."}, status_code=404)
-        return JSONResponse(settings.public())
+        return JSONResponse({**settings.public(), "kernels": list_kernels() if list_kernels else []})
 
     async def put_settings(request: Request) -> JSONResponse:
         if settings is None:
@@ -220,10 +231,24 @@ def create_app(
         if not same_site(request) or request.headers.get("content-type", "").split(";")[0] != "application/json":
             return JSONResponse({"error": "Settings can only be changed from the SCOOP workspace."}, status_code=403)
         try:
-            settings.update(await request.json())
+            changes = await request.json()
+            kernels = {k["name"] for k in list_kernels()} if list_kernels else set()
+            if isinstance(changes, dict) and changes.get("kernel") not in (None, "", "off", *kernels):
+                raise ValueError(f"no installed Jupyter kernel named {changes['kernel']!r}")
+            before = (settings.get("kernel"), settings.get("kernel_cwd"))
+            settings.update(changes)
         except (ValueError, TypeError) as exc:
             return _bad_request(f"Invalid settings: {exc}")
         problems = []
+        if make_kernel and (settings.get("kernel"), settings.get("kernel_cwd")) != before:
+            # A new kernel or working directory: the old kernel and its variables end.
+            if live["kernel"] is not None:
+                await live["kernel"].close()
+            try:
+                live["kernel"] = make_kernel(settings)
+            except Exception as exc:
+                live["kernel"] = None
+                problems.append(f"kernel: {exc}")
         for name, make in (("model", make_model), ("ads", make_ads)):
             try:
                 live[name] = make(settings) if make else live[name]
@@ -231,7 +256,8 @@ def create_app(
                 live[name] = None
                 problems.append(f"{name}: {type(exc).__name__}: {exc}")
         return JSONResponse({**settings.public(), "chat": live["model"] is not None,
-                             "literature": live["ads"] is not None, "problems": problems})
+                             "literature": live["ads"] is not None, "kernel_on": live["kernel"] is not None,
+                             "kernels": list_kernels() if list_kernels else [], "problems": problems})
 
     def model_id() -> str:
         """The model id turns are priced against: what Settings holds, else what the client reports."""
@@ -430,6 +456,7 @@ def create_app(
         region_tools = build_region_tools(jobs=jobs, resolver=resolver)
         tools = [*map_tools, *region_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, current_field) if python else []),
+                 *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]
         graph = build_chat_graph(model, tools, checkpointer=checkpointer,
                                  system_prompt=WORKSPACE_PROMPT)
