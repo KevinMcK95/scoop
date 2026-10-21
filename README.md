@@ -339,8 +339,9 @@ scoop chat   # interactive session
 
 ### What runs today
 
-SCOOP has **five agents** (a model working in a loop with tools). Four serve the
-workspace; the dataset scout runs on its own. Everything else (the field pipeline, data-source
+SCOOP has **six agents** (a model working in a loop with tools). Four serve the
+workspace, the triage agent runs in the workspace server on a timer, and the dataset
+scout runs on its own. Everything else (the field pipeline, data-source
 plug-ins, budgets, Gaia sizing and health checks, evaluation) is ordinary code the
 agents call or that checks them.
 
@@ -359,10 +360,11 @@ flowchart LR
     X --> EQ[["exoplanets/ archive queries<br/>(NASA Exoplanet Archive, TESS, TIC, MAST)"]]
     EQ -->|"reused as plug-ins"| J
     SC["Dataset scout<br/>(monthly, GitHub Actions)"] -->|"draft skills and sources"| PR["Branch / PR<br/>for review"]
-    TR["/triage<br/>(Claude Code skill, on request;<br/>not a SCOOP agent)"] -->|"tested fixes"| PR
-    FS -.->|"failed runs, audit log"| TR
+    FS -.->|"failures, traces, failed runs"| TA["Triage agent<br/>(hourly, when idle)"]
+    TA -->|"suggested changes<br/>(report, read-only)"| TR["/triage<br/>(Claude Code skill, on request)"]
+    TR -->|"tested fixes"| PR
     classDef agent fill:#fde7c8,stroke:#c77700,stroke-width:2px,color:#000
-    class C,D,P,X,SC agent
+    class C,D,P,X,SC,TA agent
 ```
 
 | Agent | Runs | Built on | Started by |
@@ -371,11 +373,14 @@ flowchart LR
 | **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/data_agent.py`](scoop/chat/data_agent.py)) | the chat agent's `ask_data_agent` |
 | **Proper-motion agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/pm_agent.py`](scoop/chat/pm_agent.py)) | the chat agent's `ask_pm_agent` |
 | **Exoplanet agent** | in the workspace, inside a chat turn (also standalone) | [`agentbook`](agentbook/loop.py) ([`exoplanets/agent.py`](exoplanets/agent.py), chat tool [`scoop/chat/exoplanet_agent.py`](scoop/chat/exoplanet_agent.py)) | the chat agent's `ask_exoplanet_agent`; Python, its benchmark |
+| **Triage agent** | in the workspace server, on a timer | LangGraph ([`scoop/triage_agent.py`](scoop/triage_agent.py)) | at most hourly (`--triage-every`), after 10 idle minutes, when there are new failures |
 | **Dataset scout** | GitHub Actions, monthly | `agentbook` ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
 
-No agent fixes SCOOP automatically when something fails: the data agent reads failed
-runs and reports them during a turn, and `/triage` turns the recorded failures into
-fixes when a person runs it.
+No agent changes SCOOP's code: the data agent reads failed runs and reports them during
+a turn; the triage agent reads new failures, the traces of the turns they happened in
+and the source (read-only) and writes suggested changes, each with its cause (file and
+line), a sketch of the fix and a test (reports beside the traces, listed at
+`/api/triage`); `/triage` in Claude Code turns accepted suggestions into tested fixes.
 
 #### The workspace agents
 
@@ -438,8 +443,10 @@ Around them:
 
 ```mermaid
 flowchart LR
-    A[("Audit log: failed calls with arguments,<br/>incl. the data agent's")] --> T["triage<br/>(Claude Code skill)"]
-    R[("Failed field runs<br/>log + traceback")] --> T
+    A[("Audit log: failed calls with arguments,<br/>incl. the sub-agents'")] --> TA["Triage agent<br/>(hourly, when idle)"]
+    R[("Failed field runs<br/>log + traceback")] --> TA
+    TRC[("Traces of the failing turns")] --> TA
+    TA -->|"suggested changes"| T["/triage<br/>(Claude Code skill)"]
     T -->|"reproduce, test, fix"| B["Branch / PR for review"]
     ADS[("ADS / arXiv<br/>data-release papers")] --> SC["Dataset scout agent<br/>(monthly)"]
     SC -->|"draft skills, sources, probes"| B

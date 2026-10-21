@@ -4,8 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import triage_failures as tri  # noqa: E402
+from scoop import triage as tri  # noqa: E402
 
 
 class TriageTests(unittest.TestCase):

@@ -8,6 +8,7 @@ agent's tools. View commands are published as artifacts and only become
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import json
 import re
@@ -193,6 +194,8 @@ def create_app(
     make_kernel: Callable[[Any], Any] | None = None,
     list_kernels: Callable[[], list[dict]] | None = None,
     list_models: Callable[[str, str | None], Any] | None = None,
+    triage_dir: Path | None = None,
+    triage_every_s: float = 0,
 ) -> Starlette:
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
@@ -462,7 +465,32 @@ def create_app(
             return _bad_request(f"Invalid search: {exc}")
         return JSONResponse(result_payload(await ads_client.search(search)))
 
+    # The triage agent: on a timer, when the workspace is idle, it turns new failures into
+    # suggested changes (reports under triage_dir, owner-only, beside the traces).
+    triager = None
+    if triage_dir is not None and triage_every_s > 0:
+        from ..triage_agent import TriageScheduler
+        triager = TriageScheduler(model=lambda: live["model"], audit_path=audit_path,
+                                  fields_dir=Path(fields.root) if fields else None,
+                                  trace_dir=getattr(trace_store, "directory", None), out_dir=triage_dir,
+                                  every_s=triage_every_s)
+
+    async def list_triage(request: Request) -> JSONResponse:
+        if triager is None:
+            return JSONResponse({"enabled": False, "reports": []})
+        state = triager.state()
+        return JSONResponse({"enabled": True, "every_s": triager.every_s, "last_check": state.get("last_check"),
+                             "reports": triager.reports()})
+
+    async def get_triage(request: Request) -> Response:
+        text = triager.report(request.path_params["name"]) if triager else None
+        if text is None:
+            return JSONResponse({"error": "No such report."}, status_code=404)
+        return Response(text, media_type="text/markdown; charset=utf-8")
+
     async def chat(request: Request) -> StreamingResponse | JSONResponse:
+        if triager is not None:
+            triager.note_activity()  # the triage agent waits for the workspace to be idle
         model = live["model"]
         if model is None:
             return JSONResponse({"error": "No chat model is configured. Set one in Settings."},
@@ -641,6 +669,8 @@ def create_app(
                     actual = costs.confirm_usage(request_id, model_id(), usage) if tracked and usage else None
                     if tracked and actual is None:
                         costs.forget(request_id)
+                    if triager is not None:
+                        triager.note_activity()  # idle is measured from the end of the last turn
                     # Written however the turn ends, so failures are always diagnosable.
                     if audit_path is not None:
                         record = _audit_record(request_id, thread_id, started, sent, usage, error,
@@ -662,7 +692,18 @@ def create_app(
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache"})
 
-    return Starlette(routes=[
+    @contextlib.asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(triager.loop()) if triager is not None else None
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+
+    return Starlette(lifespan=lifespan, routes=[
+        Route("/api/triage", list_triage),
+        Route("/api/triage/{name}", get_triage),
         Route("/api/health", health),
         Route("/api/settings", get_settings),
         Route("/api/settings", put_settings, methods=["POST"]),

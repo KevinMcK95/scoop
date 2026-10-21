@@ -338,3 +338,18 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   chat tests (it failed the light environment's suite).
 - `README.md`: the exoplanet agent is in the workspace (four agents there, the scout
   outside).
+
+## A triage agent on a timer
+
+- `scoop/triage_agent.py` (new): the triage agent and its scheduler. The workspace server
+  checks every 5 minutes; at most once an hour (`--triage-every MINUTES`, 0 off), after
+  10 idle minutes and only for failure groups it hasn't reported, it reads the failures,
+  the traces of their turns, failed runs and SCOOP's source (read-only tools; secrets,
+  `.git`, `node_modules` and outputs are off limits) and writes a report of suggested
+  changes beside the traces (`<settings dir>/triage/`, owner-only), listed at
+  `GET /api/triage`. A run that doesn't finish leaves its groups for the next one.
+- `scoop/triage.py`: the grouping from `scripts/triage_failures.py`, now a library (the
+  script wraps it); failures carry their thread and request ids, so the trace is found.
+- `scoop/server/app.py` (`triage_dir`, `triage_every_s`, lifespan task, routes, activity
+  notes), `scoop/server/__main__.py` (`--triage-every`). `tests/test_triage_agent.py` (new).
+- `README.md`: six agents.
