@@ -129,13 +129,32 @@ class ConstraintFlowTests(unittest.TestCase):
         self.assertFalse(result.checked)
         self.assertIn("Highlight id Kepler-442 was not returned by any tool", result.report.problems[0])
 
-    def test_a_vague_constraint_is_sent_back_to_the_user_to_define(self):
-        clarify = json.dumps({"clarify": {"constraints": ["habitable"], "question": "How do you define habitable? "
-                              "For example a range of insolation. Or I can suggest one from the literature."}})
-        result = ask("Add confirmed planet hosts with constraints: habitable.", FakeModel([clarify]), registry())
+    CLARIFY = json.dumps({"clarify": {"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 7}})
+
+    def test_a_vague_constraint_offers_a_definition_or_claims_with_the_planet_count(self):
+        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
+        result = ask("Add confirmed planet hosts with constraints: habitable.", model,
+                     registry(planets=lambda hostname: PLANETS))
         self.assertEqual(result.kind, "clarify")
+        self.assertTrue(result.checked, result.report.summary())
+        self.assertTrue(result.text.startswith("How should I select “habitable” planets?"))
+        self.assertIn("1. **By a definition:** give me a range (e.g. of equilibrium temperature or insolation)", result.text)
+        self.assertIn("2. **By claims in the literature:** find which of the 7 planets in this field", result.text)
+
+    def test_a_count_not_taken_from_a_tool_is_sent_back(self):
+        model = FakeModel([self.CLARIFY, call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
+        result = ask("Add confirmed planet hosts with constraints: habitable.", model,
+                     registry(planets=lambda hostname: PLANETS))
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("Count the objects with a tool", model.requests[1]["messages"][-1]["content"])
         self.assertTrue(result.checked)
-        self.assertTrue(result.text.startswith("How do you define habitable?"))
+
+    def test_tic_constraints_are_about_stars(self):
+        from exoplanets.agent import render_clarify
+        text = render_clarify({"constraints": ["M dwarfs"], "table": "tic", "count": 1})
+        self.assertIn("How should I select “M dwarfs” stars?", text)
+        self.assertIn("e.g. of Teff, radius or log g", text)
+        self.assertIn("which of the 1 star in this field", text)
 
     # A made-up paper (fictional bibcode), so no real abstract is misquoted.
     HZ = {"bibcode": "2099TestJ...1....1A", "title": "A test habitable zone",
@@ -154,6 +173,21 @@ class ConstraintFlowTests(unittest.TestCase):
         self.assertTrue(result.checked, result.report.summary())
         self.assertIn("insolation 0.3-1.2 Earth (archive), suggested from 2099TestJ...1....1A", result.text)
         self.assertIn("> “the habitable zone as insolation from 0.3 to 1.2", result.text)
+
+    def test_a_range_the_user_gave_is_restated_without_a_reference(self):
+        # Found live: "Teq from 300 K to 500 K" came back "suggested from" a paper.
+        given = {"constraint": "Teq 300-500 K", "means": "equilibrium temperature 300-500 K", "uses": "archive"}
+        referenced = {**given, "suggested": True, "source": "2099TestJ...1....1A",
+                      "quote": "the habitable zone as insolation from 0.3 to 1.2 times the Earth's"}
+        proposal = lambda c: json.dumps({"proposal": {"criteria": [c], "literature_planets": 0, "question": "Is this okay?"}})
+        model = FakeModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal(referenced), proposal(given)])
+        result = ask("Show me the planets with equilibrium temperature from 300 K to 500 K", model,
+                     registry(abstract=lambda bibcode: self.HZ))
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("the user gave this range and did not ask for a suggestion",
+                      model.requests[2]["messages"][-1]["content"])
+        self.assertTrue(result.checked)
+        self.assertNotIn("suggested from", result.text)
 
     def test_a_suggested_definition_without_a_reference_fails(self):
         result = self.suggest({k: v for k, v in self.SUGGESTION.items() if k not in ("source", "quote")})

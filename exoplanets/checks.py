@@ -333,9 +333,11 @@ def render_claims(claims: list[dict]) -> str:
 
 
 # ------------------------------------------------------------------ proposals and highlights
-# Besides claims, an answer can ask the user to define a vague constraint ("habitable"):
+# Besides claims, an answer can ask the user how to treat a vague constraint ("habitable"):
+# by a definition (a range of archive values) or by claims in the literature (papers about
+# each object). The agent counts the objects first; the wording is rendered in code.
 #
-#   {"clarify": {"constraints": ["habitable"], "question": "How do you define habitable? ..."}}
+#   {"clarify": {"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 7}}
 #
 # or propose concrete criteria, to confirm before they are applied. A criterion the agent
 # suggested from the literature (because the user asked for a suggestion) carries its
@@ -368,10 +370,30 @@ def parse_answer(answer: str) -> dict | None:
     return None
 
 
-def check_clarify(clarify) -> list[str]:
-    if not isinstance(clarify, dict) or not clarify.get("constraints") or not clarify.get("question"):
-        return ['A clarification must be {"clarify": {"constraints": [...], "question": "How do you define ...?"}}.']
+def check_clarify(clarify, messages: list[dict] | None = None) -> list[str]:
+    """A clarification names the constraints and the table, and gives the number of objects
+    in it, counted with a tool (so the user knows what checking claims for each would cost)."""
+    if not isinstance(clarify, dict) or not clarify.get("constraints") \
+            or clarify.get("table") not in HIGHLIGHT_TABLES or not isinstance(clarify.get("count"), int):
+        return ['A clarification must be {"clarify": {"constraints": [...], "table": one of '
+                f'{", ".join(HIGHLIGHT_TABLES)}, "count": the number of objects in that table in this '
+                'field, from a tool}}.']
+    if clarify["count"] and not tool_results_by_name(messages or []):
+        return ["Count the objects with a tool (e.g. exoplanet_cone_search over the field) before "
+                "giving count."]
     return []
+
+
+# Words with which a user asks for a definition instead of giving one.
+SUGGEST_RE = re.compile(r"\b(?:suggest\w*|recommend\w*|propos\w*|no idea|not sure|don'?t know|"
+                        r"do not know|from the literature|in the literature|you (?:choose|decide|pick))\b", re.I)
+
+
+def user_asked_for_suggestion(messages: list[dict]) -> bool:
+    """Did the user's own words (not tool results or the checks' retry notes) ask for one?"""
+    texts = [m["content"] for m in messages if m["role"] == "user" and isinstance(m["content"], str)
+             and not m["content"].startswith("Your answer failed the checks")]
+    return any(SUGGEST_RE.search(t) for t in texts)
 
 
 def check_proposal(proposal, messages: list[dict] | None = None) -> list[str]:
@@ -386,6 +408,9 @@ def check_proposal(proposal, messages: list[dict] | None = None) -> list[str]:
             problems.append(f"Criterion {i} needs the constraint and what it means concretely.")
         elif c.get("uses") not in ("archive", "literature"):
             problems.append(f"Criterion {i} ({c['constraint']}): say whether it uses the archive or literature.")
+        elif c.get("suggested") and messages is not None and not user_asked_for_suggestion(messages):
+            problems.append(f"Criterion {i} ({c['constraint']}): the user gave this range and did not ask "
+                            "for a suggestion. Restate it as they gave it: no suggested, source or quote.")
         elif c.get("suggested"):
             if not (c.get("source") and c.get("quote")):
                 problems.append(f"Criterion {i} ({c['constraint']}) is your suggestion: give the one paper it "

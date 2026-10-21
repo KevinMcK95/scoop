@@ -51,16 +51,22 @@ papers': a claim says what its quote says.
 Constraints. A request may come with constraints for a table in the user's field. Never \
 apply them before the user confirms, and never invent a definition:
 - A constraint that is already a variable with a number range ("radius < 2 Earth radii", \
-"Teq 200-300 K", "Tmag < 12"): restate it as a proposal and ask the user to confirm.
-- Any other constraint ("habitable", "M dwarfs", "atmosphere claimed"): ask the user to \
-define it, suggesting what kind of definition would work, and nothing else:
-{{"clarify": {{"constraints": ["habitable"], "question": "How do you define habitable? For \
-example a range of insolation or equilibrium temperature. Or I can suggest one from the \
-literature."}}}}
-- If the user asks for a suggestion or has no definition: search the literature, read the \
+"Teq 200-300 K", "Tmag < 12"): restate it as a proposal and ask the user to confirm. The user \
+chose that range: no "suggested", no source or quote, and no literature search.
+- Any other constraint ("habitable", "M dwarfs", "young"): do not choose for the user. First \
+count the objects it applies to in the field with a tool (planets for exoplanet_hosts, \
+TOIs for tess_tois, stars for tic), then reply with only:
+{{"clarify": {{"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 7}}}}
+The user is then asked to choose: by a definition (a range of archive values, which they \
+give or ask you to suggest), or by claims in the literature (which objects papers describe \
+that way, reading each one's papers).
+- By a definition, and the user asks for a suggestion: search the literature, read the \
 abstract, and propose one definition from one paper, with that paper as source and the \
 defining words as quote, e.g. "habitable zone defined by insolation from X to Y" (source), \
-and ask "Is this okay?".
+and ask "Is this okay?". Such a criterion uses "archive": values from a tool decide it.
+- By claims: propose a criterion with "uses": "literature" (e.g. "papers describe the planet \
+as habitable or potentially habitable") and literature_planets = the count. Once confirmed, \
+each object that passes needs a claim quoting a paper about it, its hedges kept.
 A proposal looks like this; "suggested", "source" and "quote" only for a literature suggestion:
 {{"proposal": {{"criteria": [{{"constraint": "...", "means": "<variable> <range>", "uses": \
 "archive", "suggested": true, "source": "<bibcode>", "quote": "<words from its abstract>"}}], \
@@ -100,12 +106,30 @@ def check(answer: str, messages: list[dict]) -> tuple[str, ClaimsReport, dict]:
     """Which kind of answer this is, its checks, and the parsed JSON."""
     data = parse_answer(answer)
     if data is not None and "clarify" in data:
-        return "clarify", ClaimsReport([{"clarify": True}], check_clarify(data["clarify"])), data
+        return "clarify", ClaimsReport([{"clarify": True}], check_clarify(data["clarify"], messages)), data
     if data is not None and "proposal" in data:
         return "proposal", ClaimsReport([{"proposal": True}], check_proposal(data["proposal"], messages)), data
     report = check_claims(answer, messages)
     report.problems += check_highlight((data or {}).get("highlight"), messages)
     return ("result" if data else "invalid"), report, data or {}
+
+
+NOUNS = {"exoplanet_hosts": ("planet", "planets"), "tess_tois": ("TOI", "TOIs"), "tic": ("star", "stars")}
+RANGES = {"exoplanet_hosts": "equilibrium temperature or insolation", "tess_tois": "equilibrium temperature or radius",
+          "tic": "Teff, radius or log g"}
+
+
+def render_clarify(clarify: dict) -> str:
+    """The two ways to treat a vague constraint, worded the same every time."""
+    what = " and ".join(f"“{c}”" for c in clarify["constraints"])
+    one, many = NOUNS[clarify["table"]]
+    n = clarify["count"]
+    count = f"{n} {one if n == 1 else many}"
+    return (f"How should I select {what} {many}?\n"
+            f"1. **By a definition:** give me a range (e.g. of {RANGES[clarify['table']]}), or ask me "
+            f"to suggest one from the literature (one reference, quoted).\n"
+            f"2. **By claims in the literature:** find which of the {count} in this field papers "
+            f"describe that way. This reads each one's papers: a few model calls per {one}.")
 
 
 def render_proposal(proposal: dict) -> str:
@@ -153,7 +177,7 @@ def ask(question: str, model: Model, tools: ToolRegistry | None = None, max_step
         kind, report, data = check(run.text, run.messages)
         attempts += 1
     if kind == "clarify" and report.ok:
-        text = data["clarify"]["question"]
+        text = render_clarify(data["clarify"])
     elif kind == "proposal" and report.ok:
         text = render_proposal(data["proposal"])
     elif data.get("claims"):

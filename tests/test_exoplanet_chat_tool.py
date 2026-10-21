@@ -39,11 +39,12 @@ class ExoplanetChatToolTests(unittest.TestCase):
         self.assertIn("- Bibcode 2021PSJ.....2....1A was not returned", relay_text(bad))
 
     def test_a_vague_constraint_comes_back_as_the_agents_question(self):
-        clarify = json.dumps({"clarify": {"constraints": ["habitable"], "question": "How do you define habitable?"}})
+        clarify = json.dumps({"clarify": {"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 0}})
         tool = build_exoplanet_tool(field=FIELD, make_model=lambda: FakeModel([clarify]))
         command = invoke(tool, question="Add confirmed planet hosts with constraints: habitable.")
         message = command.update["messages"][0]
-        self.assertIn("How do you define habitable?", message.content)
+        self.assertIn("How should I select “habitable” planets?", message.content)
+        self.assertIn("2. **By claims in the literature:**", message.content)
         self.assertIn("word for word", message.content)
         self.assertNotIn("Highlighted", message.content)
 
