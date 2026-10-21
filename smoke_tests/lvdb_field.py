@@ -298,45 +298,43 @@ ESA_TAP = "https://gea.esac.esa.int/tap-server/tap"
 # run only a couple per IP at a time: abandoned counts over the Galactic plane queued every
 # later query behind them for hours (seen 2026-10-21). So every job this run starts is
 # aborted when the run stops waiting for it -- on an error, a retry, or SIGTERM.
-_open_jobs: set = set()
+_open_jobs: dict = {}  # job id -> server, for jobs this run is still waiting on
 
 
-def _abort(job) -> None:
-    try:
-        job.abort()
-    except Exception:
-        pass
+def _abort(server: str, job_id: str) -> None:
+    # By id over UWS: astroquery's job.abort() refuses when its cached phase is stale.
+    gaia_status.abort(server, job_id)
 
 
-def _tap_async(launch) -> Table:
+def _tap_async(server: str, launch) -> Table:
     job = launch()
-    _open_jobs.add(job)
+    _open_jobs[job.jobid] = server
     try:
         return job.get_results()
     except BaseException:
-        _abort(job)
+        _abort(server, job.jobid)
         raise
     finally:
-        _open_jobs.discard(job)
+        _open_jobs.pop(job.jobid, None)
 
 
 def _abort_open_jobs(signum, frame):
-    for job in list(_open_jobs):
-        _abort(job)
+    for job_id, server in list(_open_jobs.items()):
+        _abort(server, job_id)
     os._exit(128 + signum)
 
 
 def _heidelberg(adql: str, what: str):
     from astroquery.utils.tap.core import TapPlus
     tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
-    return with_retries(lambda: _tap_async(lambda: tap.launch_job_async(adql, maxrec=10_000_000, background=True, name=gaia_status.job_name())),
+    return with_retries(lambda: _tap_async("heidelberg", lambda: tap.launch_job_async(adql, maxrec=10_000_000, background=True, name=gaia_status.job_name())),
                         f"Heidelberg {what}", tries=3), "Heidelberg ARI mirror"
 
 
 def _esa(adql: str, what: str):
     from astroquery.gaia import Gaia
     Gaia.ROW_LIMIT = -1
-    return with_retries(lambda: _tap_async(lambda: Gaia.launch_job_async(adql, background=True, name=gaia_status.job_name())),
+    return with_retries(lambda: _tap_async("esa", lambda: Gaia.launch_job_async(adql, background=True, name=gaia_status.job_name())),
                         f"ESA {what}", tries=3), "ESA Gaia archive"
 
 

@@ -38,9 +38,10 @@
     await tick();
     await workspace.send();
   }
+  // The sky map opens on whatever is loaded (nothing after a new search): a field is
+  // chosen from the Layers menu or by a question, never the alphabetically first one.
   function explore() {
     enterWorkspace();
-    if (!workspace.field && workspace.fieldKeys.length) void workspace.loadField(workspace.fieldKeys[0]);
   }
   function continueConversation(id: string) {
     workspace.openConversation(id);

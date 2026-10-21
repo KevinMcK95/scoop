@@ -639,6 +639,18 @@ class FieldStore:
         extra.write_text(json.dumps(stored))
 
 
+def finite_json(obj):
+    """A copy with NaN and infinities as None: browsers' JSON.parse rejects them (an LVDB
+    object without a proper motion, NGC 300 on 2026-10-21, failed to load)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: finite_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [finite_json(v) for v in obj]
+    return obj
+
+
 def field_region(field: dict) -> dict:
     """The field's queried area as a circle: target center, out to the farthest region vertex."""
     target = field["target"]

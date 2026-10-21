@@ -238,3 +238,16 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   jobs only); failed counts include that diagnosis and a "do not repeat unchanged" note;
   regions reaching |b| < 15° (≥ 1 deg²) get a crowding warning. Prompt: a failing or slow
   request is diagnosed and acted on, never repeated unchanged.
+
+## Fields with NaN load; fresh starts have no field
+
+- `scoop/server/app.py`, `scoop/fields.py` (`finite_json`), `smoke_tests/sky_viewer.py`:
+  fields and chat events are sent with NaN / infinities as null (strict JSON). An LVDB
+  object without a proper motion (NGC 300) wrote `"pmra":NaN`, which the browser's
+  JSON.parse rejected, so the field never loaded.
+- `web/src/lib/components/ChatPanel.svelte`: ＋ is a new search (new conversation, no
+  field), as the New search button; `web/src/lib/workspace/state.svelte.ts`: a new search
+  looks at the whole sky; `web/src/routes/+page.svelte`: "Open the sky map" no longer
+  loads the alphabetically first field.
+- `smoke_tests/lvdb_field.py`: abandoned TAP jobs are aborted by id over UWS (astroquery's
+  `job.abort()` refuses when its cached phase is stale).

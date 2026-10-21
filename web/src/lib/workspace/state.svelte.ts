@@ -6,6 +6,9 @@ import { deleteConversation, loadConversations, saveConversation, titleOf, type 
 import { figuresOf } from '../chat/figures';
 import type { Trace } from '../chat/trace';
 import { DEFAULT_SURVEY, initialViewport } from './contracts';
+
+// Where a fresh start looks: the whole sky, centred on the Galactic centre.
+const ALL_SKY = { ra: 266.405, dec: -28.936, fov: 180 };
 import { decodeView, encodeView } from './viewlink';
 import type { ActionRequest, ChatMessage, Publication, Scene, SkyViewport } from './contracts';
 
@@ -512,8 +515,9 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       budget = null;  // a new conversation starts without a budget
       void refreshBudget();
     },
-    /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings
-     *  (the previous conversation stays in History). The next question picks a field. */
+    /** Start over: a fresh conversation with no field, layers, plot, highlight or drawings,
+     *  looking at the whole sky (the previous conversation stays in History). The next
+     *  question, or the field menu, picks a field. */
     newSearch() {
       if (busy) return;
       this.newConversation();
@@ -522,6 +526,7 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       map = emptyMap();
       undoStack = [];
       requests = [];
+      moveCamera(ALL_SKY);  // not wherever the last field was
     },
     /** Reopen a saved conversation and continue its server thread. */
     openConversation(id: string) {

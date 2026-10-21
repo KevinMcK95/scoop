@@ -36,7 +36,7 @@ from ..chat.python_tool import build_python_tools
 from ..chat.kernel_tool import build_kernel_tools
 from ..chat.web_tools import build_web_tools
 from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
-from ..fields import FieldStore, field_region
+from ..fields import FieldStore, field_region, finite_json
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
 from .settings import BASE_URL
@@ -79,7 +79,7 @@ def _text(content: Any) -> str:
 
 
 def _sse(event: dict) -> str:
-    return f"data: {json.dumps(event)}\n\n"
+    return f"data: {json.dumps(finite_json(event), allow_nan=False)}\n\n"
 
 
 def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> list[dict]:
@@ -329,7 +329,7 @@ def create_app(
         field = fields.get(request.path_params["key"]) if fields else None
         if field is None:
             return JSONResponse({"error": "No such field."}, status_code=404)
-        body = json.dumps(field, separators=(",", ":")).encode()
+        body = json.dumps(finite_json(field), separators=(",", ":"), allow_nan=False).encode()
         # Fields reach several MB (M31's inner 10′: ~9 MB) and compress well.
         if "gzip" in request.headers.get("accept-encoding", ""):
             return Response(gzip.compress(body, compresslevel=5), media_type="application/json",

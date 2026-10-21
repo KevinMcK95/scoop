@@ -48,8 +48,8 @@
       <button role="tab" aria-selected={tab === 'history'} onclick={() => (tab = 'history')}>History{workspace.conversations.length ? ` (${workspace.conversations.length})` : ''}</button>
       <button role="tab" class="gear" aria-selected={tab === 'settings'} title="Settings" aria-label="Settings" onclick={() => (tab = 'settings')}>⚙</button>
     </div>
-    <button class="text-button icon" title="New conversation" aria-label="New conversation" disabled={workspace.busy}
-      onclick={() => { workspace.newConversation(); tab = 'chat'; }}>＋</button>
+    <button class="text-button icon" title="New search: a new conversation with no field" aria-label="New search" disabled={workspace.busy}
+      onclick={() => { workspace.newSearch(); tab = 'chat'; }}>＋</button>
     <span class="dot" class:on={live && !workspace.busy} class:busy={live && workspace.busy}
     role="status" title={live ? (workspace.busy ? 'Working…' : 'Agent connected') : 'No agent'}
     aria-label={live ? (workspace.busy ? 'Working' : 'Agent connected') : 'No agent'}></span></header>

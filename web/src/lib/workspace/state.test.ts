@@ -68,6 +68,7 @@ describe('field workspace', () => {
     expect(workspace.layers).toEqual([]);
     expect(workspace.messages).toEqual([]);
     expect(workspace.conversationId).not.toBe(before);
+    expect(workspace.camera).toMatchObject({ fov: 180 });  // the whole sky, not the old field
   });
 
   it('changes the map only when the renderer resolves a request, and undo restores it', async () => {

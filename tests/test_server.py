@@ -229,6 +229,22 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(zipped.headers["content-encoding"], "gzip")
             self.assertEqual(zipped.json()["key"], "mini_1")
 
+    def test_fields_with_nan_are_served_as_strict_json(self):
+        # An LVDB object without a proper motion (NGC 300) has NaN pmra: Python writes it,
+        # browsers' JSON.parse rejects it, so the field failed to load.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "mini").mkdir()
+            data = viewer_data()
+            data["target"] = {**data["target"], "pmra": float("nan"), "pmdec": float("inf")}
+            (Path(tmp) / "mini" / "mini_1_field.json").write_text(json.dumps(data))
+            client = TestClient(create_app(fields=FieldStore(Path(tmp))))
+            text = client.get("/api/fields/mini_1").text
+            self.assertNotIn("NaN", text)
+            self.assertNotIn("Infinity", text)
+            target = json.loads(text, parse_constant=lambda c: self.fail(f"non-standard {c}"))["target"]
+            self.assertIsNone(target["pmra"])
+            self.assertIsNone(target["pmdec"])
+
     def test_assistant_text_streams_before_the_complete_message(self):
         from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
