@@ -28,8 +28,13 @@ from starlette.routing import Route
 
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
+<<<<<<< HEAD
 from .. import gaia_estimate
 from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
+=======
+from ..chat.data_agent import build_handoff_tool
+from ..chat.exoplanet_agent import build_exoplanet_tool
+>>>>>>> 3ebba69 (add selecting exoplanets section)
 from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
@@ -225,6 +230,15 @@ def create_app(
             return []
         from ..literature.tools import build_ads_tools
         return build_ads_tools(live["ads"])
+
+    def exoplanet_model(settings):
+        """The Settings model as an agentbook model, for the exoplanet agent (or None)."""
+        if settings is None or not settings.get("model"):
+            return None
+        from agentbook.models import OpenAIModel
+
+        return OpenAIModel(settings.get("model"), base_url=settings.get("base_url"),
+                           api_key=settings.get("api_key") or "unset")
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"chat": live["model"] is not None, "literature": live["ads"] is not None})
@@ -523,7 +537,15 @@ def create_app(
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
+<<<<<<< HEAD
         tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+=======
+        # Fields over boxes, polygons and stream tracks: planned and counted, then run once confirmed.
+        region_tools = build_region_tools(jobs=jobs, resolver=resolver)
+        # Exoplanet questions go to the fact-checked exoplanet agent, on the model from Settings.
+        exoplanet = build_exoplanet_tool(field=current_field, make_model=lambda: exoplanet_model(settings))
+        tools = [*map_tools, *region_tools, handoff, exoplanet, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+>>>>>>> 3ebba69 (add selecting exoplanets section)
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]

@@ -67,6 +67,7 @@ analysis environment with their installed packages and data files, variables kep
 calls. Use it when run_python lacks a package or data, or the work needs more memory, \
 time or state across steps; check that a package is installed before relying on it. It is not sandboxed: read only paths the user gave, write \
 only in its working directory, and say what you ran.
+<<<<<<< HEAD
 Fields and data — the data agent decides every download; you never start one:
 - load_field: show a field that has already been run (availableFields). Loading is \
 not downloading: do it yourself.
@@ -95,6 +96,48 @@ tables share columns tel, inst, year, date, exptime, wavelength_nm, program wher
 archive gives them. New point tables are matched to Gaia stars (gaia gets an \
 in_<table> column, and clicking a star shows its entries); URL columns become links in \
 the Selected panel. Gravitational-wave localizations can't be checked yet; say so.
+=======
+Fields:
+- load_field: show another field that has already been run.
+- find_lvdb, then run_field: query the archives around a Local Volume Database object.
+- run_cone: query the archives in a cone (≤ 60′) around any position or name.
+- Beyond cones: find_stream (galstreams tracks for a named stream: extent, distances, \
+proper motions and widths in the stream frame), plan_region (a box, polygon, band along a \
+track from a paper, or a galstreams stream: counts the Gaia rows with and without cuts, \
+proposes cuts for streams, and shows the outline), then run_region with the plan_id once \
+the user has confirmed the region and cuts. Never run_region without that confirmation. \
+Stream cuts are in the stream frame (phi1 along, phi2 across): gmax, and pm_window \
+[w_phi1, w_phi2] mas/yr around the track's proper motion at each star's phi1. A band \
+from a paper needs the track points and their source from a tool result (ads_paper, \
+web_fetch of the paper or its tables); never type a track from memory. If the user asks \
+for a track from a paper, use it even when galstreams has the stream. Stream fields' \
+tables have phi1, phi2, dphi2 (from the track), pm_phi1, pm_phi2 and dpm_phi1/dpm_phi2 \
+(relative to the track); plot and lasso in those. Region searches fetch only Gaia and \
+SIMBAD galaxies unless the user asks for more (include: hst_jwst, qso, spectra). SCOOP \
+lists observations and spectra; it never downloads images.
+- add_data: add an archive the loaded field does not include yet (e.g. exoplanet_hosts, \
+confirmed planet hosts from the NASA Exoplanet Archive), queried over the field's region.
+- ask_exoplanet_agent: exoplanet questions (planets, their properties and papers, TOIs, TESS \
+light curves, short-cadence candidates) and constraints on exoplanet_hosts, tess_tois or tic \
+("habitable", "atmosphere claimed"). Show its answer word for word, with its checked line; do \
+not retell or add to it. If it asks the user to define a constraint or confirm criteria, wait \
+for the reply, then call it again with the confirmed criteria. To highlight rows, the table \
+must be in the field: add_data it first.
+- ask_data_agent: ONLY for data the field doesn't have: questions about pointings, \
+epochs, baselines, overlaps, wavelengths, exposure times or programs of tables already \
+in the field (including tables the data agent added earlier) are answered directly \
+with describe_field, summarize, region, match and overlaps. Footprint tables share \
+columns tel, inst, year, date, exptime, wavelength_nm, program where the archive gives \
+them. Hand off to SCOOP's data agent for data the field doesn't have and \
+add_data doesn't offer (another survey, wavelength or archive: "CFHT MegaCam images", \
+"LAMOST spectra", "radio sources here"), or "what other data exist in this region?" \
+(it inventories surveys from radio to gamma rays). Pass the user's request in plain \
+words. It finds the data, adds tables and layers to the field, and reports what it \
+added and from where; relay that, then describe_field on the new tables. New point \
+tables are matched to Gaia stars (gaia gets an in_<table> column, and clicking a star \
+shows its entries); URL columns become links in the Selected panel. It can't \
+yet check gravitational-wave localizations; say so if asked.
+>>>>>>> 3ebba69 (add selecting exoplanets section)
 Runs take 30 s to a few minutes in the background; the browser loads the field when ready.
 Proper motions (for Local Volume Database fields):
 - pm_expectations: what to expect and what a measurement needs: internal dispersion \

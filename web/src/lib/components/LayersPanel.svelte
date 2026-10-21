@@ -4,7 +4,8 @@
   import { catalog, groupLayers, type CatalogGroup } from '../field/catalog';
   import { adsUrl, bibcodeOf } from '../chat/markdown';
   import { download, layerCsv } from '../field/export';
-  let { workspace }: { workspace: Workspace } = $props();
+  // onask: put a request in the chat and send it (the page opens the chat drawer).
+  let { workspace, onask }: { workspace: Workspace; onask?: (text: string) => void } = $props();
   const field = $derived(workspace.field);
   const target = $derived(field?.target);
   const ready = $derived(workspace.viewerPhase === 'ready');
@@ -42,9 +43,19 @@
     if (Number.isFinite(value)) optionValues = { ...optionValues, [name]: { ...optionValues[name], [option]: value } };
   };
   async function requery(name: string) { addError = (await workspace.addSource(name, valuesOf(name))) ?? ''; }
+  // Sources the exoplanet agent can filter by soft constraints ("habitable", "atmosphere
+  // claimed"): adding one with constraints adds the table, then asks the agent in the chat.
+  const CONSTRAINED = new Set(['exoplanet_hosts', 'tess_tois', 'tic']);
+  let constraints = $state<Record<string, string>>({});
   async function add(group: CatalogGroup, layers = group.layers) {
     if (group.query) {
-      addError = (await workspace.addSource(group.query, optionsOf(group.query).length ? valuesOf(group.query) : undefined)) ?? '';
+      const name = group.query;
+      addError = (await workspace.addSource(name, optionsOf(name).length ? valuesOf(name) : undefined)) ?? '';
+      const wanted = constraints[name]?.trim();
+      if (!addError && wanted && onask) {
+        constraints = { ...constraints, [name]: '' };
+        onask(`Apply these constraints to ${group.group} (${name}) in this field: ${wanted}`);
+      }
       return;
     }
     if (group.table) workspace.request([{ type: 'layer.add', id: `user:all-${group.table}`, table: group.table,
@@ -54,6 +65,7 @@
 </script>
 
 {#snippet options(name: string, again: boolean)}
+  {#if optionsOf(name).length || (!again && CONSTRAINED.has(name) && onask)}
   <div class="source-options">
     {#each optionsOf(name) as option (option.name)}
       <label title={option.help}>{option.label}
@@ -62,7 +74,14 @@
     {/each}
     {#if again}<button class="text-button" title="Query again with these values" onclick={() => requery(name)}>↻ Query again</button>{/if}
     {#if optionsOf(name)[0]?.help}<small class="muted">{optionsOf(name)[0].help}</small>{/if}
+    {#if !again && CONSTRAINED.has(name) && onask}
+      <input class="constraints" type="text" placeholder="Constraints (optional), e.g. habitable, atmosphere claimed"
+        aria-label={`Constraints for ${name}`} value={constraints[name] ?? ''}
+        oninput={(e) => (constraints = { ...constraints, [name]: e.currentTarget.value })} />
+      <small class="muted">With constraints, the exoplanet agent asks you to define or confirm them in the chat.</small>
+    {/if}
   </div>
+  {/if}
 {/snippet}
 
 <section class="layers-panel" aria-label="Field and layers">

@@ -1400,6 +1400,11 @@ body.resizing-y * {
   flex-basis: 100%;
 }
 
+.source-options input.constraints {
+  flex-basis: 100%;
+  width: auto;
+}
+
 .catalog-entry.sub {
   padding-left: 22px;
 }

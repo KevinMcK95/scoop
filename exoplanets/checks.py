@@ -330,3 +330,88 @@ def render_claims(claims: list[dict]) -> str:
         if BIBCODE_RE.fullmatch(source) and c.get("quote"):
             lines.append(f"  > “{c['quote']}”")
     return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ proposals and highlights
+# Besides claims, an answer can ask the user to define a vague constraint ("habitable"):
+#
+#   {"clarify": {"constraints": ["habitable"], "question": "How do you define habitable? ..."}}
+#
+# or propose concrete criteria, to confirm before they are applied. A criterion the agent
+# suggested from the literature (because the user asked for a suggestion) carries its
+# reference and a quote, checked like a claim:
+#
+#   {"proposal": {"criteria": [{"constraint": "habitable", "means": "insolation 0.2-1.1 Earth",
+#                               "uses": "archive", "suggested": true,
+#                               "source": "<bibcode>", "quote": "<words from its abstract>"}, ...],
+#                 "literature_planets": 3, "question": "Is this definition okay?"}}
+#
+# A result can also name rows to highlight on the map, by their id in a field table:
+#
+#   {"claims": [...], "highlight": {"table": "exoplanet_hosts", "ids": ["TRAPPIST-1"],
+#                                   "label": "Habitable-zone planets"}}
+
+HIGHLIGHT_TABLES = {"exoplanet_hosts": "host name, e.g. TRAPPIST-1",
+                    "tess_tois": "TOI, e.g. TOI-700.01", "tic": "TIC ID, e.g. TIC 150428135"}
+
+
+def parse_answer(answer: str) -> dict | None:
+    """The answer's JSON object, if it is a clarification, a proposal or a claims result; else None."""
+    text = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", answer.strip())
+    for candidate in (text, text[text.find("{"): text.rfind("}") + 1]):
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and ({"clarify", "proposal", "claims"} & set(data)):
+            return data
+    return None
+
+
+def check_clarify(clarify) -> list[str]:
+    if not isinstance(clarify, dict) or not clarify.get("constraints") or not clarify.get("question"):
+        return ['A clarification must be {"clarify": {"constraints": [...], "question": "How do you define ...?"}}.']
+    return []
+
+
+def check_proposal(proposal, messages: list[dict] | None = None) -> list[str]:
+    """A proposal needs criteria, each with what it means and whether it uses the archive or
+    papers; a criterion suggested from the literature needs its reference, quoted exactly."""
+    if not isinstance(proposal, dict) or not isinstance(proposal.get("criteria"), list) or not proposal["criteria"]:
+        return ['A proposal must be {"proposal": {"criteria": [{"constraint": ..., "means": ..., "uses": '
+                '"archive" or "literature"}], "literature_planets": n, "question": ...}}.']
+    problems = []
+    for i, c in enumerate(proposal["criteria"], 1):
+        if not isinstance(c, dict) or not c.get("constraint") or not c.get("means"):
+            problems.append(f"Criterion {i} needs the constraint and what it means concretely.")
+        elif c.get("uses") not in ("archive", "literature"):
+            problems.append(f"Criterion {i} ({c['constraint']}): say whether it uses the archive or literature.")
+        elif c.get("suggested"):
+            if not (c.get("source") and c.get("quote")):
+                problems.append(f"Criterion {i} ({c['constraint']}) is your suggestion: give the one paper it "
+                                "comes from (source: its bibcode) and quote the words that define it.")
+            else:
+                report = check_claims(json.dumps({"claims": [{"text": c["means"], "source": c["source"],
+                                                             "quote": c["quote"]}]}), messages or [])
+                problems += [p.replace("Claim 1", f"Criterion {i} ({c['constraint']})", 1) for p in report.problems]
+    if any(isinstance(c, dict) and c.get("uses") == "literature" for c in proposal["criteria"]) \
+            and not isinstance(proposal.get("literature_planets"), int):
+        problems.append("Say how many planets need their papers checked (literature_planets), so the user "
+                        "can decide before you start.")
+    if not proposal.get("question"):
+        problems.append("End the proposal with a question asking the user to confirm or change the criteria.")
+    return problems
+
+
+def check_highlight(highlight, messages: list[dict]) -> list[str]:
+    """Rows to highlight must name a field table and ids that a tool returned in this run."""
+    if highlight is None:
+        return []
+    if not isinstance(highlight, dict) or highlight.get("table") not in HIGHLIGHT_TABLES \
+            or not isinstance(highlight.get("ids"), list):
+        return [f"highlight must be {{\"table\": one of {', '.join(HIGHLIGHT_TABLES)}, \"ids\": [...], "
+                "\"label\": ...}."]
+    seen = "\n".join(_decoded(text) for _, text in tool_results_by_name(messages))
+    missing = [str(i) for i in highlight["ids"] if str(i).removeprefix("TIC ") not in seen]
+    return [f"Highlight id {i} was not returned by any tool. Use ids from tool results "
+            f"({HIGHLIGHT_TABLES[highlight['table']]})." for i in missing]

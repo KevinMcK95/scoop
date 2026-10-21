@@ -172,7 +172,7 @@ def exoplanet_cone_search(ra: float, dec: float, radius_arcmin: float) -> dict:
 
 
 PLANET_COLUMNS = ("pl_name, hostname, ra, dec, sy_dist, st_spectype, st_teff, pl_orbper, "
-                  "pl_rade, pl_bmasse, pl_bmassprov, pl_eqt, discoverymethod, disc_year, "
+                  "pl_rade, pl_bmasse, pl_bmassprov, pl_eqt, pl_insol, discoverymethod, disc_year, "
                   "disc_facility, disc_refname")
 
 
@@ -183,7 +183,8 @@ def planet_record(r: dict, adql: str, retrieved: str) -> dict:
         "ra": r["ra"], "dec": r["dec"],
         "orbital_period_days": r["pl_orbper"], "radius_earth": r["pl_rade"],
         "mass_earth": r["pl_bmasse"], "mass_type": r["pl_bmassprov"],
-        "equilibrium_temp_k": r["pl_eqt"], "discovery_method": r["discoverymethod"],
+        "equilibrium_temp_k": r["pl_eqt"], "insolation_earth": r["pl_insol"],
+        "discovery_method": r["discoverymethod"],
         "discovery_year": r["disc_year"], "discovery_facility": r["disc_facility"],
         **parse_reference(r["disc_refname"]),
         "query": adql, "access_url": TAP_URL, "retrieved_at": retrieved,
