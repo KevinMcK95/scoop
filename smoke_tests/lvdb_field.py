@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import socket
 import time
 from collections import Counter
 from itertools import combinations
@@ -39,6 +41,7 @@ from ids import check_id_columns, to_int_id
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the scoop package, for regions
+from scoop import gaia_status  # noqa: E402
 from scoop.regions import Region, adql_condition, read_spec  # noqa: E402
 
 LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
@@ -46,6 +49,10 @@ LVDB_URL = ("https://github.com/apace7/local_volume_database/releases/download/"
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
 TAP_ROW_LIMITS = (2_000, 100_000, 3_000_000, 10_000_000)  # a result this long is truncated
 GAIA_DR3_EPOCH = 2016.0
+# astroquery's TAP and MAST clients open sockets without a timeout, so a connection the
+# network drops (seen 2026-10-21: CLOSE_WAIT after a wifi change) hangs the run forever;
+# with this a stalled read raises, and with_retries tries again.
+socket.setdefaulttimeout(120)
 MOC_DEPTH = 16  # ~3" HEALPix cells; footprints are arcmin-scale
 
 # Reference palette (dataviz skill), light mode.
@@ -284,21 +291,93 @@ GAIA_COLS = ("g.source_id, g.ra, g.dec, g.phot_g_mean_mag, g.bp_rp, g.parallax, 
              "g.classprob_dsc_combmod_quasar, g.classprob_dsc_combmod_galaxy")
 
 
-def run_tap(adql: str, what: str) -> Table:
-    """Heidelberg first (faster), ESA on failure; refuse truncated results."""
-    from astroquery.utils.tap.core import TapPlus
+ESA_TAP = "https://gea.esac.esa.int/tap-server/tap"
+
+
+# Async TAP jobs keep running on the server after the client gives up, and the servers
+# run only a couple per IP at a time: abandoned counts over the Galactic plane queued every
+# later query behind them for hours (seen 2026-10-21). So every job this run starts is
+# aborted when the run stops waiting for it -- on an error, a retry, or SIGTERM.
+_open_jobs: set = set()
+
+
+def _abort(job) -> None:
     try:
-        tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
-        res = with_retries(lambda: tap.launch_job_async(adql, maxrec=10_000_000)
-                           .get_results(), f"Heidelberg {what}", tries=3)
-        server = "Heidelberg ARI mirror"
+        job.abort()
+    except Exception:
+        pass
+
+
+def _tap_async(launch) -> Table:
+    job = launch()
+    _open_jobs.add(job)
+    try:
+        return job.get_results()
+    except BaseException:
+        _abort(job)
+        raise
+    finally:
+        _open_jobs.discard(job)
+
+
+def _abort_open_jobs(signum, frame):
+    for job in list(_open_jobs):
+        _abort(job)
+    os._exit(128 + signum)
+
+
+def _heidelberg(adql: str, what: str):
+    from astroquery.utils.tap.core import TapPlus
+    tap = TapPlus(url=HEIDELBERG_TAP, verbose=False)
+    return with_retries(lambda: _tap_async(lambda: tap.launch_job_async(adql, maxrec=10_000_000, background=True, name=gaia_status.job_name())),
+                        f"Heidelberg {what}", tries=3), "Heidelberg ARI mirror"
+
+
+def _esa(adql: str, what: str):
+    from astroquery.gaia import Gaia
+    Gaia.ROW_LIMIT = -1
+    return with_retries(lambda: _tap_async(lambda: Gaia.launch_job_async(adql, background=True, name=gaia_status.job_name())),
+                        f"ESA {what}", tries=3), "ESA Gaia archive"
+
+
+GAIA_SERVERS = {"heidelberg": (HEIDELBERG_TAP, _heidelberg), "esa": (ESA_TAP, _esa)}
+_health: dict | None = None
+
+
+def gaia_health() -> dict:
+    """Server health and our job queue (scoop.gaia_status), once per run, first aborting
+    stale SCOOP jobs that would queue this run's queries behind them."""
+    global _health
+    if _health is None:
+        st = gaia_status.status(clean_up=True)
+        _health = st["servers"]
+        if st["aborted"] or any(q.get("queued") for q in st["queues"].values()):
+            for line in st["diagnosis"]:
+                print(f"  Gaia: {line}")
+    return _health
+
+
+def gaia_servers() -> list[str]:
+    """Servers to try, answering ones first: Heidelberg (usually faster) unless
+    $SCOOP_GAIA_SERVER=esa. Raises when neither answers, saying why for each."""
+    prefer_esa = os.environ.get("SCOOP_GAIA_SERVER", "").strip().lower() == "esa"
+    order = ["esa", "heidelberg"] if prefer_esa else ["heidelberg", "esa"]
+    health = gaia_health()
+    up = [s for s in order if health[s]["ok"]]
+    if not up:
+        raise RuntimeError("no Gaia server is answering (a network problem, or both archives down): " + "; ".join(
+            f"{s}: {h['error']} after {h['seconds']} s" for s, h in health.items()))
+    return up + [s for s in order if s not in up]
+
+
+def run_tap(adql: str, what: str) -> Table:
+    """The first answering Gaia server (gaia_servers), the other on failure; refuse truncated results."""
+    first, second = (GAIA_SERVERS[s][1] for s in gaia_servers())
+    try:
+        res, server = first(adql, what)
     except Exception as e:
-        from astroquery.gaia import Gaia
-        print(f"  Heidelberg failed ({e}); falling back to ESA")
-        Gaia.ROW_LIMIT = -1
-        res = with_retries(lambda: Gaia.launch_job_async(adql).get_results(),
-                           f"ESA {what}", tries=3)
-        server = "ESA Gaia archive"
+        print(f"  {what} failed on the first Gaia server ({e}); trying the other")
+        res, server = second(adql, what)
     if len(res) in TAP_ROW_LIMITS:
         raise RuntimeError(f"{what}: {len(res)} rows is a TAP output limit -- "
                            f"truncated; split the query")
@@ -953,9 +1032,11 @@ def count_region(region, cuts) -> dict:
     for part in parts:
         jobs.append(adql_condition(part, "g.ra", "g.dec"))
         jobs.append(gaia_region_where(region, part, cuts))
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    # ESA answers parallel anonymous jobs with HTTP 500 (seen 2026-10-21), so one at a time there
+    with ThreadPoolExecutor(max_workers=1 if gaia_servers()[0] == "esa" else 4) as pool:
         n = list(pool.map(count, jobs))
     return {"region": region.describe(), "cuts": cuts, "gaia_all": sum(n[0::2]), "gaia_with_cuts": sum(n[1::2]),
+            "gaia_server": gaia_servers()[0], "gaia_health": gaia_health(),
             "per_part": [{"cone": p["cone"], "all": a, "with_cuts": b} for p, a, b in zip(parts, n[0::2], n[1::2])],
             "note": "with_cuts is an upper bound when a stream-frame PM window is given: the query "
                     "uses a circle that contains the window, and the exact window is applied afterwards."}
@@ -1086,6 +1167,8 @@ def main():
                    help="serve the output folder locally and open the viewer in a browser")
     p.add_argument("--port", type=int, default=8765)
     args = p.parse_args()
+    import signal
+    signal.signal(signal.SIGTERM, _abort_open_jobs)  # the workspace stops a run with SIGTERM
     N_RHALF = args.n_rhalf
     cache = args.out / "cache"
     cache.mkdir(parents=True, exist_ok=True)

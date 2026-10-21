@@ -8,6 +8,7 @@ id carries the spec, so a long track is passed once (to plan_region), never rety
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 from typing import Annotated, Literal
@@ -36,6 +37,50 @@ def proposed_stream_cuts(widths: dict) -> dict:
 def _outline_points(outline: list, n: int = 64) -> list[list[float]]:
     step = max(1, math.ceil(len(outline) / n))
     return [[round(a, 5), round(d, 5)] for a, d in outline[::step]][:n]
+
+
+def crowding_note(region) -> str | None:
+    """A warning when the region reaches low Galactic latitude: millions of Gaia stars, so
+    counts and queries take minutes and the PM cut matters most."""
+    try:
+        from astropy.coordinates import SkyCoord
+    except ModuleNotFoundError:
+        return None
+    pts = region.outline()
+    b = SkyCoord([p[0] for p in pts], [p[1] for p in pts], unit="deg").galactic.b.deg
+    low, area = float(min(abs(b))), region.describe()["area_deg2"]
+    if min(b) < 0 < max(b):
+        low = 0.0
+    if low >= 15 or area < 1:
+        return None
+    return (f"The region reaches |b| = {low:.1f} deg{' (it crosses the Galactic plane)' if low == 0 else ''}: Gaia "
+            f"has ~10^5-10^6 stars per deg^2 there, so over {area:.0f} deg^2 the count alone can take minutes. "
+            "Suggest a segment farther from the plane, a smaller area, or tighter cuts.")
+
+
+async def diagnose_failure(exc: Exception, region=None) -> str:
+    """Why a count or build failed: the error, what scoop.gaia_status finds (servers, our
+    job queue), and the region's crowding, so the agent can tell the user what to change
+    instead of retrying the same request."""
+    from .. import gaia_status
+    parts = [str(exc)]
+    try:
+        st = await asyncio.to_thread(gaia_status.status)
+        parts += st["diagnosis"]
+    except Exception as e:  # the check itself failing is a finding too
+        parts.append(f"Could not check the Gaia servers ({type(e).__name__}: {e}): likely a network problem.")
+    note = crowding_note(region) if region is not None else None
+    if note:
+        parts.append(note)
+    parts.append("Do not repeat the same request unchanged; tell the user what failed and what would help.")
+    return " ".join(parts)
+
+
+def _region_or_none(cls, spec: dict):
+    try:
+        return cls.from_spec({k: v for k, v in spec.items() if k not in ("cuts", "archives")})
+    except (KeyError, ValueError):
+        return None
 
 
 def build_region_tools(*, jobs=None, resolver=None) -> list:
@@ -157,9 +202,13 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
         counted_cuts = cuts or proposed or {}
         try:
             plan_id = jobs.save_plan({**region.to_spec(), "cuts": counted_cuts}, name)
+        except ValueError as exc:
+            return _err(f"Could not save the plan: {exc}", tool_call_id)
+        try:
             counts = await jobs.count_plan(plan_id)
         except (ValueError, RuntimeError) as exc:
-            return _err(f"Could not count the region: {exc}", tool_call_id)
+            return _err(f"Could not count the region (plan {plan_id}): " + await diagnose_failure(exc, region),
+                        tool_call_id)
         _, _, radius = region.bounding_cone()
         out = {"plan_id": plan_id, "region": region.describe(), "source": spec.get("source"),
                "archives": ["gaia", "simbad_galaxies", *sorted(set(include))],
@@ -172,6 +221,9 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
                          + (", ".join(sorted(set(include))) or "nothing else (HST/JWST, QSO catalogs and spectra "
                             "only if the user asks: include)") + ".",
                          "Confirm the region and cuts with the user before run_region."]}
+        crowded = crowding_note(region)
+        if crowded:
+            out["notes"].insert(0, crowded)
         if region.kind == "band":
             out["cut_frame"] = ("pm_window is in the stream frame: |mu_phi1 cos phi2 - track| <= w_phi1 and "
                                 "|mu_phi2 - track| <= w_phi2, with the track's motion taken at each star's phi1")
@@ -212,7 +264,8 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
             try:
                 counts = await jobs.count_plan(plan_id)
             except (ValueError, RuntimeError) as exc:
-                return _err(f"Could not recount with the new cuts: {exc}", tool_call_id)
+                return _err("Could not recount with the new cuts: "
+                            + await diagnose_failure(exc, _region_or_none(Region, spec)), tool_call_id)
             if counts["gaia_with_cuts"] > MAX_GAIA_ROWS:
                 return _err(f"With those cuts Gaia returns up to {counts['gaia_with_cuts']} rows (limit "
                             f"{MAX_GAIA_ROWS}); tighten them or shrink the region.", tool_call_id)
@@ -225,7 +278,23 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
                               f"Started field {job.key!r} (job {job.id}) for plan {plan_id} with cuts "
                               f"{json.dumps(used)}; not loaded yet. Long streams take several minutes.")
 
-    return [find_stream, plan_region, run_region]
+    @tool
+    async def gaia_status(tool_call_id: Annotated[str, InjectedToolCallId], clean_up: bool = False):
+        """Check the Gaia archives before retrying anything slow or failed: whether the
+        Heidelberg mirror and ESA answer a one-row query (and how fast), and the async
+        job queue from this IP -- abandoned SCOOP jobs (from stopped runs) make every new
+        query wait behind them. clean_up=true aborts those stale SCOOP jobs only; other
+        unfinished jobs (a running field, a teammate's) are reported, never touched.
+        Returns findings in plain language to pass on to the user."""
+        from .. import gaia_status as gs
+        try:
+            st = await asyncio.to_thread(gs.status, clean_up)
+        except Exception as exc:
+            return _err(f"Could not check the Gaia servers ({type(exc).__name__}: {exc}): likely a network "
+                        "problem on this machine.", tool_call_id)
+        return ToolMessage(content=json.dumps(st, default=str), tool_call_id=tool_call_id)
+
+    return [find_stream, plan_region, run_region, gaia_status]
 
 
 __all__ = ["MAX_GAIA_ROWS", "build_region_tools", "proposed_stream_cuts"]

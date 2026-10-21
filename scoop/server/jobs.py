@@ -104,8 +104,9 @@ class JobManager:
             async with asyncio.timeout(timeout_s):
                 output = (await process.communicate())[0].decode(errors="replace")
         except TimeoutError:
-            process.kill()
-            raise RuntimeError(f"counting timed out after {timeout_s:.0f} s")
+            await _stop(process)
+            raise RuntimeError(f"counting timed out after {timeout_s:.0f} s (a slow or unanswering Gaia server, "
+                               f"or a region with millions of stars)")
         line = next((l for l in output.splitlines() if l.startswith("COUNTS ")), None)
         if line is None:
             tail = [l for l in output.splitlines() if l.strip()][-3:]
@@ -156,12 +157,24 @@ class JobManager:
                 job.error = next((l for l in reversed(job.lines) if "Error" in l), job.lines[-1] if job.lines else
                                  f"exit code {code}")
         except TimeoutError:
-            process.kill()
+            await _stop(process)
             job.status, job.error = "failed", f"timed out after {timeout_s:.0f} s"
         except OSError as exc:
             job.status, job.error = "failed", f"could not start the pipeline: {exc}"
         finally:
             job.finished = time.monotonic()
+
+
+async def _stop(process) -> None:
+    """SIGTERM first, so the pipeline aborts its server-side TAP jobs; kill if it lingers."""
+    try:
+        process.terminate()
+        await asyncio.wait_for(process.wait(), 20)
+    except (ProcessLookupError, TimeoutError):
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
 
 
 __all__ = ["Job", "JobManager"]

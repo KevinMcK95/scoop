@@ -240,6 +240,13 @@ run_region. For a track from a paper: find it (ads_search, ads_paper, web_fetch)
 plan_region shape "band" with its points, width and source.
 - "A 0.5 deg² box around COSMOS": plan_region shape "box" (width = height = √0.5 ≈ 0.707°; \
 center_name, or ra/dec from a tool) → confirm → run_region.
+- A count, field or query that fails, times out or is slow: read the diagnosis in the error \
+(plan_region and run_region check the Gaia servers and our job queue themselves), or call \
+gaia_status. Then act on it: no server answering → the network, tell the user; stale SCOOP \
+jobs clogging the queue → gaia_status clean_up=true, then retry once; other jobs queued → \
+tell the user; servers fine but the region is dense (near the Galactic plane) → propose a \
+segment farther from the plane, a smaller area or tighter cuts. Never repeat the same \
+failing request unchanged.
 - With no field loaded (the first question): if an availableFields entry covers the \
 object, load_field it and answer in the same turn (the tools use it at once). Otherwise \
 start run_field or run_cone, focus the map on the target, and say what was started and \

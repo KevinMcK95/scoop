@@ -20,8 +20,8 @@ from tests.field_fixture import viewer_data
 
 
 class FakeJobs:
-    def __init__(self, counts=(2007, 2007)):
-        self.plans, self.counts, self.started = {}, counts, []
+    def __init__(self, counts=(2007, 2007), fail=None):
+        self.plans, self.counts, self.started, self.fail = {}, counts, [], fail
 
     def save_plan(self, spec, name):
         plan_id = f"{len(self.plans) + 1:012x}"
@@ -32,6 +32,8 @@ class FakeJobs:
         return self.plans.get(plan_id)
 
     async def count_plan(self, plan_id):
+        if self.fail:
+            raise RuntimeError(self.fail)
         return {"gaia_all": self.counts[0], "gaia_with_cuts": self.counts[1], "note": "upper bound"}
 
     def start_region(self, plan_id, max_rows):
@@ -79,6 +81,28 @@ class RegionToolTests(unittest.IsolatedAsyncioTestCase):
         no_pm = await self.call("plan_region", {"shape": "band", "name": "x", "track": track, "width_deg": 1,
                                                 "source": "Paper 2030, Table 2", "pm_window": [1, 1]})
         self.assertIn("proper-motion track", no_pm.content)
+
+    async def test_failed_count_says_why_and_not_to_repeat_it(self):
+        from unittest import mock
+        from scoop import gaia_status
+        self.jobs.fail = "counting timed out after 300 s"
+        st = {"diagnosis": ["heidelberg has 2 executing and 19 queued job(s) from this IP"]}
+        with mock.patch.object(gaia_status, "status", return_value=st):
+            failed = await self.call("plan_region", {"shape": "box", "name": "plane box", "ra": 196.0,
+                                                     "dec": -63.5, "width_deg": 3})
+        self.assertEqual(failed.status, "error")
+        self.assertIn("19 queued", failed.content)
+        self.assertIn("Galactic plane", failed.content)  # b ~ -0.7 deg there
+        self.assertIn("Do not repeat", failed.content)
+
+    async def test_gaia_status_tool_reports_findings(self):
+        from unittest import mock
+        from scoop import gaia_status
+        st = {"servers": {}, "queues": {}, "aborted": ["7"], "diagnosis": ["Aborted 1 stale SCOOP job(s)"]}
+        with mock.patch.object(gaia_status, "status", return_value=st) as called:
+            out = await self.call("gaia_status", {"clean_up": True})
+        called.assert_called_once_with(True)
+        self.assertEqual(json.loads(out.content)["aborted"], ["7"])
 
     @unittest.skipUnless(build_region_tools and streams.library_dir(), "galstreams absent")
     async def test_stream_plan_proposes_stream_frame_cuts(self):

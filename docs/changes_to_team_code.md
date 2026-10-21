@@ -215,3 +215,26 @@ New: `scoop/regions.py` (region shapes, great-circle stream frames), `scoop/stre
   says which measurement columns were recognised. Prompts: the data agent passes roles
   (and prefers one combined row per star); the chat agent shows the RV histogram once RVs
   arrive and points to RV vs [Fe/H].
+
+## Gaia queries notice and clear what is blocking them
+
+Abandoned async TAP jobs keep running on the server, and the Gaia servers run only a
+couple per IP: on 2026-10-21 twenty counts left by stopped runs (over the Galactic plane)
+queued every later query for hours, and the chat agent retried `plan_region` three times,
+300 s each, without knowing why.
+
+- `scoop/gaia_status.py` (new): probes Heidelberg and ESA with a one-row query, reads
+  this IP's Heidelberg job queue, marks SCOOP jobs (named `scoop:<host>:<pid>`) from
+  stopped processes on this host as stale, aborts only those on request, and says in plain
+  language what it found (network down / stale jobs / other queued jobs / a dense region).
+- `smoke_tests/lvdb_field.py`: names its async jobs, aborts them when it stops waiting
+  (an error, a retry, SIGTERM), cleans up stale SCOOP jobs and picks an answering server
+  before querying (Heidelberg first; `SCOOP_GAIA_SERVER=esa` prefers ESA), counts one at a
+  time on ESA (it answers parallel anonymous jobs with HTTP 500), and sets a 120 s socket
+  timeout so a dropped connection raises instead of hanging.
+- `scoop/server/jobs.py`: stops timed-out runs with SIGTERM (then kill), so they abort
+  their jobs.
+- `scoop/chat/region_tools.py`: a `gaia_status` tool (`clean_up=true` aborts stale SCOOP
+  jobs only); failed counts include that diagnosis and a "do not repeat unchanged" note;
+  regions reaching |b| < 15° (≥ 1 deg²) get a crowding warning. Prompt: a failing or slow
+  request is diagnosed and acted on, never repeated unchanged.
