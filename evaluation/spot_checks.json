@@ -8,10 +8,21 @@
       "field": "draco_1",
       "message": "can you do a bulk proper motion measurement for draco? population fitting after identifying likely members?",
       "expect": {
-        "calls": ["ask_pm_agent"],
-        "not_calls": ["ask_data_agent"],
-        "actions": ["layer.add"],
-        "text": ["mas", "\\+?0\\.0[2-6]\\d*", "[-−]0\\.1[6-9]\\d*", "\\d{2,} (likely )?members|members[^.]{0,40}\\d{2,}"],
+        "calls": [
+          "ask_pm_agent"
+        ],
+        "not_calls": [
+          "ask_data_agent"
+        ],
+        "actions": [
+          "layer.add"
+        ],
+        "text": [
+          "mas",
+          "\\+?0\\.0[2-6]\\d*",
+          "[-−]0\\.1[6-9]\\d*",
+          "\\d{2,} (likely )?members|members[^.]{0,40}\\d{2,}"
+        ],
         "max_failures": 0,
         "max_seconds": 240
       }
@@ -23,10 +34,19 @@
       "field": "draco_1",
       "message": "Which trusted QSOs fall inside HST or JWST images here, and what time baselines do they have?",
       "expect": {
-        "calls": ["match"],
-        "not_calls": ["ask_data_agent"],
-        "actions": ["highlight"],
-        "text": ["QSO|quasar", "year|yr"],
+        "calls": [
+          "match"
+        ],
+        "not_calls": [
+          "ask_data_agent"
+        ],
+        "actions": [
+          "highlight"
+        ],
+        "text": [
+          "QSO|quasar",
+          "year|yr"
+        ],
         "max_failures": 1,
         "max_seconds": 180
       }
@@ -38,8 +58,13 @@
       "field": null,
       "message": "Show me the Gaia stars within 8 arcmin of TRAPPIST-1.",
       "expect": {
-        "calls": ["ask_data_agent"],
-        "text": ["TRAPPIST", "\\d{2,}"],
+        "calls": [
+          "ask_data_agent"
+        ],
+        "text": [
+          "TRAPPIST",
+          "\\d{2,}"
+        ],
         "max_failures": 0,
         "max_seconds": 150
       }
@@ -51,9 +76,16 @@
       "field": null,
       "message": "Get me the Gaia data in a 60 arcmin cone around Sgr A*.",
       "expect": {
-        "calls": ["ask_data_agent"],
-        "no_artifacts": ["field_job"],
-        "text": ["\\d{3},\\d{3}|\\d{6,}|million", "confirm|go ahead|go-ahead|proceed|smaller"],
+        "calls": [
+          "ask_data_agent"
+        ],
+        "no_artifacts": [
+          "field_job"
+        ],
+        "text": [
+          "\\d{3},\\d{3}|\\d{6,}|million",
+          "confirm|go ahead|go-ahead|proceed|smaller"
+        ],
         "max_failures": 1,
         "max_seconds": 150
       }
@@ -65,23 +97,37 @@
       "field": null,
       "message": "I want Gaia data along the GD-1 stream, within 10 degrees of phi1 on either side of the spur (phi1 around -33 in the Koposov frame). What would that look like?",
       "expect": {
-        "calls": ["ask_data_agent"],
-        "no_artifacts": ["field_job"],
-        "actions": ["annotate"],
-        "text": ["GD-1|GD1", "phi1|φ1|φ₁", "mas/yr|mas yr"],
+        "calls": [
+          "ask_data_agent"
+        ],
+        "no_artifacts": [
+          "field_job"
+        ],
+        "actions": [
+          "annotate"
+        ],
+        "text": [
+          "GD-1|GD1",
+          "phi1|φ1|φ₁",
+          "mas/yr|mas yr"
+        ],
         "max_failures": 1,
         "max_seconds": 200
       }
     },
     {
       "id": "literature",
-      "title": "Literature: recent proper-motion papers on Draco",
+      "title": "Literature: recent papers on Draco's star-formation history",
       "shows": "ADS search with bibcodes that become links",
       "field": "draco_1",
-      "message": "What are the most recent papers measuring Draco's proper motion? Give bibcodes.",
+      "message": "What are the most recent papers on Draco's star-formation history? Give bibcodes.",
       "expect": {
-        "calls": ["ads_search"],
-        "text": ["\\b(19|20)\\d\\d[A-Za-z&.]{4,}[\\d.]+[A-Z.]*\\d*[A-Z]\\b"],
+        "calls": [
+          "ads_search"
+        ],
+        "text": [
+          "\\b(19|20)\\d\\d[A-Za-z&.]{4,}[\\d.]+[A-Z.]*\\d*[A-Z]\\b"
+        ],
         "max_failures": 1,
         "max_seconds": 150
       }
@@ -93,8 +139,12 @@
       "field": "leo_2",
       "message": "Show me the line-of-sight velocity distribution of Leo II's stars.",
       "expect": {
-        "actions": ["plot.show"],
-        "text": ["km/s|km s"],
+        "actions": [
+          "plot.show"
+        ],
+        "text": [
+          "km/s|km s"
+        ],
         "max_failures": 1,
         "max_seconds": 240
       }
@@ -106,8 +156,13 @@
       "field": "trappist_1_surroundings",
       "message": "How many confirmed planets does TRAPPIST-1 have, and what are their orbital periods?",
       "expect": {
-        "calls": ["ask_exoplanet_agent"],
-        "text": ["TRAPPIST-1 ?[b-h]", "day|d\\b"],
+        "calls": [
+          "ask_exoplanet_agent"
+        ],
+        "text": [
+          "TRAPPIST-1 ?[b-h]",
+          "day|d\\b"
+        ],
         "max_failures": 1,
         "max_seconds": 180
       }
