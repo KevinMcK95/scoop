@@ -13,6 +13,11 @@ from langgraph.types import Command
 from .state import _copy_payload, _nonempty_text
 
 
+def tool_error(text: str, tool_call_id: str) -> ToolMessage:
+    """A tool result the model should read and correct, not an exception."""
+    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+
+
 def publish_result(
     tool_call_id: str, artifact_id: str, payload: dict, summary: str
 ) -> Command:

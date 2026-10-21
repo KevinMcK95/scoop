@@ -16,14 +16,10 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
 from pydantic import Field
 
-from .tools import publish_result
+from .tools import publish_result, tool_error
 
 MAX_GAIA_ROWS = 60_000  # what the browser shows comfortably; beyond this, cut or shrink
 Pair = Annotated[list[float], Field(min_length=2, max_length=2)]
-
-
-def _err(text: str, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
 
 
 def proposed_stream_cuts(widths: dict) -> dict:
@@ -49,10 +45,10 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
         phi2), distances, proper motions along it (mu_phi1 cos phi2, mu_phi2), widths, and
         which track galstreams uses by default. Use a track_name with plan_region."""
         if streams.library_dir() is None:
-            return _err("galstreams is not installed on this server (pip install galstreams).", tool_call_id)
+            return tool_error("galstreams is not installed on this server (pip install galstreams).", tool_call_id)
         found = streams.find(name)
         if not found:
-            return _err(f"galstreams has no stream matching {name!r}. Try another name, or get the track from "
+            return tool_error(f"galstreams has no stream matching {name!r}. Try another name, or get the track from "
                         "a paper (ads_search / ads_paper / web_fetch) and plan a band with it.", tool_call_id)
         return ToolMessage(content=json.dumps({"query": name, "citation": streams.CITATION,
                                                "galstreams_version": streams.version(),
@@ -99,47 +95,47 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
         and (streams) proposed cuts; shows the outline on the map. Then ask the user to
         confirm the region and cuts; run_region only after they do."""
         if jobs is None:
-            return _err("Running new fields is not available on this server.", tool_call_id)
+            return tool_error("Running new fields is not available on this server.", tool_call_id)
         spec: dict = {"kind": shape if shape != "stream" else "band", "name": name}
         proposed = None
         try:
             if shape == "box":
                 if center_name and ra is None and dec is None:
                     if resolver is None:
-                        return _err("Name resolution is not available; give ra and dec.", tool_call_id)
+                        return tool_error("Name resolution is not available; give ra and dec.", tool_call_id)
                     found = await resolver(center_name)
                     if found is None:
-                        return _err(f"Sesame could not resolve {center_name!r}; try another name (e.g. "
+                        return tool_error(f"Sesame could not resolve {center_name!r}; try another name (e.g. "
                                     f"'{center_name} field') or give ra and dec.", tool_call_id)
                     ra, dec = found["ra"], found["dec"]
                     spec["source"] = f"centre from Sesame ({center_name!r} -> {found.get('name') or center_name})"
                 if ra is None or dec is None or width_deg is None:
-                    return _err("A box needs ra and dec (or center_name) and width_deg (height_deg defaults "
+                    return tool_error("A box needs ra and dec (or center_name) and width_deg (height_deg defaults "
                                 "to the width).", tool_call_id)
                 spec.update(ra=ra, dec=dec, width_deg=width_deg, height_deg=height_deg or width_deg, pa_deg=pa_deg)
             elif shape == "polygon":
                 if not vertices:
-                    return _err("A polygon needs vertices [[ra, dec], ...].", tool_call_id)
+                    return tool_error("A polygon needs vertices [[ra, dec], ...].", tool_call_id)
                 spec["vertices"] = vertices
             elif shape == "band":
                 if not track or not source:
-                    return _err("A band needs a track [[ra, dec], ...] and the source it came from (paper, "
+                    return tool_error("A band needs a track [[ra, dec], ...] and the source it came from (paper, "
                                 "table or URL); never type a track from memory.", tool_call_id)
                 if width_deg is None and not track_widths_deg:
-                    return _err("A band needs width_deg (full width across the track) or track_widths_deg.",
+                    return tool_error("A band needs width_deg (full width across the track) or track_widths_deg.",
                                 tool_call_id)
                 spec.update(track=track, width_deg=track_widths_deg or width_deg, source=source)
                 if pm_track:
                     if len(pm_track) != len(track):
-                        return _err("pm_track needs one [pmra, pmdec] per track point.", tool_call_id)
+                        return tool_error("pm_track needs one [pmra, pmdec] per track point.", tool_call_id)
                     spec["pm_track"] = pm_track
                 if phi1_range:
                     spec["phi1_range"] = phi1_range
             else:
                 if streams.library_dir() is None:
-                    return _err("galstreams is not installed on this server.", tool_call_id)
+                    return tool_error("galstreams is not installed on this server.", tool_call_id)
                 if not track_name:
-                    return _err("A stream needs a track_name from find_stream.", tool_call_id)
+                    return tool_error("A stream needs a track_name from find_stream.", tool_call_id)
                 info = streams.describe(track_name)
                 w = info["widths"].get("width_phi2")
                 width = width_deg or round(max(1.0, 4 * (w or 0.5)), 2)
@@ -147,19 +143,19 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
                 proposed = proposed_stream_cuts(info["widths"])
             region = Region.from_spec(spec)
         except (KeyError, ValueError) as exc:
-            return _err(f"Invalid region: {exc}", tool_call_id)
+            return tool_error(f"Invalid region: {exc}", tool_call_id)
         if include:
             spec["archives"] = sorted(set(include))
         cuts = {k: v for k, v in (("gmax", gmax), ("pm_window", pm_window)) if v is not None}
         if cuts.get("pm_window") and (region.kind != "band" or region.track_values("pm_track") is None):
-            return _err("pm_window needs a band with a proper-motion track (a galstreams stream, or a band "
+            return tool_error("pm_window needs a band with a proper-motion track (a galstreams stream, or a band "
                         "with pm_track).", tool_call_id)
         counted_cuts = cuts or proposed or {}
         try:
             plan_id = jobs.save_plan({**region.to_spec(), "cuts": counted_cuts}, name)
             counts = await jobs.count_plan(plan_id)
         except (ValueError, RuntimeError) as exc:
-            return _err(f"Could not count the region: {exc}", tool_call_id)
+            return tool_error(f"Could not count the region: {exc}", tool_call_id)
         _, _, radius = region.bounding_cone()
         out = {"plan_id": plan_id, "region": region.describe(), "source": spec.get("source"),
                "archives": ["gaia", "simbad_galaxies", *sorted(set(include))],
@@ -194,13 +190,13 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
         pm_window replaces the plan's cuts (and recounts). The browser loads the field
         when it is ready."""
         if jobs is None:
-            return _err("Running new fields is not available on this server.", tool_call_id)
+            return tool_error("Running new fields is not available on this server.", tool_call_id)
         if not user_confirmed:
-            return _err("Ask the user to confirm the region and cuts first (show the counts from plan_region).",
+            return tool_error("Ask the user to confirm the region and cuts first (show the counts from plan_region).",
                         tool_call_id)
         plan = jobs.load_plan(plan_id)
         if plan is None:
-            return _err(f"No plan {plan_id!r}; call plan_region first.", tool_call_id)
+            return tool_error(f"No plan {plan_id!r}; call plan_region first.", tool_call_id)
         spec = plan["spec"]
         if gmax is not None or pm_window is not None:
             cuts = dict(spec.get("cuts") or {})
@@ -212,14 +208,14 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
             try:
                 counts = await jobs.count_plan(plan_id)
             except (ValueError, RuntimeError) as exc:
-                return _err(f"Could not recount with the new cuts: {exc}", tool_call_id)
+                return tool_error(f"Could not recount with the new cuts: {exc}", tool_call_id)
             if counts["gaia_with_cuts"] > MAX_GAIA_ROWS:
-                return _err(f"With those cuts Gaia returns up to {counts['gaia_with_cuts']} rows (limit "
+                return tool_error(f"With those cuts Gaia returns up to {counts['gaia_with_cuts']} rows (limit "
                             f"{MAX_GAIA_ROWS}); tighten them or shrink the region.", tool_call_id)
         try:
             job = jobs.start_region(plan_id, MAX_GAIA_ROWS)
         except ValueError as exc:
-            return _err(str(exc), tool_call_id)
+            return tool_error(str(exc), tool_call_id)
         used = jobs.load_plan(plan_id)["spec"].get("cuts") or {}
         return publish_result(tool_call_id, tool_call_id, {"kind": "field_job", "job": job.id, "key": job.key},
                               f"Started field {job.key!r} (job {job.id}) for plan {plan_id} with cuts "

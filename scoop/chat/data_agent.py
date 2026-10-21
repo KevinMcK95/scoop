@@ -24,7 +24,7 @@ from pydantic import Field
 from .. import discovery
 from ..fields import field_region
 from .graph import build_chat_graph
-from .tools import publish_result
+from .tools import publish_result, tool_error
 
 SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
 MAX_SKILL_CHARS = 15000
@@ -99,10 +99,6 @@ def _ok(text: str, tool_call_id: str) -> ToolMessage:
     return ToolMessage(content=text, tool_call_id=tool_call_id)
 
 
-def _error(text: str, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
-
-
 def _json(obj) -> str:
     return json.dumps(obj, default=str)[:12000]
 
@@ -153,14 +149,14 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         if roles:
             unknown = [c for c in roles.values() if c not in keys]
             if unknown:
-                return _error(f"roles name columns the rows don't have: {unknown}; columns: {keys[:40]}",
+                return tool_error(f"roles name columns the rows don't have: {unknown}; columns: {keys[:40]}",
                               tool_call_id)
             meta["roles"] = dict(roles)
         measurements = measurement_roles(keys, roles) if meta.get("kind", "catalog") == "catalog" else {}
         try:
             await store_rows(field["key"], name, rows, meta)
         except Exception as exc:
-            return _error(f"Could not store the table ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"Could not store the table ({type(exc).__name__}: {exc}).", tool_call_id)
         added.append(name)
         q = meta["query"]
         note = " Row limit reached: more rows exist; narrow the query to see them." if q["truncated"] else ""
@@ -178,7 +174,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         target = (skills_dir / f"{path.strip().strip('/')}.md").resolve()
         if not target.is_relative_to(skills_dir.resolve()) or not target.is_file():
             names = sorted(str(p.relative_to(skills_dir))[:-3] for p in skills_dir.rglob("*.md"))
-            return _error(f"No skill {path!r}. Available: {names}", tool_call_id)
+            return tool_error(f"No skill {path!r}. Available: {names}", tool_call_id)
         text = target.read_text()
         cut = f"\n[... truncated at {MAX_SKILL_CHARS} characters]" if len(text) > MAX_SKILL_CHARS else ""
         return _ok(text[:MAX_SKILL_CHARS] + cut, tool_call_id)
@@ -196,13 +192,13 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         template's sections (What's here, Coverage check, How to query, Gotchas, Default
         decisions, Not yet verified); sources_checked lists the URLs/ids you queried."""
         if not NAME.fullmatch(name or ""):
-            return _error("name must be snake_case, 2-40 characters, starting with a letter", tool_call_id)
+            return tool_error("name must be snake_case, 2-40 characters, starting with a letter", tool_call_id)
         if list(skills_dir.rglob(f"{name}.md")):
-            return _error(f"A skill {name!r} already exists; it is never overwritten. Report what "
+            return tool_error(f"A skill {name!r} already exists; it is never overwritten. Report what "
                           "should change instead.", tool_call_id)
         if (len(body) > MAX_DRAFT_CHARS or len(description) > 300 or len(survey) > 80
                 or not sources_checked or len(sources_checked) > 20):
-            return _error(f"Keep it short (body ≤ {MAX_DRAFT_CHARS} characters, description ≤ 300) "
+            return tool_error(f"Keep it short (body ≤ {MAX_DRAFT_CHARS} characters, description ≤ 300) "
                           "and list at least one source you checked.", tool_call_id)
         from datetime import date
         today = date.today().isoformat()
@@ -229,7 +225,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             inv = await asyncio.to_thread(discovery.survey_inventory, region, per_regime)
         except Exception as exc:
-            return _error(f"The MOC server query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The MOC server query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         return _ok(_json(inv), tool_call_id)
 
     @tool
@@ -239,7 +235,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             return _ok(_json(await asyncio.to_thread(discovery.find_catalogs, keywords)), tool_call_id)
         except Exception as exc:
-            return _error(f"VizieR search failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"VizieR search failed ({type(exc).__name__}: {exc}).", tool_call_id)
 
     @tool
     async def describe_catalog(catalog: str, tool_call_id: Annotated[str, InjectedToolCallId]):
@@ -247,7 +243,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         try:
             return _ok(_json(await asyncio.to_thread(discovery.describe_catalog, catalog)), tool_call_id)
         except Exception as exc:
-            return _error(f"{type(exc).__name__}: {exc}", tool_call_id)
+            return tool_error(f"{type(exc).__name__}: {exc}", tool_call_id)
 
     @tool
     async def query_catalog(
@@ -263,12 +259,12 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         "rv_err": "e_RVel", "feh": "[Fe/H]", "feh_err": "e_[Fe/H]"}), so the RV plots,
         summaries and member fits use them."""
         if problem := check_name(name):
-            return _error(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         try:
             rows, meta = await asyncio.to_thread(discovery.query_catalog, table, region, label=label,
                                                  columns=columns, id_col=id_col, limit=limit)
         except Exception as exc:
-            return _error(f"The VizieR query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The VizieR query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         if not rows:
             return _ok(f"No rows from {table} in the field's region (radius "
                        f"{region['radius_deg']:.3f} deg); nothing stored.", tool_call_id)
@@ -283,7 +279,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
             return _ok(_json(await asyncio.to_thread(discovery.find_services, keywords, servicetype)),
                        tool_call_id)
         except Exception as exc:
-            return _error(f"Registry search failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"Registry search failed ({type(exc).__name__}: {exc}).", tool_call_id)
 
     @tool
     async def describe_service(url: str, tool_call_id: Annotated[str, InjectedToolCallId],
@@ -294,7 +290,7 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
             return _ok(_json(await asyncio.to_thread(discovery.describe_service, url, table, search)),
                        tool_call_id)
         except Exception as exc:
-            return _error(f"{type(exc).__name__}: {exc}", tool_call_id)
+            return tool_error(f"{type(exc).__name__}: {exc}", tool_call_id)
 
     @tool
     async def query_service(
@@ -310,14 +306,14 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
         (e.g. "calib_level = 2"). count_only=true returns the number of matches only.
         roles: as for query_catalog (velocity / metallicity columns)."""
         if not count_only and (problem := check_name(name)):
-            return _error(problem, tool_call_id)
+            return tool_error(problem, tool_call_id)
         try:
             result = await asyncio.to_thread(
                 discovery.query_service, url, table, region, label=label, columns=columns, ra_col=ra_col,
                 dec_col=dec_col, region_col=region_col, id_col=id_col, where=where, limit=limit,
                 count_only=count_only)
         except Exception as exc:
-            return _error(f"The TAP query failed ({type(exc).__name__}: {exc}).", tool_call_id)
+            return tool_error(f"The TAP query failed ({type(exc).__name__}: {exc}).", tool_call_id)
         if count_only:
             count, adql = result
             return _ok(_json({"count": count, "adql": adql}), tool_call_id)
@@ -345,7 +341,7 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
         the field as tables and layers, and returns a report. Takes up to a few minutes."""
         field = current_field()
         if field is None or store_rows is None or model is None:
-            return _error("No field is loaded (or the data agent isn't available).", tool_call_id)
+            return tool_error("No field is loaded (or the data agent isn't available).", tool_call_id)
         added: list[str] = []
         tools = build_data_tools(field=field, store_rows=store_rows, added=added, skills_dir=skills_dir)
         graph = build_chat_graph(model, tools, system_prompt=DATA_AGENT_PROMPT)

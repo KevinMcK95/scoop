@@ -22,7 +22,7 @@ from ..images import SURVEYS, cutout_params, data_url
 from ..lookup import lookup_position
 from ..spatial import (Footprint, footprint_contains, footprint_overlaps_circle,
                        polygon_contains_circle, separation_deg)
-from .tools import publish_result
+from .tools import publish_result, tool_error
 
 Ra = Annotated[float, Field(ge=0, lt=360)]
 Dec = Annotated[float, Field(ge=-90, le=90)]
@@ -316,12 +316,11 @@ def match_report(field: dict, points: str, point_filter: list[dict], footprints:
     candidates = [row for row in field["tables"][points]["rows"]
                   if isinstance(row.get("ra"), (int, float)) and isinstance(row.get("dec"), (int, float))
                   and matches(row, point_filter)]
-    label = lambda row: " ".join(str(row.get(k, "")) for k in ("tel", "inst")).strip() or row["id"]  # noqa: E731
     matched, by_group = [], Counter()
     for row in candidates:
         covering = [fp_row for fp_row, fp in shapes if fp.contains(row["ra"], row["dec"])]
         if covering:
-            groups = sorted({label(fp_row) for fp_row in covering})
+            groups = sorted({_label(fp_row) for fp_row in covering})
             by_group.update(groups)
             years = [fp_row["year"] for fp_row in covering if isinstance(fp_row.get("year"), (int, float))]
             matched.append({
@@ -411,6 +410,9 @@ def build_map_tools(
     current = known_layers if known_layers is not None else {}
     current.update({layer["id"]: layer for layer in layers if isinstance(layer, dict) and "id" in layer})
 
+    def no_field() -> str:
+        return f"No field is loaded. Available: {list(field_keys) or 'none'}."
+
     @tool
     async def update_map(
         actions: Annotated[list[MapAction], Field(min_length=1, max_length=20)],
@@ -467,8 +469,7 @@ def build_map_tools(
         so you can find ids to highlight, select or annotate.
         """
         if field is None:
-            return ToolMessage(content=f"No field is loaded. Available: {list(field_keys) or 'none'}. "
-                               "Use load_field.", tool_call_id=tool_call_id, status="error")
+            return tool_error(no_field() + " Use load_field.", tool_call_id)
         if table is not None and table not in field["tables"]:
             return ToolMessage(content=f"Unknown table {table!r}; tables: {sorted(field['tables'])}.",
                                tool_call_id=tool_call_id, status="error")
@@ -564,10 +565,10 @@ def build_map_tools(
         layer filter to show the result with update_map.
         """
         def error(text: str) -> ToolMessage:
-            return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+            return tool_error(text, tool_call_id)
 
         if field is None:
-            return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
+            return error(no_field())
         center = await locate(ra, dec, table, row_id, name)
         if isinstance(center, str):
             return error(center)
@@ -596,10 +597,10 @@ def build_map_tools(
         instrument, and an id filter for update_map's layer.add.
         """
         def error(text: str) -> ToolMessage:
-            return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+            return tool_error(text, tool_call_id)
 
         if field is None:
-            return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
+            return error(no_field())
         if footprints is None:  # the first footprint table the field's data sources provide
             footprints = next((n for n, t in field["tables"].items() if t.get("kind") == "footprints"
                                and t["rows"]), None)
@@ -638,10 +639,10 @@ def build_map_tools(
         rather than estimating from examples.
         """
         def error(text: str) -> ToolMessage:
-            return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+            return tool_error(text, tool_call_id)
 
         if field is None:
-            return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
+            return error(no_field())
         if table not in field["tables"]:
             return error(f"Unknown table {table!r}; tables: {sorted(field['tables'])}.")
         known = {"id", *field["tables"][table]["columns"]}
@@ -683,7 +684,7 @@ def build_map_tools(
         proof that nothing is known; say what radius was searched.
         """
         def error(text: str) -> ToolMessage:
-            return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+            return tool_error(text, tool_call_id)
 
         if simbad is None:
             return error("SIMBAD lookup is not available on this server.")
@@ -718,10 +719,10 @@ def build_map_tools(
         baselines, the longest pairs, and id filters for update_map.
         """
         def error(text: str) -> ToolMessage:
-            return ToolMessage(content=text, tool_call_id=tool_call_id, status="error")
+            return tool_error(text, tool_call_id)
 
         if field is None:
-            return error(f"No field is loaded. Available: {list(field_keys) or 'none'}.")
+            return error(no_field())
         if table is None:
             table = next((n for n, t in field["tables"].items() if t.get("kind") == "footprints" and t["rows"]), None)
             if table is None:

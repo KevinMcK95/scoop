@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from pydantic import Field
 
-from ..sandbox import table_payload
+from .python_tool import code_result, table_inputs
+from .tools import tool_error
 
 
 def build_kernel_tools(kernel, field=None) -> list[BaseTool]:
@@ -37,32 +37,16 @@ def build_kernel_tools(kernel, field=None) -> list[BaseTool]:
         Print summaries (shapes, units, statistics), never whole arrays.
         Long computations are interrupted after the time limit; variables are kept.
         """
-        current = current_field()
-        unknown = [t for t in tables if current is None or t not in current["tables"]]
-        if unknown:
-            offered = sorted(current["tables"]) if current else []
-            return ToolMessage(content=f"Unknown tables {unknown}; this field has {offered or 'no tables (none loaded)'}.",
-                               tool_call_id=tool_call_id, status="error")
-        payload = {name: table_payload(current["tables"][name]) for name in tables}
+        inputs = table_inputs(current_field(), tables)
+        if isinstance(inputs, str):
+            return tool_error(inputs, tool_call_id)
         try:
             if restart:
                 await kernel.restart()
-            result = await kernel.run(code, payload)
+            result = await kernel.run(code, inputs)
         except Exception as exc:  # the kernel failing is an outcome
-            return ToolMessage(content=f"The kernel failed ({type(exc).__name__}: {exc}).",
-                               tool_call_id=tool_call_id, status="error")
-        parts = [result.get("output") or "(no output)"]
-        if result.get("error"):
-            parts.append(f"Error:\n{result['error']}")
-        figures = result.get("figures") or []
-        if figures:
-            extra = result.get("figure_count", len(figures)) - 1
-            parts.append("The figure follows." + (f" ({extra} more not shown; put panels in one figure.)" if extra else ""))
-        artifact = {"code": code, "output": result.get("output", ""), "error": result.get("error")}
-        if figures:
-            artifact["image"] = "data:image/png;base64," + figures[0]
-        return ToolMessage(content="\n\n".join(parts), tool_call_id=tool_call_id, name="run_kernel",
-                           status="error" if result.get("error") else "success", artifact=artifact)
+            return tool_error(f"The kernel failed ({type(exc).__name__}: {exc}).", tool_call_id)
+        return code_result("run_kernel", code, result, tool_call_id)
 
     return [run_kernel]
 
