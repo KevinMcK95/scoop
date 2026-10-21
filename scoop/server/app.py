@@ -113,6 +113,9 @@ def _events(update: dict, artifacts_seen: set[str], names: dict[str, str]) -> li
                 for key in ("image", "code", "output", "error"):
                     if isinstance(artifact.get(key), str):
                         event[key] = artifact[key]
+                # Failures inside the data agent's own run, for the audit log.
+                if isinstance(artifact.get("inner_failures"), list):
+                    event["inner_failures"] = artifact["inner_failures"]
                 events.append(event)
         for artifact_id, payload in node_update.get("artifacts", {}).items():
             if artifact_id not in artifacts_seen:
@@ -135,6 +138,11 @@ def _audit_record(request_id: str, thread_id: str, started: float, events: list[
     evaluation to add; the server cannot know them when the turn ends.
     """
     results = [event for event in events if event["type"] == "tool_result"]
+    args = {event["id"]: event.get("args") for event in events if event["type"] == "tool_call"}
+
+    def call_args(call_id) -> str | None:  # what was called, so a failure can be reproduced
+        return json.dumps(args[call_id], default=str)[:1500] if args.get(call_id) is not None else None
+
     return {
         "request_id": request_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -144,8 +152,9 @@ def _audit_record(request_id: str, thread_id: str, started: float, events: list[
         "tool_calls_failed": sum(1 for event in results if event["status"] == "error"),
         "tools": [event["name"] for event in results],
         # Why tool calls failed (the tool's own short message), for improving prompts and tools.
-        "failures": [{"tool": event["name"], "reason": _reason(str(event["summary"]))}
-                     for event in results if event["status"] == "error"],
+        "failures": [{"tool": event["name"], "reason": _reason(str(event["summary"])), "args": call_args(event["id"])}
+                     for event in results if event["status"] == "error"]
+                    + [{**f, "via": event["name"]} for event in results for f in event.get("inner_failures", [])],
         "input_tokens": usage.get("input_tokens", 0),
         "cached_input_tokens": usage.get("cache_read", 0),
         "model_calls": usage.get("model_calls", 0),
@@ -371,7 +380,8 @@ def create_app(
         try:
             body = await request.json()
             if "ra" in body:
-                job = jobs.start_cone(body["ra"], body["dec"], body["radius_arcmin"], body["name"])
+                job = jobs.start_cone(body["ra"], body["dec"], body["radius_arcmin"], body["name"],
+                                      include=body.get("include") or ())
             else:
                 key, n_rhalf = body["key"], body.get("n_rhalf", 2.0)
                 if lvdb is not None and lvdb.has(key) is False:

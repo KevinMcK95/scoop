@@ -287,3 +287,19 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   tail with the traceback) and `recent_failed_runs` in the hand-off context, with prompt
   rules to tell a transient archive error (retry once) from a SCOOP bug (report it with
   the traceback; don't retry).
+
+## Cones fetch Gaia and SIMBAD galaxies by default; a triage loop for failures
+
+- `smoke_tests/lvdb_field.py`: cone searches, like regions, fetch Gaia DR3 and SIMBAD
+  galaxies; `--include hst_jwst,qso,spectra` adds the rest (a 5′ TRAPPIST-1 cone: 1 m 48 s →
+  12 s). LVDB-object fields still fetch every archive. `scoop/server/jobs.py`
+  (`start_cone(..., include=)`), `scoop/chat/visual.py` (`run_cone` gains `include`, passed
+  through; otherwise unchanged) and `POST /api/jobs` (`include`) pass it on.
+- `scoop/chat/data_agent.py`: cones and LVDB fields need the user's go-ahead above 60,000
+  estimated Gaia sources (they have no row cap; regions stay at 500,000 and a 60,000-row cap
+  after cuts).
+- Triage: the audit log records each failed call's arguments, and the data agent's own
+  failed calls (`via: ask_data_agent`); failed field runs are kept under
+  `<fields>/_runs/` with their log and traceback. `scripts/triage_failures.py` groups them
+  (transient / user / SCOOP bug / refused call) with an example to reproduce, and the Claude
+  Code skill `.claude/skills/triage` reproduces, tests and fixes them on a branch for review.

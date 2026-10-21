@@ -222,8 +222,9 @@ def empty_mast() -> Table:
     return Table({c: np.array([], dtype=d) for c, d in MAST_COLUMNS.items()})
 
 
-def select_observations(obs: Table, region_moc, tgt):
-    """Science observations whose footprint overlaps the region; one row per dataset."""
+def select_observations(obs: Table, region_moc, tgt, queried: bool = True):
+    """Science observations whose footprint overlaps the region; one row per dataset.
+    ``queried`` False: MAST was skipped, so there is nothing to report."""
     keep = np.ones(len(obs), bool)
     intent = np.char.lower(np.asarray(obs["intentType"], str))
     n_cal = int((intent != "science").sum())
@@ -260,7 +261,7 @@ def select_observations(obs: Table, region_moc, tgt):
     sel = Table(rows=rows, names=obs.colnames) if rows else obs[:0]
     sel["frac_in_region"] = [m[2] for m in mocs]
     where = "region" if tgt.get("kind") == "region" else f"{N_RHALF:g} r_half ellipse"
-    if len(obs) or tgt.get("kind") != "region":
+    if len(obs) or (tgt.get("kind") != "region" and queried):
         note(f"Kept {len(sel)} HST/JWST observations whose footprints overlap the "
              f"{where} (footprint polygons, not pointing centers).")
     return sel, [m[0] for m in mocs], [m[1] for m in mocs]
@@ -1192,6 +1193,8 @@ def main():
     p.add_argument("--dec", type=float, help="cone center Dec (deg)")
     p.add_argument("--radius-arcmin", type=float, help="cone radius (arcmin)")
     p.add_argument("--name", help="label for the cone or region (and output key)")
+    p.add_argument("--include", default="", help="cone searches: optional archives to add to Gaia and SIMBAD "
+                   "galaxies, comma-separated: " + ", ".join(OPTIONAL_ARCHIVES))
     p.add_argument("--region", type=Path,
                    help="JSON region spec (scoop/regions.py: box, polygon, band along a track), with "
                         "optional \"cuts\": {\"gmax\": G limit, \"pm_window\": [w_phi1, w_phi2] mas/yr "
@@ -1254,6 +1257,14 @@ def main():
         print(f"{tgt['name']}: {json.dumps(tgt)}")
         note(f"Searched a circular cone of radius {args.radius_arcmin:g}′ around RA {args.ra:.5f}, "
              f"Dec {args.dec:+.5f} (not a Local Volume Database object).")
+        # Cones, like regions, fetch Gaia and SIMBAD galaxies unless more is asked for.
+        extras = {a.strip() for a in (args.include or "").split(",") if a.strip()}
+        unknown = extras - set(OPTIONAL_ARCHIVES)
+        if unknown:
+            raise SystemExit(f"unknown archives {sorted(unknown)}; optional ones: {OPTIONAL_ARCHIVES}")
+        skipped = [OPTIONAL_ARCHIVES[a] for a in OPTIONAL_ARCHIVES if a not in extras]
+        note("Fetched Gaia DR3 and SIMBAD galaxies" + (f"; did not look up {', '.join(skipped)} (off by default for "
+             "cone searches; ask to include them)" if skipped else "") + ".")
     else:
         tgt = load_lvdb_target(args.lvdb_key, cache)
         print(f"{tgt['name']}: {json.dumps(tgt)}")
@@ -1262,10 +1273,11 @@ def main():
     a_deg = N_RHALF * tgt["rhalf_arcmin"] / 60
     query_radius = 1.02 * a_deg            # circle enclosing the ellipse
 
-    if qregion is not None and "hst_jwst" not in extras:
-        region = region_moc(qregion)
+    if "hst_jwst" not in extras:
+        region = region_moc(qregion) if qregion is not None else ellipse_moc(tgt, N_RHALF)
         obs, planned = empty_mast(), empty_mast()
-        inside = lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float))  # noqa: E731
+        inside = (None if qregion is None else  # noqa: E731
+                  lambda t, ra="ra", dec="dec": qregion.contains(np.asarray(t[ra], float), np.asarray(t[dec], float)))
     elif qregion is not None:
         region = region_moc(qregion)
         obs, planned = _per_part(qregion, cache, query_mast, ("obsid", "obsid"))
@@ -1274,7 +1286,7 @@ def main():
         region = ellipse_moc(tgt, N_RHALF)
         obs, planned = query_mast(tgt, query_radius, cache)
         inside = None
-    sel, mocs, shapes = select_observations(obs, region, tgt)
+    sel, mocs, shapes = select_observations(obs, region, tgt, queried="hst_jwst" in extras)
     if len(planned):
         pm = [footprint_moc(parse_s_region(r["s_region"])) for r in planned]
         planned = planned[[m is not None and m.intersection(region).sky_fraction > 0
@@ -1320,7 +1332,7 @@ def main():
     gaia["is_rrlyrae"] = as_bool(gaia["is_rrlyrae"])
 
     # Trusted QSOs: Gaia-CRF3, Quaia (by source_id), MILLIQUAS (by position).
-    if qregion is not None and "qso" not in extras:
+    if "qso" not in extras:
         mq, quaia = _with_columns(Table(), "milliquas"), _with_columns(Table(), "quaia")
     elif qregion is not None:
         mq, quaia = _per_part(qregion, cache, query_qso_catalogs, ("Name", "GaiaDR3"))
@@ -1357,7 +1369,7 @@ def main():
     note(f"Added {len(sg)} SIMBAD galaxies (not AGN) as an independent check on Gaia's "
          f"galaxy flag: {int(sg['gaia_match'].sum())} have a Gaia source within 2″, and Gaia "
          f"flagged {int(sg['gaia_gal_cand'].sum())} of those as galaxy candidates.")
-    if qregion is not None and "spectra" not in extras:
+    if "spectra" not in extras:
         sdss = Table({c: np.array([], dtype=d) for c, d in SDSS_EMPTY_COLUMNS.items()})
         desi = Table({c: np.array([], dtype=d) for c, d in {**DESI_EMPTY_COLUMNS, **MATCH_COLUMNS}.items()})
     elif qregion is not None:

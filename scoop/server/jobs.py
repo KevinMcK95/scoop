@@ -20,6 +20,7 @@ KEY = re.compile(r"[a-z0-9_]{1,64}")
 NAME = re.compile(r"[^\W_][\w .+\-()′'\"]{0,59}")
 MAX_CONE_ARCMIN = 60.0  # larger cones exceed the pipeline's Gaia row-limit check
 MAX_LINES = 200
+OPTIONAL_ARCHIVES = ("hst_jwst", "qso", "spectra")  # beyond Gaia and SIMBAD galaxies, on request
 PLAN = re.compile(r"[0-9a-f]{12}")
 # Symbols agents put in labels ("0.5 deg² box", "NGC 300: 30′ cone", "Leo I/II"), mapped
 # to what NAME allows; anything else becomes a space.
@@ -83,8 +84,10 @@ class JobManager:
             raise ValueError("n_rhalf must be between 0.5 and 10")
         return self._launch(key, float(n_rhalf), ["--lvdb-key", key, "--n-rhalf", str(float(n_rhalf))])
 
-    def start_cone(self, ra: float, dec: float, radius_arcmin: float, name: str) -> Job:
-        """Start a run over a circular cone around any position."""
+    def start_cone(self, ra: float, dec: float, radius_arcmin: float, name: str,
+                   include: list[str] | tuple = ()) -> Job:
+        """Start a run over a circular cone around any position. It fetches Gaia and SIMBAD
+        galaxies; ``include`` adds optional archives (hst_jwst, qso, spectra)."""
         number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
         if not (number(ra) and 0 <= ra < 360 and number(dec) and -90 <= dec <= 90):
             raise ValueError("ra must be in [0, 360) and dec in [-90, 90] degrees")
@@ -95,8 +98,13 @@ class JobManager:
         key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
         if not KEY.fullmatch(key):
             raise ValueError("name must contain letters or digits")
+        extras = sorted(set(include or ()))
+        if set(extras) - set(OPTIONAL_ARCHIVES):
+            raise ValueError(f"unknown archives {sorted(set(extras) - set(OPTIONAL_ARCHIVES))}; "
+                             f"optional ones: {list(OPTIONAL_ARCHIVES)}")
         return self._launch(key, 1.0, ["--ra", repr(float(ra)), "--dec", repr(float(dec)),
-                                       "--radius-arcmin", repr(float(radius_arcmin)), "--name", name])
+                                       "--radius-arcmin", repr(float(radius_arcmin)), "--name", name,
+                                       *(["--include", ",".join(extras)] if extras else [])])
 
     def find(self, ref: str) -> Job | None:
         """A job by id, or the latest job for a field key."""
@@ -197,6 +205,21 @@ class JobManager:
             job.status, job.error = "failed", f"could not start the pipeline: {exc}"
         finally:
             job.finished = time.monotonic()
+            if job.status == "failed":
+                self._keep_failure(job)
+
+    def _keep_failure(self, job: Job) -> None:
+        """A failed run's record and log under <fields>/_runs/, for triage after restarts."""
+        try:
+            runs = self.root / "_runs"
+            runs.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+            (runs / f"{stamp}_{job.key}_{job.id}.json").write_text(json.dumps({
+                "job": job.id, "key": job.key, "args": job.args, "error": job.error,
+                "elapsed_s": round(job.finished - job.started, 1), "failed_utc": stamp,
+                "decisions": job.decisions, "log": job.lines}, indent=1))
+        except OSError:
+            pass  # keeping the record must never break the run's own reporting
 
 
 async def _stop(process) -> None:

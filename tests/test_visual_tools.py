@@ -42,7 +42,7 @@ class MapToolsTests(unittest.IsolatedAsyncioTestCase):
                 self.started.append((key, n_rhalf))
                 return type("Job", (), {"id": "job42"})()
 
-            def start_cone(inner, ra, dec, radius, name):
+            def start_cone(inner, ra, dec, radius, name, include=()):
                 self.started.append((ra, dec, radius, name))
                 return type("Job", (), {"id": "job43", "key": "mini_5_arcmin"})()
 

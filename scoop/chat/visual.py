@@ -788,13 +788,15 @@ def build_map_tools(
         dec: Dec | None = None,
         name: str | None = None,
         label: str | None = None,
+        include: list[Literal["hst_jwst", "qso", "spectra"]] = [],
     ):
         """Query the archives in a circular cone around any position (not just
-        LVDB objects), in the background: HST/JWST, Gaia DR3 with QSO and galaxy
-        candidates, MILLIQUAS/Quaia QSOs, SIMBAD galaxies, SDSS/DESI spectra.
-        Center from ra+dec or an object name (Sesame); radius up to 60′ (larger
-        cones exceed the Gaia row limit). For boxes, polygons and stream tracks use
-        plan_region instead. The browser loads the field when ready.
+        LVDB objects), in the background: Gaia DR3 (with its QSO and galaxy
+        candidates) and SIMBAD galaxies; include adds HST/JWST observations
+        (hst_jwst), MILLIQUAS/Quaia QSOs (qso) or SDSS/DESI spectra (spectra), only
+        when the user asks. Center from ra+dec or an object name (Sesame); radius up
+        to 60′ (larger cones exceed the Gaia row limit). For boxes, polygons and
+        stream tracks use plan_region instead. The browser loads the field when ready.
         """
         if jobs is None:
             return ToolMessage(content="Running new fields is not available on this server.",
@@ -805,7 +807,7 @@ def build_map_tools(
         ra, dec, source = center
         title = label or (f"{name} {radius_arcmin:g} arcmin" if name else f"cone {ra:.4f} {dec:+.4f} {radius_arcmin:g} arcmin")
         try:
-            job = jobs.start_cone(ra, dec, radius_arcmin, title)
+            job = jobs.start_cone(ra, dec, radius_arcmin, title, include=include)
         except ValueError as exc:
             return ToolMessage(content=str(exc), tool_call_id=tool_call_id, status="error")
         return publish_result(tool_call_id, tool_call_id, {"kind": "field_job", "job": job.id, "key": job.key},

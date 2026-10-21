@@ -73,19 +73,36 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         for bad in ((400, 0, 5, "x"), (10, 95, 5, "x"), (10, 0, 90, "x"), (10, 0, 5, "___"), (True, 0, 5, "x")):
             with self.assertRaises(ValueError, msg=bad):
                 manager.start_cone(*bad)
+        with self.assertRaises(ValueError):
+            manager.start_cone(10, 0, 5, "x", include=["images"])
         # Labels are cleaned, not refused: nothing in them can read as an option or a command.
         from scoop.server.jobs import clean_name
         self.assertEqual(clean_name("--out /tmp"), "out -tmp")
         self.assertEqual(clean_name("; rm -rf"), "rm -rf")
 
+    async def test_cones_ask_for_optional_archives_by_name(self):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (tmp / "pipeline.py").write_text(ARGS_SCRIPT)
+        manager = JobManager(tmp / "fields", tmp / "pipeline.py", python=sys.executable, timeout_s=30)
+        job = manager.start_cone(10.6847, 41.2690, 20, "M31 with spectra", include=["spectra", "hst_jwst"])
+        for _ in range(300):
+            if job.status != "running":
+                break
+            await asyncio.sleep(0.02)
+        args = json.loads(next(l for l in job.lines if l.startswith("args"))[5:])
+        self.assertEqual(args[-2:], ["--include", "hst_jwst,spectra"])
+
     async def test_failures_are_listed_and_their_logs_found(self):
-        manager, job, _ = await self.run_job(FAIL_SCRIPT, key="nowhere_1")
+        manager, job, tmp = await self.run_job(FAIL_SCRIPT, key="nowhere_1")
         self.assertIs(manager.find("nowhere_1"), job)
         self.assertIs(manager.find(job.id), job)
         recent = manager.recent_failures()
         self.assertEqual([(r["key"], r["error"]) for r in recent],
                          [("nowhere_1", "ValueError: LVDB key 'nowhere_1' not found")])
         self.assertEqual(manager.recent_failures(within_s=0), [])
+        kept = list((tmp / "fields" / "_runs").glob(f"*_nowhere_1_{job.id}.json"))
+        self.assertEqual(len(kept), 1)  # kept on disk for triage
+        self.assertEqual(json.loads(kept[0].read_text())["error"], job.error)
 
     async def test_arguments_are_validated_before_anything_runs(self):
         manager = JobManager(Path("."), Path("missing.py"))

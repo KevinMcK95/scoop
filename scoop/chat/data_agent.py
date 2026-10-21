@@ -55,11 +55,16 @@ around the track's motion). Region fields fetch only Gaia and SIMBAD galaxies un
 user asked for more (include: hst_jwst, qso, spectra). SCOOP never downloads images.
 - add_data: an archive SCOOP has a plug-in for (e.g. exoplanet_hosts) over the loaded field.
 - Size first. estimate_gaia gives a cone's Gaia source count in seconds; run_cone, \
-run_field and plan_region size themselves. Above {confirm:,} estimated sources nothing \
-starts without the user's go-ahead: report the size and options (smaller radius or \
+run_field and plan_region size themselves. Above {cone:,} estimated sources for a cone \
+or LVDB field (no row cap) or {confirm:,} for a region (capped at {slow:,} after its cuts) \
+nothing starts without the user's go-ahead: report the size and options (smaller radius or \
 area, shorter phi1 range, brighter gmax, tighter pm_window) and stop. When the context \
 says user_confirmed, start exactly what the user agreed to. Above {slow:,} rows the map \
 gets slow: say so. Regions near the Galactic plane hold ~10^5-10^6 stars per deg².
+- Archives: cones and regions fetch Gaia DR3 and SIMBAD galaxies only; add HST/JWST \
+observations, QSO catalogs or SDSS/DESI spectra (include: hst_jwst, qso, spectra) only \
+when the user asks for them or for what needs them (proper-motion epochs need hst_jwst; \
+RVs need spectra). run_field (LVDB objects) fetches every archive.
 - run_cone the first time: ra+dec OR name (not both: with coordinates, put the name \
 in label); a short label of plain words (e.g. "NGC 300 30 arcmin"); names Sesame \
 resolves (SIMBAD's main id, e.g. "Mayall II", not "Mayall II (G1)"). Streams are not \
@@ -131,8 +136,10 @@ data: each table's name, label, row count, source and the \
 query's limits (row limit reached? cuts applied?). Then anything you found but didn't \
 add, anything that failed, what you couldn't do, and whether you saved a draft skill. \
 Keep it short and factual.
-""".replace("{max_steps}", str(MAX_STEPS)).replace("{confirm:,}", f"{CONFIRM_ABOVE:,}").replace(
-    "{slow:,}", f"{60_000:,}")
+"""
+for _k, _v in {"{max_steps}": str(MAX_STEPS), "{confirm:,}": f"{CONFIRM_ABOVE:,}",
+               "{cone:,}": f"{60_000:,}", "{slow:,}": f"{60_000:,}"}.items():
+    DATA_AGENT_PROMPT = DATA_AGENT_PROMPT.replace(_k, _v)
 
 
 def _ok(text: str, tool_call_id: str) -> ToolMessage:
@@ -381,12 +388,16 @@ def build_data_tools(*, field: dict, store_rows, added: list[str], skills_dir: P
 # hand-off's user_confirmed.
 FIELD_TOOLS = ("find_lvdb", "run_field", "run_cone", "add_data")
 SLOW_IN_BROWSER = 60_000  # Gaia rows beyond which the map and plots slow down
+# Cones and LVDB fields have no row cap after cuts (regions stop at 60,000), so they need
+# the go-ahead from the same size the map handles comfortably.
+CONE_CONFIRM_ABOVE = SLOW_IN_BROWSER
 
 
 def _needs_go_ahead(est: dict, what: str) -> str:
     return json.dumps({"needs_confirmation": True, "gaia_estimate": est, "message": (
         f"{what} holds about {est['sources']:,} Gaia sources (sampled range {est['low']:,}-{est['high']:,}), "
-        f"above the {CONFIRM_ABOVE:,} that needs the user's go-ahead. Nothing was started. Report the size "
+        f"above the {CONE_CONFIRM_ABOVE:,} that needs the user's go-ahead for a cone (the field keeps every "
+        "source; the map slows down beyond that). Nothing was started. Report the size "
         "and the options (a smaller radius or area, a magnitude limit through plan_region, or going ahead); "
         "it runs only when the hand-off says user_confirmed.")})
 
@@ -441,7 +452,7 @@ def size_gated(tools: list, *, confirmed: bool, resolver=None, lvdb=None, estima
                     from .region_tools import diagnose_failure
                     return _error("Could not size the request, so nothing was started: "
                                   + await diagnose_failure(exc), tool_call_id)
-                if est["sources"] > CONFIRM_ABOVE and not confirmed:
+                if est["sources"] > CONE_CONFIRM_ABOVE and not confirmed:
                     return _error(_needs_go_ahead(est, what), tool_call_id)
             result = await t.ainvoke({"type": "tool_call", "name": t.name, "id": tool_call_id, "args": kwargs})
             if est is not None and hasattr(result, "update"):
@@ -506,10 +517,20 @@ def build_estimate_tool(*, resolver=None, estimate=None):
         except Exception as exc:
             from .region_tools import diagnose_failure
             return _error("Could not estimate: " + await diagnose_failure(exc), tool_call_id)
-        return _ok(_json({**est, "needs_confirmation": est["sources"] > CONFIRM_ABOVE,
+        return _ok(_json({**est, "needs_confirmation_as_a_cone": est["sources"] > CONE_CONFIRM_ABOVE,
+                          "needs_confirmation_as_a_region": est["sources"] > CONFIRM_ABOVE,
                           "slow_in_browser": est["sources"] > SLOW_IN_BROWSER}), tool_call_id)
 
     return estimate_gaia
+
+
+def _failures(messages: list) -> list[dict]:
+    """The data agent's failed tool calls: tool, reason and the arguments it passed."""
+    calls = {c["id"]: c for m in messages if isinstance(m, AIMessage) for c in m.tool_calls}
+    return [{"tool": calls.get(m.tool_call_id, {}).get("name") or m.name,
+             "reason": str(m.content)[:400],
+             "args": json.dumps(calls.get(m.tool_call_id, {}).get("args"), default=str)[:1500]}
+            for m in messages if isinstance(m, ToolMessage) and m.status == "error"]
 
 
 def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None, jobs=None):
@@ -555,10 +576,12 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
                        for n, t in field["tables"].items()}}}
         message = HumanMessage(content=f"{request}\n<context>{json.dumps(context, default=str)}</context>")
         artifacts: dict = {}
+        inner_failures: list[dict] = []
         try:
             result = await graph.ainvoke({"messages": [message], "artifacts": {}},
                                          config={"recursion_limit": 2 * MAX_STEPS + 1})
             artifacts = dict(result.get("artifacts") or {})
+            inner_failures = _failures(result["messages"])
             final = next((m for m in reversed(result["messages"]) if isinstance(m, AIMessage) and m.content),
                          None)
             report = final.content if final and isinstance(final.content, str) else str(final.content if final else "")
@@ -575,6 +598,8 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
         payload = ({"kind": "field_refresh", "key": key, "added": added} if added
                    else {"kind": "data_agent_report", "key": key})
         command = publish_result(tool_call_id, tool_call_id, payload, summary)
+        if inner_failures:  # the audit log records them with the chat agent's call
+            command.update["messages"][0].artifact = {"inner_failures": inner_failures}
         # What the data agent showed or started (plan outlines, focus, field jobs) reaches
         # the browser as this turn's artifacts, before the hand-off's own.
         command.update["artifacts"] = {**artifacts, **command.update["artifacts"]}
