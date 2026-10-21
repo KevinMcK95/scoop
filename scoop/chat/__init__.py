@@ -1,7 +1,7 @@
-"""Optional LangGraph chat scaffold; deliberately not imported by scoop's root.
+"""The LangGraph chat agent and its tools; deliberately not imported by scoop's root.
 
 Importing this package requires the optional LangGraph/LangChain dependencies.
-Models and tools are supplied by callers; no live services are constructed here.
+The graph takes its model and tools from callers (scoop.server builds them per turn).
 """
 
 from .graph import DEFAULT_SYSTEM_PROMPT, build_chat_graph

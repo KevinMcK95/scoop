@@ -60,8 +60,8 @@ def kernel_maker(made: list):
         if not name or name == "off":  # "off" saved in Settings overrides SCOOP_KERNEL
             return None
         kernel = AnalysisKernel(name, cwd=settings.get("kernel_cwd") or DEFAULT_CWD)
-        if kernel.problem():
-            raise ValueError(kernel.problem())
+        if problem := kernel.problem():
+            raise ValueError(problem)
         made.append(kernel)
         return kernel
 
@@ -132,7 +132,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                 await kernel.close()
 
         stack.push_async_callback(close_kernels)
-        script = Path(__file__).resolve().parents[2] / "smoke_tests" / "lvdb_field.py"
+        script = ROOT / "smoke_tests" / "lvdb_field.py"
         jobs = JobManager(fields_dir, script) if script.exists() else None
         app = create_app(audit_path=audit_path, fields=fields, settings=settings, make_model=make_model,
                          checkpointer=checkpointer, costs=CostTracker(settings_path.with_name("costs.json")),
@@ -168,7 +168,7 @@ def main() -> None:
     parser.add_argument("--threads", type=Path, default=None,
                         help="agent memory database (default ~/.config/scoop/threads.sqlite)")
     parser.add_argument("--fields", type=Path, default=ROOT / "out",
-                        help="directory of smoke-test outputs (<dir>/<key>_field.json)")
+                        help="directory of smoke-test outputs (<dir>/*/<key>_field.json)")
     args = parser.parse_args()
     args.audit_log.parent.mkdir(parents=True, exist_ok=True)
     import asyncio

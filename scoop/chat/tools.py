@@ -1,4 +1,4 @@
-"""Publishing contract for injected tools; no live archive tools are defined.
+"""Publishing contract for tools whose results carry an artifact for the browser.
 
 Tools should obtain the real call ID through ``ToolRuntime.tool_call_id`` or an
 ``Annotated[str, InjectedToolCallId]`` argument, then return ``publish_result``.

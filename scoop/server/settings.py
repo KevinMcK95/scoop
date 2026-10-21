@@ -45,10 +45,6 @@ class Settings:
         except (OSError, ValueError):
             pass
 
-    @property
-    def values(self) -> dict[str, str]:
-        return {**self.defaults, **self.saved}
-
     def get(self, name: str) -> str | None:
         return self.saved.get(name) or self.defaults.get(name) or None
 

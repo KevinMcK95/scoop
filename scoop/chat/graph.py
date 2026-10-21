@@ -78,7 +78,7 @@ def build_chat_graph(
 
     The model must implement ``bind_tools`` and its bound model must implement
     ``ainvoke(messages, config=...)``. Tools use runtime-injected call IDs and
-    return publish_result Commands. Invoke the compiled graph with ``ainvoke``;
+    return ToolMessages, or publish_result Commands for artifacts. Invoke the compiled graph with ``ainvoke``;
     supply a thread_id in config when using a checkpointer.
     """
     if not isinstance(tools, list) or not tools:

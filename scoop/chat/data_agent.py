@@ -84,8 +84,8 @@ the combined rows (a where condition) when you can, and say which you kept.
 8. If something isn't available through these tools (e.g. gravitational-wave \
 localizations), say so plainly and say where it lives; don't approximate it.
 9. Be economical: a typical request needs 3–8 tool calls ({max_steps} at most).
-9. Skills: say in your report when you followed a skill with status: draft (unreviewed). After adding data \
-from a survey with no reviewed skill, call save_skill_draft once with what you verified.
+10. Skills: say in your report when you followed a skill with status: draft (unreviewed). After adding data \
+from a survey with no reviewed skill, call save_skill_draft once.
 
 # Report (your final message, read by the chat agent)
 Start with what you added: each table's name, label, row count, source and the \

@@ -39,10 +39,10 @@ from ..cost import CostTracker, describe as describe_cost, estimate_tokens, pric
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
+from .ids import THREAD_ID, THREAD_ID_RULE
 from .settings import BASE_URL
 from .trace import TurnTracer
 
-THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
 MAX_MESSAGE_CHARS = 8000
 # SPEC.md caps a request at 12 tool steps; each step is an agent and a tools node.
 RECURSION_LIMIT = 2 * 12 + 1
@@ -128,7 +128,7 @@ def _reason(text: str) -> str:
 
 def _audit_record(request_id: str, thread_id: str, started: float, events: list[dict],
                   usage: dict[str, int], error: str | None, cost: dict | None = None) -> dict:
-    """One line per turn, named after the metrics_schema.json fields on origin/radha.
+    """One line per turn, named after the fields in metrics_schema.json.
 
     Judgment fields (task_success, user_accepted, citations_valid) are left for
     evaluation to add; the server cannot know them when the turn ends.
@@ -304,7 +304,7 @@ def create_app(
         """What this conversation may spend, has spent, and has left (null until it sets one)."""
         thread = request.path_params["thread"]
         if not THREAD_ID.fullmatch(thread):
-            return _bad_request("thread_id must be 8-64 letters, digits, '-' or '_'")
+            return _bad_request(THREAD_ID_RULE)
         model = model_id()
         return JSONResponse({"budget": costs.budget(thread), "default_budget_usd": round(costs.budget_usd, 6),
                              "model": model, "priced": price_for(model) is not None})
@@ -316,7 +316,7 @@ def create_app(
             return JSONResponse({"error": "Budgets can only be set from the SCOOP workspace."}, status_code=403)
         try:
             if not THREAD_ID.fullmatch(thread):
-                raise ValueError("thread_id must be 8-64 letters, digits, '-' or '_'")
+                raise ValueError(THREAD_ID_RULE)
             body = await request.json()
             return JSONResponse({"budget": costs.set_budget(thread, body["budget_usd"])})
         except (KeyError, TypeError, ValueError) as exc:
@@ -435,7 +435,7 @@ def create_app(
             thread_id, text = body["thread_id"], body["message"]
             context = body.get("context") or {}
             if not isinstance(thread_id, str) or not THREAD_ID.fullmatch(thread_id):
-                raise ValueError("thread_id must be 8-64 letters, digits, '-' or '_'")
+                raise ValueError(THREAD_ID_RULE)
             if not isinstance(text, str) or not text.strip() or len(text) > MAX_MESSAGE_CHARS:
                 raise ValueError(f"message must be 1-{MAX_MESSAGE_CHARS} characters")
             if not isinstance(context, dict):

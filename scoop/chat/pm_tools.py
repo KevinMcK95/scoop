@@ -58,11 +58,7 @@ def _err(text: str, tool_call_id: str) -> ToolMessage:
 
 
 def _ok(obj, tool_call_id: str) -> ToolMessage:
-    return ToolMessage(content=json.dumps(obj, default=_json_default), tool_call_id=tool_call_id)
-
-
-def _json_default(v):
-    return None if isinstance(v, float) and not math.isfinite(v) else str(v)
+    return ToolMessage(content=json.dumps(obj, default=str), tool_call_id=tool_call_id)
 
 
 def _clean(obj):
@@ -248,8 +244,9 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
             found, problem = await target_row()
             if found:
                 row, pms = found
-                exp = pm.expectations(row, n_stars=n_stars, star_error=after, floor=floor_mas_yr,
-                                      published_rows=pm.published(pms, row["key"]), n_mc=4000)
+                exp = await asyncio.to_thread(pm.expectations, row, n_stars=n_stars, star_error=after,
+                                              floor=floor_mas_yr, published_rows=pm.published(pms, row["key"]),
+                                              n_mc=4000)
                 out["with_new_epoch"] = {k: exp.get(k) for k in ("sample", "internal_dispersion_uas_yr",
                                                                  "best_published")}
             else:
@@ -293,7 +290,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
             if problem:
                 return _err(problem, tool_call_id)
             row, _ = found
-            exp = pm.expectations(row, n_stars=n_stars, n_mc=4000)
+            exp = await asyncio.to_thread(pm.expectations, row, n_stars=n_stars, n_mc=4000)
             disp = exp.get("internal_dispersion_uas_yr")
             if not disp:
                 return _err("The LVDB has no velocity dispersion for this object.", tool_call_id)
@@ -326,7 +323,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         """Fit a member sample and compare with the LVDB and any literature values given."""
         import numpy as np
 
-        from .. import members, pm
+        from .. import members
 
         num = members._finite
         dropped = {"no proper motion or error": 0, "not clean": 0, "error above max_pm_error_mas_yr": 0}
@@ -487,7 +484,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         published values and `literature`. With show, the members appear on the map as
         the layer "Members (SCOOP)", with its CMD region drawn on the CMD; the user's own
         Members layer is not changed."""
-        from .. import members, pm
+        from .. import members
 
         field = current_field()
         if field is None:
@@ -564,7 +561,7 @@ def build_pm_tools(*, field: dict | None | Callable[[], dict | None], lvdb_cache
         return publish_result(tool_call_id, tool_call_id, payload, json.dumps(
             _clean({**result, "layer": {"id": layer_id, "label": label,
                                         "note": "requested; shown once the browser acknowledges it"}}),
-            default=_json_default))
+            default=str))
 
     return [pm_expectations, pm_published, pm_new_epoch, pm_wait_time, fit_members, auto_members]
 

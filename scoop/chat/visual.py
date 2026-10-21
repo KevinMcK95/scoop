@@ -421,7 +421,7 @@ def build_map_tools(
         Layers with added=false are available but not on the user's list; showing
         one (visible true) adds it. layer.add / layer.update / layer.remove: show
         a table's rows filtered by
-        AND-ed clauses {column, op, value} (ops: == != < <= > >= in exists; and
+        AND-ed clauses {column, op, value} (ops: == != < <= > >= in exists inside lasso; and
         {column: "position", op: "within", value: {ra, dec, radius}} in degrees), with
         a style and label; pipeline layers can be hidden but not removed.
         focus (ra, dec, fov) or focus.rows (frame rows of a table); highlight
