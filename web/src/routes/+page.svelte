@@ -107,6 +107,12 @@
     document.getElementById('chat-draft')?.focus();
   }
   // One click: the agent checks SIMBAD and the literature at the selected row.
+  // From the Layers panel (e.g. constraints on planet hosts) to the chat, sent at once.
+  async function askInChat(text: string) {
+    workspace.draft = text;
+    chatOpen = true;
+    await workspace.send();
+  }
   async function lookupSelection() {
     const row = workspace.selectedRow;
     if (!row) return;
@@ -172,7 +178,7 @@
     <aside id="layers-drawer" class="left-drawer" class:collapsed={!layersOpen} inert={!layersOpen} aria-hidden={!layersOpen}>
       <div class="drawer-inner">
         <button class="drawer-close" aria-label="Close layers" title="Close layers" onclick={() => layersOpen = false}>×</button>
-        <LayersPanel {workspace} />
+        <LayersPanel {workspace} onask={askInChat} />
       </div>
     </aside>
     <div class="map-column">

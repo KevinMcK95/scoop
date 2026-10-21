@@ -21,7 +21,7 @@ class SourceRegistryTests(unittest.TestCase):
     def test_built_in_sources_are_discovered(self):
         self.assertEqual(set(SOURCES), {"target", "observations", "planned", "gaia", "spectra",
                                         "milliquas", "simbad_galaxies", "exoplanet_hosts", "tess_tois",
-                                        "hst_jwst_spectra", "tess_sectors", "tic"})
+                                        "hst_jwst_spectra", "tic"})
         self.assertIsNotNone(SOURCES["exoplanet_hosts"].query)  # queried on demand
         self.assertIsNotNone(SOURCES["tess_tois"].query)
 

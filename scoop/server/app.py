@@ -30,6 +30,7 @@ from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
 from .. import gaia_estimate
 from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
+from ..chat.exoplanet_agent import build_exoplanet_tool
 from ..chat.pm_agent import FIELD_READ_TOOLS, build_pm_handoff_tool
 from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
@@ -226,6 +227,15 @@ def create_app(
             return []
         from ..literature.tools import build_ads_tools
         return build_ads_tools(live["ads"])
+
+    def exoplanet_model(settings):
+        """The Settings model as an agentbook model, for the exoplanet agent (or None)."""
+        if settings is None or not settings.get("model"):
+            return None
+        from agentbook.models import OpenAIModel
+
+        return OpenAIModel(settings.get("model"), base_url=settings.get("base_url"),
+                           api_key=settings.get("api_key") or "unset")
 
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"chat": live["model"] is not None, "literature": live["ads"] is not None})
@@ -529,7 +539,9 @@ def create_app(
             *pm_tools, *(t for t in map_tools if t.name in FIELD_READ_TOOLS), *ads_tools(),
             *(t for t in web_tools if t.name == "web_fetch")])
         map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
-        tools = [*map_tools, handoff, pm_handoff, *ads_tools(), *web_tools,
+        # Exoplanet questions go to the fact-checked exoplanet agent, on the model from Settings.
+        exoplanet = build_exoplanet_tool(field=current_field, make_model=lambda: exoplanet_model(settings))
+        tools = [*map_tools, handoff, pm_handoff, exoplanet, *ads_tools(), *web_tools,
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]

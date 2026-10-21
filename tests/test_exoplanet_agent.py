@@ -9,9 +9,10 @@ import unittest
 
 from agentbook.models import FakeModel, call
 from agentbook.tools import ToolError, ToolRegistry
-from exoplanets.agent import SYSTEM, ask
+from exoplanets.agent import SYSTEM, ask, request_text
 from exoplanets.evaluate import score
 from exoplanets.tools import GET_ABSTRACT, GET_PLANETS
+from tests.test_exoplanet_checks import PLANETS
 from tests.test_exoplanet_claims import ABSTRACT, QUOTE, TESKE
 
 QUESTION = "Does TOI-561 b have an atmosphere?"
@@ -20,9 +21,9 @@ GOOD = json.dumps({"claims": [{"text": "JWST/NIRSpec found the dayside inconsist
 OVERSTATED = json.dumps({"claims": [{"text": "TOI-561 b has a thick atmosphere.", "source": TESKE, "quote": QUOTE}]})
 
 
-def registry(abstract=lambda bibcode: ABSTRACT) -> ToolRegistry:
+def registry(abstract=lambda bibcode: ABSTRACT, planets=lambda hostname: {}) -> ToolRegistry:
     return ToolRegistry([dataclasses.replace(GET_ABSTRACT, fn=abstract),
-                         dataclasses.replace(GET_PLANETS, fn=lambda hostname: {})])
+                         dataclasses.replace(GET_PLANETS, fn=planets)])
 
 
 class AgentLoopTests(unittest.TestCase):
@@ -79,6 +80,94 @@ class BenchmarkScoreTests(unittest.TestCase):
         self.assertTrue(s.checked)  # true to its source...
         self.assertEqual(s.missing, ["2026AJ....172..239B"])  # ...but incomplete
         self.assertFalse(s.passed)
+
+
+class ConstraintFlowTests(unittest.TestCase):
+    """Soft constraints: propose concrete criteria, confirm, then apply and highlight."""
+    REQUEST = "Add confirmed planet hosts with constraints: habitable, atmosphere claimed."
+    FIELD = "draco_1, center RA 346.6264, Dec -5.0435, radius 2 arcmin"
+    PROPOSAL = json.dumps({"proposal": {
+        "criteria": [{"constraint": "habitable", "means": "insolation 0.25-1.5 Earth", "uses": "archive"},
+                     {"constraint": "atmosphere claimed", "means": "a paper reports a detection", "uses": "literature"}],
+        "literature_planets": 7, "question": "Use these criteria, or change them?"}})
+    PASSES = json.dumps({"claims": [{"text": "TRAPPIST-1 e orbits every 6.10 days.",
+                                     "source": "NASA Exoplanet Archive", "quote": '"orbital_period_days": 6.101013'}],
+                         "highlight": {"table": "exoplanet_hosts", "ids": ["TRAPPIST-1"], "label": "Habitable"}})
+
+    def test_unconfirmed_constraints_get_a_proposal_to_show_the_user(self):
+        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.PROPOSAL])
+        result = ask(self.REQUEST, model, registry(), context=self.FIELD)
+        self.assertEqual(result.kind, "proposal")
+        self.assertTrue(result.checked, result.report.summary())
+        self.assertIn("**habitable** → insolation 0.25-1.5 Earth (archive)", result.text)
+        self.assertIn("papers of 7 planets checked", result.text)
+        self.assertIsNone(result.highlight)  # nothing is applied before the user confirms
+
+    def test_a_literature_criterion_without_a_planet_count_goes_back(self):
+        vague = json.dumps({"proposal": {"criteria": [{"constraint": "atmosphere claimed",
+                                                       "means": "a paper says so", "uses": "literature"}],
+                                         "question": "OK?"}})
+        model = FakeModel([vague, self.PROPOSAL])
+        result = ask(self.REQUEST, model, registry())
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("literature_planets", model.requests[1]["messages"][-1]["content"])
+
+    def test_confirmed_criteria_are_applied_and_highlighted(self):
+        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.PASSES])
+        result = ask(self.REQUEST, model, registry(planets=lambda hostname: PLANETS), context=self.FIELD,
+                     criteria="habitable = insolation 0.25-1.5 Earth")
+        self.assertEqual(result.kind, "result")
+        self.assertTrue(result.checked, result.report.summary())
+        self.assertEqual(result.highlight["ids"], ["TRAPPIST-1"])
+        sent = model.requests[0]["messages"][0]["content"]
+        self.assertIn("Confirmed criteria (apply exactly these): habitable = insolation", sent)
+
+    def test_a_highlight_id_no_tool_returned_fails(self):
+        invented = json.dumps({**json.loads(self.PASSES), "highlight": {"table": "exoplanet_hosts", "ids": ["Kepler-442"]}})
+        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), invented, invented])
+        result = ask(self.REQUEST, model, registry(planets=lambda hostname: PLANETS), criteria="habitable")
+        self.assertFalse(result.checked)
+        self.assertIn("Highlight id Kepler-442 was not returned by any tool", result.report.problems[0])
+
+    def test_a_vague_constraint_is_sent_back_to_the_user_to_define(self):
+        clarify = json.dumps({"clarify": {"constraints": ["habitable"], "question": "How do you define habitable? "
+                              "For example a range of insolation. Or I can suggest one from the literature."}})
+        result = ask("Add confirmed planet hosts with constraints: habitable.", FakeModel([clarify]), registry())
+        self.assertEqual(result.kind, "clarify")
+        self.assertTrue(result.checked)
+        self.assertTrue(result.text.startswith("How do you define habitable?"))
+
+    # A made-up paper (fictional bibcode), so no real abstract is misquoted.
+    HZ = {"bibcode": "2099TestJ...1....1A", "title": "A test habitable zone",
+          "abstract": "We define the habitable zone as insolation from 0.3 to 1.2 times the Earth's."}
+    SUGGESTION = {"constraint": "habitable", "means": "insolation 0.3-1.2 Earth", "uses": "archive",
+                  "suggested": True, "source": "2099TestJ...1....1A",
+                  "quote": "the habitable zone as insolation from 0.3 to 1.2 times the Earth's"}
+
+    def suggest(self, criterion):
+        proposal = json.dumps({"proposal": {"criteria": [criterion], "literature_planets": 0, "question": "Is this okay?"}})
+        model = FakeModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal, proposal])
+        return ask("Habitable: I have no definition, suggest one.", model, registry(abstract=lambda bibcode: self.HZ))
+
+    def test_a_suggested_definition_shows_its_one_reference_and_quote(self):
+        result = self.suggest(self.SUGGESTION)
+        self.assertTrue(result.checked, result.report.summary())
+        self.assertIn("insolation 0.3-1.2 Earth (archive), suggested from 2099TestJ...1....1A", result.text)
+        self.assertIn("> “the habitable zone as insolation from 0.3 to 1.2", result.text)
+
+    def test_a_suggested_definition_without_a_reference_fails(self):
+        result = self.suggest({k: v for k, v in self.SUGGESTION.items() if k not in ("source", "quote")})
+        self.assertFalse(result.checked)
+        self.assertIn("give the one paper it comes from", result.report.problems[0])
+
+    def test_a_suggested_range_that_differs_from_the_paper_fails(self):
+        result = self.suggest({**self.SUGGESTION, "means": "insolation 0.25-1.5 Earth"})
+        self.assertFalse(result.checked)
+        self.assertIn("the number 0.25 is not in any tool result", result.report.problems[0])
+
+    def test_the_request_carries_the_field_and_the_criteria(self):
+        self.assertEqual(request_text("Q?", "draco_1", None), "Q?\n\nField: draco_1")
+        self.assertEqual(request_text("Q?", None, None), "Q?")
 
 
 if __name__ == "__main__":

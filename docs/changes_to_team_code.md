@@ -326,3 +326,15 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
 - `scoop/server/app.py`: the chat agent gets `ask_pm_agent` instead of the PM tools.
   `tests/test_pm_agent.py` (new); `tests/test_pm.py`, `tests/test_server.py` follow the move.
 - `README.md`: five agents.
+
+## Merging the exoplanet agent into the chat (Xuan's 193b99d)
+
+- `193b99d` reached main with unresolved conflict markers in `scoop/server/app.py` and
+  `scoop/chat/prompt.py` (the server could not import). Resolved keeping both sides: the
+  data-agent and proper-motion-agent routing, plus Xuan's `ask_exoplanet_agent` and
+  `exoplanet_model`. Its prompt note "add_data it first" now says to ask the data agent
+  (which owns `add_data`, with Xuan's new `options`).
+- `tests/test_exoplanet_chat_tool.py`: skips without the chat dependencies, like the other
+  chat tests (it failed the light environment's suite).
+- `README.md`: the exoplanet agent is in the workspace (four agents there, the scout
+  outside).

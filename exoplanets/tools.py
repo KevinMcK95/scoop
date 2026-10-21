@@ -88,7 +88,7 @@ GET_PLANETS = Tool(
     description=(
         "Get every confirmed planet of one host star from the NASA Exoplanet Archive: orbital "
         "period (days), radius and mass (Earth units; mass_type says if it is a true mass or "
-        "M sin i), equilibrium temperature, discovery method, year, facility, and the "
+        "M sin i), equilibrium temperature, insolation (Earth = 1), discovery method, year, facility, and the "
         "discovery paper with its ADS bibcode. The hostname must match the archive exactly, "
         "so use a name returned by exoplanet_cone_search. Null means the archive has no value."),
     input_schema={
