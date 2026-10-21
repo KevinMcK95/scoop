@@ -1547,6 +1547,45 @@ body.resizing-y * {
   border-radius: 4px;
   font-size: 12px;
 }
+.model-picker {
+  position: relative;
+}
+.model-picker ul {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid #3b4b60;
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.4);
+}
+.model-picker li {
+  display: grid;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.model-picker li.active,
+.model-picker li:hover {
+  background: #1b2a3c;
+}
+.model-picker li small,
+.model-picker li.more {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.model-picker li.more {
+  cursor: default;
+}
+.model-picker .model-id {
+  overflow-wrap: anywhere;
+}
 .settings .secret {
   display: flex;
   gap: 4px;

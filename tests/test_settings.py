@@ -98,6 +98,60 @@ class SettingsEndpointTests(unittest.TestCase):
         self.assertEqual(self.post({"model": "bad model"}).status_code, 400)
 
 
+class ModelListParsingTests(unittest.TestCase):
+    def test_only_well_formed_entries_are_kept_sorted_and_deduplicated(self):
+        from scoop.server.model_list import parse_models
+
+        payload = {"data": [{"id": "z/b", "name": "B", "context_length": 128000}, {"id": "A/a"}, {"id": ""},
+                            {"name": "no id"}, "junk", {"id": "z/b"}, {"id": "c", "context_length": True}]}
+        self.assertEqual(parse_models(payload), [
+            {"id": "A/a", "name": None, "context_length": None},
+            {"id": "c", "name": None, "context_length": None},
+            {"id": "z/b", "name": None, "context_length": None}])
+        self.assertEqual(parse_models({"data": "nope"}), [])
+        self.assertEqual(parse_models([]), [])
+
+
+@unittest.skipUnless(HAS_SERVER, "optional server dependencies absent")
+class ModelListEndpointTests(unittest.TestCase):
+    SAVED = "https://openrouter.ai/api/v1"
+
+    def setUp(self):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "settings.json"
+        self.calls = []
+
+        async def list_models(base_url, api_key):
+            self.calls.append((base_url, api_key))
+            if "down" in base_url:
+                raise ConnectionError("refused")
+            return [{"id": f"{base_url}-model", "name": None, "context_length": None}]
+
+        settings = Settings(path)
+        settings.update({"base_url": self.SAVED, "api_key": KEY})
+        self.client = TestClient(create_app(settings=settings, make_model=lambda s: None, make_ads=lambda s: None,
+                                            list_models=list_models))
+
+    def get(self, query="", origin="http://127.0.0.1:5173"):
+        return self.client.get(f"/api/models{query}", headers={"Origin": origin})
+
+    def test_the_key_goes_only_to_the_saved_endpoint_and_lists_are_cached(self):
+        saved = self.get()
+        self.assertEqual(saved.json(), {"base_url": self.SAVED, "models": [{"id": f"{self.SAVED}-model", "name": None,
+                                                                             "context_length": None}]})
+        self.assertNotIn(KEY, saved.text)
+        self.get(f"?base_url={self.SAVED}")  # cached: no second request
+        other = "https://inference.example.org/v1"
+        self.get(f"?base_url={other}")
+        self.assertEqual(self.calls, [(self.SAVED, KEY), (other, None)])
+
+    def test_bad_urls_failures_and_other_sites_are_refused(self):
+        self.assertEqual(self.get("?base_url=http://plain.example").status_code, 400)
+        down = self.get("?base_url=https://down.example/v1")
+        self.assertEqual(down.status_code, 502)
+        self.assertIn("ConnectionError", down.json()["error"])
+        self.assertEqual(self.get(origin="https://evil.example").status_code, 403)
+
+
 class FakeKernel:
     def __init__(self, name):
         self.kernel_name, self.closed = name, False

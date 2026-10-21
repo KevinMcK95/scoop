@@ -17,6 +17,7 @@ DEFAULT_PATH = Path.home() / ".config" / "scoop" / "settings.json"
 FIELDS = ("model", "base_url", "api_key", "ads_token", "kernel", "kernel_cwd")
 SECRETS = ("api_key", "ads_token")
 MODEL_ID = re.compile(r"[\w.:/@+-]{1,120}")
+BASE_URL = re.compile(r"https://[^\s/]+(/[^\s]*)?")
 KERNEL_NAME = re.compile(r"[\w.-]{1,64}")  # a Jupyter kernel spec name
 
 
@@ -25,7 +26,7 @@ def _validate(name: str, value: str) -> None:
         raise ValueError(f"{name} must be a single-line string")
     if name == "model" and value and not MODEL_ID.fullmatch(value):
         raise ValueError("model must be a model id like openai/gpt-6-luna")
-    if name == "base_url" and value and not re.fullmatch(r"https://[^\s/]+(/[^\s]*)?", value):
+    if name == "base_url" and value and not BASE_URL.fullmatch(value):
         raise ValueError("base_url must be an https:// URL")
     if name == "kernel" and value and not KERNEL_NAME.fullmatch(value):
         raise ValueError("kernel must be a Jupyter kernel name like so or python3, or off")

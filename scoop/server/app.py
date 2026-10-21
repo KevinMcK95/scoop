@@ -39,6 +39,7 @@ from ..cost import CostTracker, describe as describe_cost, estimate_tokens, pric
 from ..fields import FieldStore, field_region
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
+from .settings import BASE_URL
 from .trace import TurnTracer
 
 THREAD_ID = re.compile(r"[A-Za-z0-9_-]{8,64}")
@@ -47,6 +48,9 @@ MAX_MESSAGE_CHARS = 8000
 RECURSION_LIMIT = 2 * 12 + 1
 MAX_CONSECUTIVE_FAILURES = 4
 
+
+
+MODEL_LIST_TTL = 600.0  # seconds an endpoint's model list is reused
 
 
 def _bad_request(message: str) -> JSONResponse:
@@ -176,6 +180,7 @@ def create_app(
     make_ads: Callable[[Any], Any] | None = None,
     make_kernel: Callable[[Any], Any] | None = None,
     list_kernels: Callable[[], list[dict]] | None = None,
+    list_models: Callable[[str, str | None], Any] | None = None,
 ) -> Starlette:
     """Build the API. ``model`` and ``ads_client`` may be None when unconfigured.
 
@@ -184,6 +189,7 @@ def create_app(
     a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
     ``kernel`` an AnalysisKernel in the user's own environment (off unless given, or made
     from settings by ``make_kernel``; ``list_kernels`` names the kernels Settings may choose);
+    ``list_models`` an async ``(base_url, api_key) -> models`` for the Settings model search;
     ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
     ``trace_store`` keeps developer traces of each turn for the Debug tab. With
     ``audit_path``, each turn appends one JSON line (no message text). ``costs`` is a
@@ -258,6 +264,30 @@ def create_app(
         return JSONResponse({**settings.public(), "chat": live["model"] is not None,
                              "literature": live["ads"] is not None, "kernel_on": live["kernel"] is not None,
                              "kernels": list_kernels() if list_kernels else [], "problems": problems})
+
+    model_lists: dict[tuple[str, bool], tuple[float, list]] = {}  # (endpoint, with key) -> (time, models)
+
+    async def get_models(request: Request) -> JSONResponse:
+        """The models an endpoint offers: the one given (?base_url=), else the saved one."""
+        if settings is None or list_models is None:
+            return JSONResponse({"error": "Model lists are not available."}, status_code=404)
+        if not same_site(request):
+            return JSONResponse({"error": "Model lists are only for the SCOOP workspace."}, status_code=403)
+        base_url = request.query_params.get("base_url") or settings.get("base_url")
+        if not base_url:
+            return JSONResponse({"base_url": None, "models": []})
+        if not BASE_URL.fullmatch(base_url):
+            return _bad_request("base_url must be an https:// URL")
+        # The saved API key is sent only to the saved endpoint.
+        key = settings.get("api_key") if base_url == settings.get("base_url") else None
+        cached = model_lists.get((base_url, bool(key)))
+        if cached is None or time.monotonic() - cached[0] > MODEL_LIST_TTL:
+            try:
+                cached = model_lists[(base_url, bool(key))] = (time.monotonic(), await list_models(base_url, key))
+            except Exception as exc:  # the endpoint is down, rejects the key, or has no /models
+                return JSONResponse({"error": f"Could not list the models at {base_url} ({type(exc).__name__})."},
+                                    status_code=502)
+        return JSONResponse({"base_url": base_url, "models": cached[1]})
 
     def model_id() -> str:
         """The model id turns are priced against: what Settings holds, else what the client reports."""
@@ -577,6 +607,7 @@ def create_app(
         Route("/api/health", health),
         Route("/api/settings", get_settings),
         Route("/api/settings", put_settings, methods=["POST"]),
+        Route("/api/models", get_models),
         Route("/api/budget/{thread}", get_budget),
         Route("/api/budget/{thread}", put_budget, methods=["POST"]),
         Route("/api/fields", list_fields),

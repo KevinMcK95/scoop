@@ -98,6 +98,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
+    from .model_list import model_lister
     from .trace import TraceStore
     from .settings import Settings
 
@@ -139,6 +140,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                          jobs=jobs, lvdb=LVDBIndex(fields_dir), fetch_image=cutout_fetcher(web),
                          web=(web_searcher(web), page_reader(web)), python=python,
                          make_kernel=kernel_maker(kernels), list_kernels=available_kernels,
+                         list_models=model_lister(web, attribution_headers),
                          figure_store=FigureStore(settings_path.parent / "figures"),
                          trace_store=TraceStore(settings_path.parent / "traces"))
         print(f"chat: {settings.get('model') or 'off (set a model in Settings)'}; "

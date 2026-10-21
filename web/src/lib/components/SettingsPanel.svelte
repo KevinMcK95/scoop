@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Workspace } from '../workspace/state.svelte';
-  import type { SettingName, SettingsView } from '../api/client';
+  import type { ModelInfo, SettingName, SettingsView } from '../api/client';
+  import ModelPicker from './ModelPicker.svelte';
   let { workspace }: { workspace: Workspace } = $props();
   // Endpoints and models offered by default; anything OpenAI-compatible works.
   const ENDPOINTS = [
@@ -18,6 +19,33 @@
   let status = $state('');
   let saving = $state(false);
   const endpoint = $derived(ENDPOINTS.find((e) => e.url === baseUrl));
+  // The endpoint's own model list (fetched by the server), after the suggested models.
+  let listed = $state<ModelInfo[]>([]);
+  let listStatus = $state('');
+  const models = $derived.by(() => {
+    const suggested = (endpoint?.models ?? []).map((id) => ({ id, name: null, context_length: null }));
+    const ids = new Set(listed.map((m) => m.id));
+    return [...suggested.filter((m) => !ids.has(m.id)), ...listed];
+  });
+  $effect(() => {
+    const url = baseUrl.trim();
+    const backend = workspace.backend;
+    listed = [];
+    listStatus = '';
+    if (!backend?.listModels || !view || !/^https:\/\/[^\s/]+/.test(url)) return;
+    let current = true;
+    // Wait for typing to pause before asking a custom endpoint.
+    const timer = setTimeout(async () => {
+      listStatus = 'Loading models…';
+      try {
+        const found = await backend.listModels!(url);
+        if (current) { listed = found; listStatus = found.length ? `${found.length} models at this endpoint; type to search.` : ''; }
+      } catch (error) {
+        if (current) listStatus = `Could not list models (${error instanceof Error ? error.message : error}); type a model id.`;
+      }
+    }, endpoint ? 0 : 400);
+    return () => { current = false; clearTimeout(timer); };
+  });
   const from = (name: SettingName) =>
     view?.sources?.[name] === 'settings' ? 'set here' : view?.sources?.[name] === 'environment' ? 'from environment' : '';
 
@@ -74,8 +102,8 @@
   {#if !endpoint}<input aria-label="Endpoint URL" bind:value={baseUrl} placeholder="https://…/v1" />{/if}
 
   <label for="set-model">Model</label>
-  <input id="set-model" bind:value={model} list="model-options" placeholder="e.g. openai/gpt-6-luna" />
-  <datalist id="model-options">{#each endpoint?.models ?? [] as m}<option value={m}></option>{/each}</datalist>
+  <ModelPicker id="set-model" bind:value={model} {models} placeholder="Search models, or type an id" />
+  {#if listStatus}<p class="muted">{listStatus}</p>{/if}
 
   <label for="set-key">API key</label>
   <div class="secret">
