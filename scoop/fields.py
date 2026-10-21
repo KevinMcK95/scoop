@@ -166,7 +166,7 @@ def field_from_viewer_data(data: dict) -> dict:
     column metadata, default layers and presets; enrichments then add
     cross-source columns and details. Nothing here names a data source.
     """
-    from .sources import ENRICHMENTS, SOURCES
+    from .sources import ENRICHMENTS, SOURCES, Column
 
     present, rows = [], {}
     for source in sorted(SOURCES.values(), key=lambda s: (s.order, s.name)):
@@ -184,7 +184,6 @@ def field_from_viewer_data(data: dict) -> dict:
     for enrichment in ENRICHMENTS:
         if all(name in rows for name in enrichment.needs):
             enrichment.apply(rows, data)
-    from .sources import Column
 
     # Positions are part of the field model, the same for every data source.
     position = {"ra": Column("deg", "ICRS right ascension"), "dec": Column("deg", "ICRS declination")}
@@ -364,7 +363,6 @@ def add_measurements(table: dict, roles: dict[str, str], name: str) -> None:
 def _combine(values: list[tuple[float, float | None]]) -> tuple[float, float | None]:
     """Inverse-variance mean (and its error) of repeated measurements; a plain mean when
     any error is missing."""
-    import math
     if all(e is not None and e > 0 for _, e in values):
         w = [1 / e ** 2 for _, e in values]
         return sum(v * wi for (v, _), wi in zip(values, w)) / sum(w), 1 / math.sqrt(sum(w))
@@ -423,7 +421,6 @@ def link_to_gaia(tables: dict, name: str, radius_arcsec: float = LINK_RADIUS_ARC
     one, else by position. Matched rows get gaia_id / gaia_match; Gaia rows get in_<name>
     and a details group, so clicking a star shows its entries in the new catalog."""
     import bisect
-    import math
 
     gaia, table = tables.get("gaia"), tables[name]
     if not gaia or table["kind"] != "catalog":

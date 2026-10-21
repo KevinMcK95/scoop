@@ -1,4 +1,4 @@
-"""Explicit JSON projection shared by future HTTP endpoints and agent tools.
+"""Explicit JSON projection shared by the HTTP endpoints and agent tools.
 
 Arbitrary raw native documents are deliberately omitted from the wire projection.
 Missing metadata stays null; no counts or source associations are inferred.

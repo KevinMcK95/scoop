@@ -18,6 +18,8 @@ import astropy.units as u
 from astropy.coordinates import CartesianDifferential, Galactocentric, SkyCoord
 from astropy.table import Table
 
+from .lvdb import LVDB_BASE, LVDB_RELEASE
+
 K = 4.740470463533348  # km/s per (kpc * mas/yr)
 
 # Secular aberration from the Solar System's acceleration, measured from Gaia
@@ -95,6 +97,15 @@ def secular_aberration_pm(ra, dec, kappa=ABERRATION_UAS_YR, direction=ABERRATION
     return kappa * np.tensordot(g, east, 1), kappa * np.tensordot(g, north, 1)
 
 
+def _region_points(ra, dec, radius_deg, n):
+    """An n x n grid of offsets across a circular region, keeping the points inside it (ICRS)."""
+    center = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
+    off = np.linspace(-radius_deg, radius_deg, n)
+    xx, yy = np.meshgrid(off, off)
+    inside = np.hypot(xx, yy) <= radius_deg
+    return SkyCoord(lon=xx[inside] * u.deg, lat=yy[inside] * u.deg, frame=center.skyoffset_frame()).icrs
+
+
 def perspective_change(ra, dec, radius_deg, d_kpc, pmra, pmdec, vlos, n=9):
     """Largest change (mas/yr) in the apparent proper motion across a region for
     points sharing the target's 3D velocity (perspective effect of its systemic
@@ -104,12 +115,7 @@ def perspective_change(ra, dec, radius_deg, d_kpc, pmra, pmdec, vlos, n=9):
                  radial_velocity=vlos * u.km / u.s)
     gc = Galactocentric()
     v = c.transform_to(gc).velocity
-    center = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
-    off = np.linspace(-radius_deg, radius_deg, n)
-    xx, yy = np.meshgrid(off, off)
-    inside = np.hypot(xx, yy) <= radius_deg
-    pts = SkyCoord(lon=xx[inside] * u.deg, lat=yy[inside] * u.deg,
-                   frame=center.skyoffset_frame()).icrs
+    pts = _region_points(ra, dec, radius_deg, n)
     xyz = SkyCoord(ra=pts.ra, dec=pts.dec, distance=d_kpc * u.kpc).transform_to(gc).cartesian
     npts = len(pts)
     same_v = CartesianDifferential(np.full(npts, v.d_x.value) * v.d_x.unit,
@@ -125,12 +131,7 @@ def region_variation(ra, dec, radius_deg, d_kpc, n=9):
     """How solar reflex (for objects at distance d) and secular aberration change
     across a circular region: values at the center and the largest difference
     from the center over a grid inside the region."""
-    center = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
-    off = np.linspace(-radius_deg, radius_deg, n)
-    xx, yy = np.meshgrid(off, off)
-    inside = np.hypot(xx, yy) <= radius_deg
-    pts = SkyCoord(lon=xx[inside] * u.deg, lat=yy[inside] * u.deg,
-                   frame=center.skyoffset_frame()).icrs
+    pts = _region_points(ra, dec, radius_deg, n)
     rx, ry = np.array([reflex_pm(a, b, d_kpc) for a, b in zip(pts.ra.deg, pts.dec.deg)]).T
     ax, ay = secular_aberration_pm(pts.ra.deg, pts.dec.deg)
     cx, cy = reflex_pm(ra, dec, d_kpc)
@@ -175,8 +176,6 @@ def star_error_for_dispersion(sigma_int, n_stars, frac=0.3):
     return sigma_int * np.sqrt(x) if x > 0 else np.nan
 
 
-GAIA_DR3_EPOCH = 2016.0
-LVDB_RELEASE = "v1.1.1"
 
 
 # ── Planning: proper-motion errors from epochs ───────────────────────────────
@@ -264,7 +263,7 @@ def reconcile(measurements: list[dict], floor: float = 0.0) -> dict:
     measurements: dicts with pmra, pmra_err, pmdec, pmdec_err (symmetric), citation.
     ``floor`` (mas/yr) is added in quadrature to every error."""
     out = {"n": len(measurements), "floor_mas_yr": floor, "notes": list(RECONCILE_NOTES),
-           "by_method": {g: sum(1 for m in measurements if m.get("group") == g)
+           "by_method": {g: sum(1 for m in measurements if m.get("group", "other") == g)
                          for g in sorted({m.get("group", "other") for m in measurements})}}
     for comp in ("pmra", "pmdec"):
         rows = [m for m in measurements if np.isfinite(m.get(comp, np.nan)) and np.isfinite(m.get(f"{comp}_err", np.nan))
@@ -293,9 +292,6 @@ def reconcile(measurements: list[dict], floor: float = 0.0) -> dict:
 
 
 # ── LVDB ─────────────────────────────────────────────────────────────────────
-
-LVDB_BASE = f"https://github.com/apace7/local_volume_database/releases/download/{LVDB_RELEASE}/"
-
 
 def load_lvdb(cache: Path):
     """The LVDB's combined table and its per-paper proper motions (pm_overview),
@@ -404,7 +400,7 @@ def _round_uas(v) -> float | None:
     return round(float(v) * 1e3, 2) if v is not None and math.isfinite(v) else None
 
 
-__all__ = ["GAIA_DR3_EPOCH", "K", "bulk_pm_error", "combine_errors", "dispersion_error", "expectations",
+__all__ = ["K", "bulk_pm_error", "combine_errors", "dispersion_error", "expectations",
            "galactocentric_velocity", "internal_pm_dispersion", "load_lvdb", "lvdb_row", "perspective_change",
            "pm_error_from_epochs", "pm_from_velocity", "published", "reconcile", "reflex_pm", "region_variation",
            "secular_aberration_pm", "star_error_for_bulk", "star_error_for_dispersion", "velocity_from_pm",

@@ -1,4 +1,4 @@
-"""Async ADS metadata client, adapted from ~/.agent-sh/extensions/ads/index.ts.
+"""Async ADS metadata client.
 
 httpx is an optional dependency of this module, not of literature.models.
 No agent framework, presentation formatting, PDF I/O, or automatic retries.

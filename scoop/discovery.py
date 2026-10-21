@@ -122,30 +122,28 @@ RA_NAMES = ("ra", "s_ra", "raj2000", "_raj2000", "ra_icrs", "radeg", "ra_deg")
 DEC_NAMES = ("dec", "s_dec", "dej2000", "_dej2000", "de_icrs", "dedeg", "dec_deg")
 
 
+def _by_ucd(table, ucds) -> str | None:
+    for ucd in ucds:
+        for c in table.colnames:
+            if str((table[c].meta or {}).get("ucd") or "").lower() == ucd:
+                return c
+    return None
+
+
+def _by_name(table, names) -> str | None:
+    lower = {c.lower(): c for c in table.colnames}
+    return next((lower[n] for n in names if n in lower), None)
+
+
 def position_columns(table) -> tuple[str | None, str | None]:
     """RA/Dec columns of an astropy table, by UCD first, then by common names."""
-    def by_ucd(ucds):
-        for ucd in ucds:
-            for c in table.colnames:
-                if str((table[c].meta or {}).get("ucd") or "").lower() == ucd:
-                    return c
-        return None
-
-    def by_name(names):
-        lower = {c.lower(): c for c in table.colnames}
-        return next((lower[n] for n in names if n in lower), None)
-
-    return by_ucd(UCD_RA) or by_name(RA_NAMES), by_ucd(UCD_DEC) or by_name(DEC_NAMES)
+    return (_by_ucd(table, UCD_RA) or _by_name(table, RA_NAMES),
+            _by_ucd(table, UCD_DEC) or _by_name(table, DEC_NAMES))
 
 
 def id_column(table) -> str | None:
     """The table's own identifier column, by UCD first, then by common names."""
-    for ucd in ID_UCDS:
-        for c in table.colnames:
-            if str((table[c].meta or {}).get("ucd") or "").lower() == ucd:
-                return c
-    lower = {c.lower(): c for c in table.colnames}
-    return next((lower[n] for n in ID_NAMES if n in lower), None)
+    return _by_ucd(table, ID_UCDS) or _by_name(table, ID_NAMES)
 
 
 def table_rows(table, *, prefix: str, ra_col: str | None = None, dec_col: str | None = None,

@@ -60,7 +60,7 @@ def _fit(x: np.ndarray, cov: np.ndarray) -> dict:
         best = 0.0
     floor = nll(best)
 
-    def crossing(a, b):  # where nll rises 0.5 (or `level`) above the minimum, between a and b
+    def crossing(a, b):  # where nll rises 0.5 above the minimum, between a and b
         return optimize.brentq(lambda s: nll(s) - floor - 0.5, a, b)
 
     top = max(best * 4, spread * 3)
