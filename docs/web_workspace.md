@@ -1,11 +1,11 @@
-# SvelteKit workspace sketch
+# SvelteKit workspace
 
 ## Scope
 
-The first frontend lives in `web/`: SvelteKit, Svelte 5, and TypeScript. It is a
-fixture-backed interaction sketch, **not a connected astronomical search app**.
-The Python library and optional LangGraph chat layer remain separate. No ADS
-credentials, model keys, or archive clients belong in the browser.
+The frontend lives in `web/`: SvelteKit, Svelte 5, and TypeScript. It is the
+user's side of SCOOP, connected to the Python server (`python -m scoop.server`),
+which runs the LangGraph agent and every archive client. No ADS credentials,
+model keys, or archive clients belong in the browser.
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
@@ -55,8 +55,8 @@ archive IDs or citations.
 ## Layer controls and toolbars
 
 The sky view needs a visible layer control, not just commands hidden in chat.
-Each layer has a stable ID, a display name, a type, visibility, and a retrieval
-or fixture origin. Hiding a layer never deletes scientific records. Removing a
+Each layer has a stable ID, a display name, a type, visibility, and an origin
+(pipeline, agent or user). Hiding a layer never deletes scientific records. Removing a
 presentation layer is also distinct from deleting a result artifact.
 
 Use a small sky toolbar for working actions: recenter and clear selection first;
@@ -72,33 +72,19 @@ so the user can inspect it, hide it, or remove it. Background imagery, source
 markers, footprints, and annotations are separate layer categories; adding a
 category to the schema does not claim that data for it has been loaded.
 
-## Initial interactions
+## Map actions
 
-1. Select a fixture source from the sky overlay or its accessible source list.
-2. Select a fixture publication independently.
-3. Send a message and inspect the selection context captured with that turn.
-4. Trigger an explicit local view action, such as centering or drawing an angular
-   circle. This demonstrates the command surface without pretending a model
-   generated the action.
+The user's controls and the agent's `update_map` share one set of typed actions:
+`layer.add`, `layer.update`, `layer.remove`, `focus`, `focus.rows`, `highlight`,
+`annotate`, `annotations.clear`, `select`, `plot.show` and `plot.hide`
+(`scoop/chat/visual.py`, `web/src/lib/field/actions.ts`). The browser validates
+each action against the loaded field, applies it, and acknowledges it on the next
+turn; the server only ever reports an agent's action as `requested`. Sent messages
+snapshot the selection, viewport and layers alongside the text. An annotation is
+not an archive record. See [map and agent interaction](map_interaction.md).
 
 Aladin survey imagery requires a network connection. A failed viewer must show a
-useful error and leave the rest of the workspace functional. Loaded imagery does
-not make the fixture catalog or fixture bibliography a real search result.
-
-## Implemented visual command boundary
-
-The browser supports `center`, `layer.visibility`, `sources.highlight`,
-`annotation.circle`, and `annotations.clear`. A copied command queue preserves
-multiple consecutive actions. The renderer reports applied/failed outcomes;
-visibility and annotation state update only after successful renderer calls.
-Sent messages snapshot the applied layers, highlights, and angular annotations
-alongside selections and viewport. An annotation is not an archive record.
-
-The optional Python `scoop.chat.visual.build_view_tools` exposes the same command
-shapes to LangGraph with server-supplied allowed layer/source IDs. It publishes
-`view_request` artifacts with status `requested`, never `applied`. The transport
-bridge and acknowledgment feedback to the graph are not connected yet. This
-keeps a future agent from claiming a display update before a renderer confirms it.
+useful error and leave the rest of the workspace functional.
 
 ## Debug traces (developer mode)
 
@@ -143,34 +129,27 @@ Estimates are calibrated per model from what turns actually cost, so they
 improve with use; see [What a command costs](../README.md#what-a-command-costs)
 and [`scoop/cost.py`](../scoop/cost.py).
 
-## Proposed backend integration (not implemented)
+## Backend integration
 
 ```text
 SvelteKit browser
-  ├─ submit chat + interaction snapshot ─────┐
-  ├─ submit explicit literature search ─────┤
-  └─ fetch result details ──────────────────┤
-                                           ▼
-                                      Python / FastAPI
-                                        ├─ LangGraph run
-                                        ├─ shared ADS/archive services
-                                        └─ authoritative result store
-                                           │
-  ◀── streamed messages, progress, result IDs, and view commands ──┘
+  ├─ POST /api/chat (message + workspace context) ──┐
+  ├─ fields, sources, jobs, literature, settings ──┤
+  └─ figures and traces per conversation ──────────┤
+                                                   ▼
+                                   Python (Starlette, scoop/server)
+                                     ├─ LangGraph turn, per-thread lock
+                                     ├─ shared ADS / archive services
+                                     └─ field store, budgets, audit log
+                                                   │
+  ◀── server-sent events: deltas, tool calls, map actions, usage, done ──┘
 ```
 
-Keep an HTTP API for submissions and an event stream for server-to-client
-updates. A useful future event envelope includes `event_id`, `run_id`, sequence,
-and event type. Distinguish message deltas, search progress, result availability,
-view requests, and run completion/failure. Reconnection, replay, cancellation,
-and authorization need explicit implementation before this is a production
-protocol; the sketch does not provide them.
-
-A view request should identify a command and its source run. The frontend should
-acknowledge whether it applied the command; otherwise the agent can only claim
-it requested a display update. Commands arriving after newer user interactions
-must not unexpectedly steal the viewport: introduce a view revision or an
-explicit focus policy when streaming is connected.
+Each turn is one POST answered by a stream of server-sent events. A turn can be
+stopped from the browser; a thread runs one turn at a time. Map actions the agent
+requests arrive as typed actions; the browser applies them and acknowledges each
+on the next turn, so the agent can say only that it *requested* a display change
+until the browser confirms it.
 
 ### Context and scientific trust
 
@@ -185,14 +164,5 @@ explicit focus policy when streaming is connected.
 - Keep observational metadata and bibliographic claims in tool results, not
   frontend presentation state.
 
-## Next implementation order
-
-1. Validate this layout and selection behavior in the browser.
-2. Define and test wire schemas shared by Python endpoints and frontend types.
-3. Connect chat streaming to the existing graph with a fixture tool.
-4. Connect one real resolver/search path and ADS through server-side services.
-5. Add result inspection, cancellation/reconnection, durable storage, and tests
-   across two isolated workspace sessions.
-
 See [LangGraph layout](langgraph_chat.md) for the graph boundary and
-[`web/README.md`](../web/README.md) for frontend commands and current behavior.
+[`web/README.md`](../web/README.md) for frontend commands and the code map.

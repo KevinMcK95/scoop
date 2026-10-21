@@ -45,33 +45,25 @@ before each tool call nor the source of authoritative results.
 
 ## Scientific tools
 
-The optional [ADS service and tool wrappers](ads_service.md) now implement
-`ads_search`, `ads_paper`, and `ads_citations`. Supply them through
-`build_ads_tools(client)`. They are not yet connected to the browser.
+`scoop/server/app.py` builds the tool list for every turn, bound to the field and
+layers the browser reports:
 
-The broader application-level tools below remain proposed:
+| Module | Tools |
+| --- | --- |
+| `chat/visual.py` | `load_field`, `describe_field`, `update_map`, `region`, `match`, `summarize`, `lookup` (SIMBAD), `overlaps`, `find_lvdb`, `run_field`, `run_cone`, `sky_image`, `add_data` |
+| `chat/region_tools.py` | `find_stream`, `plan_region`, `run_region` (boxes, polygons, stream tracks) |
+| `chat/data_agent.py` | `ask_data_agent`: a sub-agent with VizieR, registry/TAP and skill tools |
+| `chat/pm_tools.py` | `pm_expectations`, `pm_published`, `pm_new_epoch`, `pm_wait_time`, `fit_members`, `auto_members` |
+| `literature/tools.py` | `ads_search`, `ads_paper`, `ads_citations` (with an ADS token) |
+| `chat/web_tools.py` | `web_search`, `web_fetch` |
+| `chat/python_tool.py` | `run_python` (sandboxed Pyodide) |
+| `chat/kernel_tool.py` | `run_kernel` (the user's own Jupyter kernel; off unless chosen in Settings) |
 
-| Tool | Model-visible arguments | Result |
-| --- | --- | --- |
-| `resolve_target` | Name; optional resolver preference | Candidate identities, ICRS positions, ambiguity, provenance |
-| `search_observations` | Explicit region, archives/facilities, product kinds | Observation/product records plus every archive outcome |
-| `search_publications` | Targets and/or literature topic, date filters | Publication records and retrieval evidence |
-| `inspect_result` | Result ID, filters, pagination | Bounded detail from an existing artifact; no new archive search |
-| `prepare_download` | Existing product/result references | Proposed files, access restrictions, sizes if known |
-| `download_products` | Approved selection handle | Per-file status and provenance-bearing manifest |
-
-Tool schemas should be action-specific rather than a single free-form
-`constraints` argument exposed to the model. The current `SearchRequest` remains
-an internal handler request. Separate discovery from downloads: do not register
-an unrestricted file-writing tool in the initial chat loop. An approval-gated
-workflow can be added when downloads actually exist.
-
-The first graph accepts an injected tool list. It does **not** advertise these
-proposed tools until real implementations exist. A tool that discovers an
-expected service failure should return the normal failed/partial archive report,
-not claim an empty result. Invalid model-generated tool arguments return an
-error ToolMessage so the agent can correct them. Unexpected programming errors
-propagate from the initial ToolNode so they are visible during development.
+Tool schemas are action-specific rather than a single free-form `constraints`
+argument. There is no unrestricted file-writing or download tool. A tool that
+meets an expected service failure returns an error ToolMessage the agent can act
+on, not an empty result; unexpected programming errors propagate from the
+ToolNode so they are visible.
 
 ## Module layout
 
@@ -87,12 +79,23 @@ scoop/
   sandbox.py         # contained Python (Pyodide in Node, sandbox/runner.mjs) for run_python
   literature/        # ADS client and tools
   server/            # HTTP API, settings, background pipeline jobs
+  kernel.py          # a Jupyter kernel in the user's environment, for run_kernel
+  pm.py, members.py  # proper-motion planning and member fits
+  regions.py, streams.py   # box/polygon/stream-track regions
+  discovery.py       # VO registry, TAP and VizieR for the data agent
+  cost.py            # token estimates, prices and per-conversation budgets
+  scout/             # the monthly dataset scout
   chat/
     state.py         # messages and parallel-safe artifact reducer
-    tools.py         # publish a result + matching ToolMessage as one Command
+    tools.py         # tool_error, and publish_result (a result + ToolMessage as one Command)
+    prompt.py        # the workspace system prompt
     visual.py        # field, map, lookup and sky-image tools
+    region_tools.py  # region planning and runs
+    data_agent.py    # the data agent and its handoff tool
+    pm_tools.py      # proper-motion tools
     web_tools.py     # web_search and web_fetch tools
     python_tool.py   # run_python on the field's tables
+    kernel_tool.py   # run_kernel in the user's kernel
     graph.py         # injected model/tools, routing, checkpointer
     __init__.py      # optional chat API
 ```
@@ -142,21 +145,12 @@ result merges, checkpointed follow-ups, and thread isolation.
 
 The system prompt asks the agent to cite source evidence and explain gaps, but
 this is not a guarantee of faithful synthesis. Enforcing scientific claims
-requires structured evidence links and evaluation later. There is also no
-context compaction, inventory paging tool, durable artifact store, token/cost
-budgeting, or global archive concurrency limiter yet. Start with bounded results
+requires structured evidence links and evaluation (see `evaluation/`). Token
+costs are estimated and budgeted per conversation (`scoop/cost.py`); there is
+still no context compaction, inventory paging tool, durable artifact store, or
+global archive concurrency limiter. Start with bounded results
 and a recursion limit; large native tables/files should ultimately be stored
 outside checkpoints and referenced by handle.
-
-## Next implementation slice
-
-1. Implement `resolve_target` and one observation-search tool with fixture tests.
-2. Define explicit JSON projections for their domain models: native identities,
-   provenance, execution reports, and stable product/result handles; omit arbitrary
-   raw objects from checkpoints.
-3. Add `inspect_result` so follow-ups can inspect authoritative snapshots rather
-   than reconstructing evidence from conversational text.
-4. Only then add durable persistence, a chat frontend, and approval-gated downloads.
 
 ## References
 

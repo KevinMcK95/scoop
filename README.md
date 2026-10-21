@@ -31,12 +31,14 @@ literature-and-summary half of the tool.
 > working on a source (through papers, proposals and telegrams) is meant to
 > help people find related work and collaborators, and to credit that work.
 
-> **Status:** early development. Core data models and an optional LangGraph
-> chat/tool-loop scaffold are implemented, alongside a fixture-backed SvelteKit
-> workspace sketch. Live archive tools and the end-user Python/CLI examples below
-> remain planned. Start with the [web workspace](docs/web_workspace.md),
-> [LangGraph chat layout](docs/langgraph_chat.md), and
-> [core data model](docs/core_data_model.md).
+> **Status:** working research prototype. The [web workspace](#web-workspace)
+> (an Aladin Lite sky map with chat, layers, plots and tables) talks to a Python
+> server whose LangGraph agent uses live archive tools: field pipelines (Gaia,
+> HST/JWST, SDSS/DESI spectra, SIMBAD, MILLIQUAS), a data agent for VizieR and TAP
+> services, ADS literature, proper-motion planning, and code execution. The Python
+> `scoop()` API and CLI under [Planned usage](#planned-usage) are not built yet.
+> See the [workspace architecture](docs/web_workspace.md) and the
+> [chat agent's layout](docs/langgraph_chat.md).
 
 SCOOP is being built as part of the
 [Schmidt Agentic AI in Science workshop](https://ai-for-science.org/) hosted by
@@ -215,8 +217,8 @@ between calls. It is **not sandboxed** and is off until you choose a kernel in �
 
 ```bash
 pip install -e '.[kernel]'
-# once, inside the analysis environment:  python -m ipykernel install --user --name so
-python -m scoop.server   # then ⚙ Settings → Analysis kernel: so
+# once, inside the analysis environment:  python -m ipykernel install --user --name myenv
+python -m scoop.server   # then ⚙ Settings → Analysis kernel: myenv
 ```
 
 See [`scoop/kernel.py`](scoop/kernel.py).
@@ -438,21 +440,21 @@ Splitting the work this way means:
 - [x] Initial query and result models ([scope and limitations](docs/core_data_model.md))
 - [ ] Orchestrator and a shared message format for passing tasks and results between agents
 - [ ] Natural-language query parsing into structured query plans
-- [ ] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
-- [ ] Name resolution and SIMBAD/NED object lists
+- [x] Group, class and constraint queries (e.g. members of a group, QSOs in a region)
+- [x] Name resolution (Sesame) and SIMBAD object lists (NED object lists: not yet)
 - [ ] Merged SIMBAD + NED object profiles, with provenance and conflict flags
-- [ ] MAST (HST, JWST, TESS, GALEX) observations and spectra
+- [x] MAST HST/JWST observations (including planned ones) and spectra; TESS TOIs (GALEX: not yet)
 - [ ] IRSA, HEASARC and ESA archive modules
-- [ ] SDSS / DESI / LAMOST spectra
+- [x] SDSS / DESI spectra (LAMOST through the data agent's VizieR tools)
 - [ ] GW sky-map containment checks (GraceDB) and other multi-messenger alerts
-- [ ] ADS / arXiv literature retrieval
+- [x] ADS / arXiv literature retrieval
 - [ ] LLM-generated, citation-backed summaries
 - [ ] Topic-based literature search and summaries
 - [ ] Observing proposals (HST, JWST, Chandra, ALMA, …), including not-yet-executed programs
 - [ ] Astronomer's Telegrams and GCN Circulars for transients
 - [ ] Direct download of images, spectra and tables
-- [ ] Chat interface with follow-up refinement
-- [ ] Aladin Lite sky view in the HTML report
+- [x] Chat interface with follow-up refinement
+- [x] Aladin Lite sky view (in the web workspace)
 - [ ] CLI and HTML report
 - [ ] Caching and rate-limit handling
 - [x] Monthly dataset scout: find missing or superseded datasets and draft the
