@@ -91,7 +91,7 @@ export interface Backend {
   startJob(key: string, nRhalf?: number): Promise<JobView>;
   getSettings(): Promise<SettingsView>;
   listSources(): Promise<SourceInfo[]>;
-  addSource(field: string, source: string): Promise<{ rows: number }>;
+  addSource(field: string, source: string, options?: Record<string, number>): Promise<{ rows: number }>;
   saveSettings(changes: Partial<Record<SettingName, string>>): Promise<SettingsView>;
   // The models an endpoint offers (the saved one when baseUrl is omitted); optional for test doubles.
   listModels?(baseUrl?: string): Promise<ModelInfo[]>;
@@ -105,7 +105,9 @@ export interface Backend {
 }
 
 // A data source the server knows; queryable ones can be added to a field on demand.
-export interface SourceInfo { name: string; label: string; provenance: string; queryable: boolean }
+// A number the user can set before a data source's query (e.g. a magnitude limit).
+export interface SourceOption { name: string; label: string; default: number; min: number; max: number; step: number; help: string }
+export interface SourceInfo { name: string; label: string; provenance: string; queryable: boolean; options?: SourceOption[] }
 
 // One model an OpenAI-compatible endpoint lists at GET /models.
 export interface ModelInfo { id: string; name: string | null; context_length: number | null }
@@ -210,8 +212,9 @@ export function httpBackend(base = '/api', fetcher: typeof fetch = fetch): Backe
         return [];
       }
     },
-    async addSource(field, source) {
-      const response = await fetcher(`${base}/fields/${encodeURIComponent(field)}/sources/${encodeURIComponent(source)}`, { method: 'POST' });
+    async addSource(field, source, options) {
+      const response = await fetcher(`${base}/fields/${encodeURIComponent(field)}/sources/${encodeURIComponent(source)}`,
+        options ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ options }) } : { method: 'POST' });
       if (!response.ok) throw new Error(await errorText(response));
       return response.json();
     },

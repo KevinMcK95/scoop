@@ -128,6 +128,21 @@ The user starts from a description of the sky area they want. Three stages, buil
    TOIs, HST/JWST history) and the fact that FFIs are 200 s since 2022, so 2-min
    mainly helps short transits, flares and asteroseismology.
 
+**In SCOOP: a chat tool, not a panel** (decided 2026-10-20). The exoplanet agent becomes
+one tool of SCOOP's chat agent, `exoplanet_agent(question)`, chosen by its description
+(not by keywords: "planetary nebula" and "minor planets" are not exoplanet questions).
+Map actions stay with the chat ("show me the exoplanets" → `add_data`). The checked answer
+is shown unchanged, marked checked or not checked; the chat model does not retell it.
+Built and tested in agentbook first (`exoplanets/agent.py`, `exoplanets/checks.py`), using
+the model set in Settings through agentbook's `OpenAIModel`.
+
+**Fact-checking rules.** Every claim names a source and carries a verbatim excerpt of
+the tool result it rests on: for a paper, a sentence from its abstract (conditions and
+uncertainty kept); for an archive, the value as returned. Checked in code: the excerpt
+appears word for word in that source's tool result, bibcodes and numbers come from
+tools, and a claim does not drop the paper's hedging. A failed answer goes back to the
+model once; if it fails again it is shown as not checked.
+
 Ideas kept for stage 3: JWST transmission feasibility (TSM, Kempton et al. 2018) and
 PLATO coverage are tools, not separate agents. Benchmarks: TIC `Prior` (CTL
 priority), back-tests against later TOIs (`toi_created`), accepted TESS GI targets.

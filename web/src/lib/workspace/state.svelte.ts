@@ -407,13 +407,14 @@ export function createWorkspace(backend?: Backend, options: { pollMs?: number } 
       return [...tasks.map((task) => task.label),
         ...jobs.filter((job) => job.status === 'running').map((job) => `Running ${job.key} · ${job.elapsed_s.toFixed(0)} s`)];
     },
-    /** Query a data source the field lacks over its region, then add its layers. */
-    async addSource(name: string) {
+    /** Query a data source over the field's region (again, with new options, if it is
+     *  already there), then add its layers. */
+    async addSource(name: string, options?: Record<string, number>) {
       if (!backend || !field) return 'No field loaded.';
       const key = field.key;
       const label = sources.find((s) => s.name === name)?.label ?? name;
       try {
-        await track(`Querying ${label}…`, () => backend.addSource(key, name));
+        await track(`Querying ${label}…`, () => backend.addSource(key, name, options));
         await refreshField(key);
         return null;
       } catch (error) {

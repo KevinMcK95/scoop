@@ -624,18 +624,21 @@ class FieldStore:
             self._cache[key] = cached
         return cached[1]
 
-    def add_rows(self, key: str, source: str, rows: list[dict], meta: dict | None = None) -> None:
+    def add_rows(self, key: str, source: str, rows: list[dict], meta: dict | None = None,
+                 options: dict | None = None) -> None:
         """Store an on-demand query's rows for a field (replacing earlier ones).
 
         ``meta`` describes a table found by the data agent (label, provenance,
         kind, columns, layer style, the query), for sources with no plug-in.
+        ``options`` are the values the query ran with (e.g. a magnitude limit).
         """
         path = self._path(key)
         if path is None:
             raise KeyError(key)
         extra = self._extra(path)
         stored = json.loads(extra.read_text()) if extra.exists() else {}
-        stored[source] = {"rows": rows, **({"meta": meta} if meta else {})}
+        stored[source] = {"rows": rows, **({"meta": meta} if meta else {}),
+                          **({"options": options} if options else {})}
         extra.write_text(json.dumps(stored))
 
 

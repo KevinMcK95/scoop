@@ -412,6 +412,18 @@ describe('field workspace', () => {
     expect(workspace.messages.filter((m) => m.role === 'assistant')).toHaveLength(2);
   });
 
+  it('passes a data source\'s options (e.g. a magnitude limit) to its query', async () => {
+    const { fake } = backend();
+    const sent: unknown[] = [];
+    fake.addSource = async (_field, source, options) => { sent.push([source, options]); return { rows: 3 }; };
+    const workspace = createWorkspace(fake, { pollMs: 1 });
+    await workspace.connect();
+    resolveAll(workspace);
+    expect(await workspace.addSource('tic', { tmag_max: 13 })).toBeNull();
+    expect(await workspace.addSource('exoplanet_hosts')).toBeNull();
+    expect(sent).toEqual([['tic', { tmag_max: 13 }], ['exoplanet_hosts', undefined]]);
+  });
+
   it('says so instead of pretending when no agent is connected', async () => {
     const workspace = createWorkspace();
     workspace.draft = 'Hello';

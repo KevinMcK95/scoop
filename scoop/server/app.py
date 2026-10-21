@@ -381,28 +381,43 @@ def create_app(
             return _bad_request(f"Cannot run field: {exc}")
         return JSONResponse(job.view())
 
-    async def add_source(key: str, name: str) -> int:
-        """Run a data source's query for a field's region and keep its rows beside the field."""
-        from ..sources import SOURCES
+    async def add_source(key: str, name: str, options: dict | None = None) -> int:
+        """Run a data source's query for a field's region and keep its rows beside the field.
+
+        ``options`` set the source's declared options (e.g. a magnitude limit); others keep
+        their defaults. Raises ValueError for an unknown or out-of-range option."""
+        from ..sources import SOURCES, option_values
 
         source = SOURCES.get(name)
         field = fields.get(key) if fields else None
         if field is None or source is None or source.query is None:
             raise KeyError(f"no field {key!r} or no queryable data source {name!r}")
-        rows = await source.query(field_region(field))
-        fields.add_rows(key, name, rows)
+        values = option_values(source, options)
+        rows = await (source.query(field_region(field), **values) if source.options
+                      else source.query(field_region(field)))
+        fields.add_rows(key, name, rows, options=values or None)
         return len(rows)
 
     async def list_sources(request: Request) -> JSONResponse:
+        from dataclasses import asdict
+
         from ..sources import SOURCES
 
         return JSONResponse({"sources": [{"name": s.name, "label": s.label, "provenance": s.provenance,
-                                          "queryable": s.query is not None} for s in SOURCES.values()]})
+                                          "queryable": s.query is not None,
+                                          **({"options": [asdict(o) for o in s.options]} if s.options else {})}
+                                         for s in SOURCES.values()]})
 
     async def query_source(request: Request) -> JSONResponse:
         key, name = request.path_params["key"], request.path_params["name"]
         try:
-            added = await add_source(key, name)
+            body = json.loads(await request.body() or b"{}")
+            options = body.get("options") if isinstance(body, dict) else None
+            if options is not None and not isinstance(options, dict):
+                raise ValueError("options must be an object")
+            added = await add_source(key, name, options)
+        except ValueError as exc:
+            return _bad_request(f"Cannot query {name}: {exc}")
         except KeyError as exc:
             return JSONResponse({"error": str(exc)}, status_code=404)
         except Exception as exc:  # the archive failing is an outcome, not a crash
