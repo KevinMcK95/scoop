@@ -275,3 +275,15 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   instead of refused, the most common first-try `run_cone` failure in the run logs.
 - `scoop/resolve.py`: when Sesame is unreachable, names resolve through SIMBAD's TAP
   identifier table.
+
+## Small fields build; failed runs are visible to the data agent
+
+- `smoke_tests/lvdb_field.py`: `left_join` replaces astropy's `join` where a side can be
+  empty (a 5′ cone around TRAPPIST-1 has no Gaia galaxy candidates, and the whole field
+  failed); SDSS SkyServer failures are retried and then non-fatal, like DESI's (only a
+  certificate failure falls back to the system CA bundle). `tests/test_pipeline.py` (new).
+- `scoop/server/jobs.py`: `find` (by id or field key) and `recent_failures`;
+  `scoop/chat/data_agent.py`: a `job_log` tool (status, error, decisions and the output
+  tail with the traceback) and `recent_failed_runs` in the hand-off context, with prompt
+  rules to tell a transient archive error (retry once) from a SCOOP bug (report it with
+  the traceback; don't retry).

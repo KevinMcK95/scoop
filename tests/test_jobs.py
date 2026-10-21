@@ -78,6 +78,15 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clean_name("--out /tmp"), "out -tmp")
         self.assertEqual(clean_name("; rm -rf"), "rm -rf")
 
+    async def test_failures_are_listed_and_their_logs_found(self):
+        manager, job, _ = await self.run_job(FAIL_SCRIPT, key="nowhere_1")
+        self.assertIs(manager.find("nowhere_1"), job)
+        self.assertIs(manager.find(job.id), job)
+        recent = manager.recent_failures()
+        self.assertEqual([(r["key"], r["error"]) for r in recent],
+                         [("nowhere_1", "ValueError: LVDB key 'nowhere_1' not found")])
+        self.assertEqual(manager.recent_failures(within_s=0), [])
+
     async def test_arguments_are_validated_before_anything_runs(self):
         manager = JobManager(Path("."), Path("missing.py"))
         for key, n in (("Draco 1", 2), ("../etc", 2), ("draco_1; rm", 2), ("draco_1", 50)):

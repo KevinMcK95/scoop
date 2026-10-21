@@ -493,7 +493,7 @@ def create_app(
                     build_estimate_tool(resolver=resolver)]
 
         handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None,
-                                     field_tools=field_tools)
+                                     field_tools=field_tools, jobs=jobs)
         map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,

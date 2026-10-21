@@ -68,6 +68,12 @@ points: use find_stream / plan_region, never a cone around a stream's name.
 started. If a count or run fails or is slow, read its diagnosis (or call gaia_status): \
 network down → say so; stale SCOOP jobs → gaia_status clean_up=true, then retry once; \
 a dense region → propose a smaller one. Never repeat a failing request unchanged.
+- Failed runs: the context lists recent_failed_runs. Read job_log for the traceback \
+before answering. A network or archive error (timeouts, connection resets, an archive's \
+HTTP 5xx) is transient: retry once. A Python error inside SCOOP's pipeline (e.g. a \
+ValueError in lvdb_field.py) is a bug: retrying gives the same result, so report it as a \
+SCOOP bug with the error, the function and line from the traceback, and the inputs \
+(centre, radius), so it can be fixed; say what the user can do meanwhile.
 
 # Data for the loaded field
 
@@ -449,6 +455,24 @@ def size_gated(tools: list, *, confirmed: bool, resolver=None, lvdb=None, estima
     return [gate(t) if t.name in ("run_cone", "run_field") else t for t in tools]
 
 
+def build_job_log_tool(jobs):
+    @tool
+    async def job_log(ref: str, tool_call_id: Annotated[str, InjectedToolCallId],
+                      lines: Annotated[int, Field(ge=5, le=200)] = 60):
+        """A field run's log, by job id or field key (the latest run of that key): status,
+        error, its decisions, and the last `lines` lines of output, with the Python
+        traceback when it failed. Read it before reporting or retrying a failed field."""
+        job = jobs.find(ref) if jobs is not None else None
+        if job is None:
+            return _error(f"No run {ref!r} on this server (since it started). Recent failures: "
+                          f"{jobs.recent_failures() if jobs is not None else []}", tool_call_id)
+        return _ok(_json({"job": job.id, "key": job.key, "status": job.status, "error": job.error,
+                          "args": job.args, "decisions": job.decisions[-15:], "log": job.lines[-lines:]}),
+                   tool_call_id)
+
+    return job_log
+
+
 def build_estimate_tool(*, resolver=None, estimate=None):
     from ..regions import Region
     estimate = estimate or gaia_estimate.estimate
@@ -488,7 +512,7 @@ def build_estimate_tool(*, resolver=None, estimate=None):
     return estimate_gaia
 
 
-def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None):
+def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DIR, field_tools=None, jobs=None):
     """The chat agent's ``ask_data_agent`` tool: runs the data agent for one request.
     ``field`` is the field, or a function returning the turn's current field.
     ``field_tools(confirmed)`` returns the tools that start new fields (sized and gated
@@ -518,8 +542,13 @@ def build_handoff_tool(*, model, field, store_rows, skills_dir: Path = SKILLS_DI
             if store_rows is not None or field is None else []
         if field_tools is not None:
             tools += field_tools(user_confirmed)
+        if jobs is not None:
+            tools.append(build_job_log_tool(jobs))
         graph = build_chat_graph(model, tools, system_prompt=DATA_AGENT_PROMPT)
-        context = {"user_confirmed": user_confirmed, "field": None if field is None else {
+        # Runs that failed recently, so the data agent notices them without being told.
+        failures = jobs.recent_failures() if jobs is not None else []
+        context = {"user_confirmed": user_confirmed, "recent_failed_runs": failures[:5],
+                   "field": None if field is None else {
             "key": field["key"], "target": {k: field["target"].get(k) for k in ("name", "ra", "dec")},
             "region": field_region(field),
             "tables": {n: {"label": t["label"], "provenance": t["provenance"], "rows": len(t["rows"])}

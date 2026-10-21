@@ -382,6 +382,20 @@ def run_tap(adql: str, what: str) -> Table:
     return res, server
 
 
+def left_join(a: Table, b: Table, key: str) -> Table:
+    """join(a, b, join_type="left") that also works when either table is empty (astropy
+    refuses): a small field often has no QSO or galaxy candidates at all (a 5' cone around
+    TRAPPIST-1 failed this way, 2026-10-21). b's columns are then added, all masked."""
+    from astropy.table import MaskedColumn
+    if len(a) and len(b):
+        return join(a, b, keys=key, join_type="left")
+    out = a.copy()
+    for name in b.colnames:
+        if name != key and name not in out.colnames:
+            out[name] = MaskedColumn(np.zeros(len(out), dtype=b[name].dtype), mask=np.ones(len(out), bool))
+    return out
+
+
 def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
     path = cache / "gaia.ecsv"
     if path.exists():
@@ -398,8 +412,7 @@ def query_gaia(tgt, radius_deg: float, cache: Path) -> Table:
     gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
                      "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
                      f"ON g.source_id = q.source_id WHERE {circle}", "galaxy_candidates")
-    out = join(src, qso, keys="source_id", join_type="left")
-    out = join(out, gal, keys="source_id", join_type="left")
+    out = left_join(left_join(src, qso, "source_id"), gal, "source_id")
     # Known variables masquerading as QSO candidates (RR Lyrae in dSphs). Look up
     # by source_id: a spatial join against vari_rrlyrae took minutes, this < 1 s.
     cand = np.asarray(out["source_id"])[as_bool(out["in_qso_candidates"])]
@@ -476,15 +489,21 @@ def system_ca_bundle() -> str | None:
 def sdss_sql(sql: str) -> Table:
     import requests
     params = {"cmd": sql, "format": "csv"}
-    try:
-        r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
-    except requests.exceptions.SSLError:
-        ca = system_ca_bundle()
-        if ca is None:
-            raise RuntimeError("SkyServer's certificate failed verification and no system "
-                               "certificate bundle was found; set SCOOP_CA_BUNDLE to one")
-        r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=ca)
-    r.raise_for_status()
+
+    def get():
+        try:
+            r = requests.get(SKYSERVER_SQL, params=params, timeout=300)
+        except requests.exceptions.SSLError as e:
+            if "CERTIFICATE_VERIFY_FAILED" not in str(e):
+                raise  # a dropped connection (e.g. SSLEOFError), retried below, not a certificate
+            ca = system_ca_bundle()
+            if ca is None:
+                raise RuntimeError("SkyServer's certificate failed verification and no system "
+                                   "certificate bundle was found; set SCOOP_CA_BUNDLE to one")
+            r = requests.get(SKYSERVER_SQL, params=params, timeout=300, verify=ca)
+        r.raise_for_status()
+        return r
+    r = with_retries(get, "SkyServer", tries=3)
     text = r.text.split("\n", 1)[1] if r.text.startswith("#Table") else r.text
     return Table.read(text, format="ascii.csv")
 
@@ -499,6 +518,42 @@ def query_spectra(tgt, radius_deg: float, cache: Path, stars_only: bool = False)
     p_sdss, p_desi = cache / "sdss_allspec.ecsv", cache / "desi_dr1.ecsv"
     if p_sdss.exists() and p_desi.exists():
         return Table.read(p_sdss), Table.read(p_desi)
+    try:
+        sdss = query_sdss(tgt, radius_deg)
+    except Exception as e:  # one archive being down shouldn't lose the whole field
+        note(f"SDSS DR20 (SkyServer) failed ({str(e)[:120]}); this field has no SDSS spectra. "
+             "Re-run the field to try again.")
+        sdss = Table({c: np.array([], dtype=d) for c, d in SDSS_EMPTY_COLUMNS.items() if c not in MATCH_COLUMNS})
+        sdss_failed = True
+    else:
+        sdss_failed = False
+
+    try:
+        desi = query_desi(tgt, radius_deg, stars_only)
+    except Exception as e:  # one archive being down shouldn't lose the whole field
+        note(f"DESI DR1 (NOIRLab Data Lab) failed ({str(e)[:120]}); this field has no DESI spectra. "
+             "Re-run the field to try again.")
+        desi = Table({c: np.array([], dtype=d) for c, d in DESI_EMPTY_COLUMNS.items()})
+        if not sdss_failed:
+            sdss.write(p_sdss, overwrite=True)  # cache SDSS only, so a re-run retries DESI
+        return sdss, desi
+    if sdss_failed:  # cache DESI only, so a re-run retries SDSS
+        _write_str(desi, p_desi)
+        return sdss, desi
+    for t, p in ((sdss, p_sdss), (desi, p_desi)):
+        _write_str(t, p)
+    return sdss, desi
+
+
+def _write_str(t: Table, p: Path) -> None:
+    for c in t.colnames:
+        if t[c].dtype == object:
+            t[c] = t[c].astype(str)
+    t.write(p, overwrite=True)
+
+
+def query_sdss(tgt, radius_deg: float) -> Table:
+    """SDSS DR20 allspec rows in a cone, with the Gaia IDs SDSS-V records (spAll)."""
     r_arcmin = radius_deg * 60
     cone = f"dbo.fGetNearbyAllspecEq({tgt['ra']}, {tgt['dec']}, {r_arcmin}) AS n"
     n = int(sdss_sql(f"SELECT COUNT(*) AS n FROM {cone}")["n"][0])
@@ -520,21 +575,7 @@ def query_spectra(tgt, radius_deg: float, cache: Path, stars_only: bool = False)
     # Explicit int64: an empty list would otherwise become a float column (see ids.py).
     sdss["survey_gaia_id"] = np.array([gmap.get(_int(x), 0) for x in sdss["sdss_id"]], dtype=np.int64)
     sdss["survey_gaia_release"] = "unknown"   # not documented in the pages we checked
-
-    try:
-        desi = query_desi(tgt, radius_deg, stars_only)
-    except Exception as e:  # one archive being down shouldn't lose the whole field
-        note(f"DESI DR1 (NOIRLab Data Lab) failed ({str(e)[:120]}); this field has no DESI spectra. "
-             "Re-run the field to try again.")
-        desi = Table({c: np.array([], dtype=d) for c, d in DESI_EMPTY_COLUMNS.items()})
-        sdss.write(p_sdss, overwrite=True)  # cache SDSS only, so a re-run retries DESI
-        return sdss, desi
-    for t, p in ((sdss, p_sdss), (desi, p_desi)):
-        for c in t.colnames:
-            if t[c].dtype == object:
-                t[c] = t[c].astype(str)
-        t.write(p, overwrite=True)
-    return sdss, desi
+    return sdss
 
 
 OPTIONAL_ARCHIVES = {"hst_jwst": "HST/JWST observations", "qso": "QSO catalogs (MILLIQUAS, Quaia)",
@@ -570,7 +611,7 @@ def query_desi(tgt, radius_deg: float, stars_only: bool = False) -> Table:
     if mws_rows:
         from astropy.table import vstack, unique
         mws = unique(vstack(mws_rows), keys="targetid")
-        desi = join(desi, mws, keys="targetid", join_type="left")
+        desi = left_join(desi, mws, "targetid")
     # DESI's ref_cat 'G2' means the ID is a Gaia DR2 source_id.
     desi["survey_gaia_release"] = "DR2"
     desi["survey_gaia_id"] = np.array([
@@ -1070,7 +1111,7 @@ def query_gaia_region(region, cuts, cache: Path) -> Table:
         gal, _ = run_tap("SELECT q.source_id, q.classlabel_dsc_joint AS gal_classlabel_dsc_joint "
                          "FROM gaiadr3.galaxy_candidates AS q JOIN gaiadr3.gaia_source AS g "
                          f"ON g.source_id = q.source_id WHERE {where}", "galaxy_candidates")
-        part_t = join(join(src, qso, keys="source_id", join_type="left"), gal, keys="source_id", join_type="left")
+        part_t = left_join(left_join(src, qso, "source_id"), gal, "source_id")
         tables.append(part_t)
         if cuts.get("pm_window"):
             # A stream proper-motion cut removes every QSO (they don't move), so also take this

@@ -98,6 +98,21 @@ class JobManager:
         return self._launch(key, 1.0, ["--ra", repr(float(ra)), "--dec", repr(float(dec)),
                                        "--radius-arcmin", repr(float(radius_arcmin)), "--name", name])
 
+    def find(self, ref: str) -> Job | None:
+        """A job by id, or the latest job for a field key."""
+        if ref in self.jobs:
+            return self.jobs[ref]
+        matches = [j for j in self.jobs.values() if j.key == ref]
+        return max(matches, key=lambda j: j.started) if matches else None
+
+    def recent_failures(self, within_s: float = 3600.0) -> list[dict]:
+        """Runs that failed in the last ``within_s`` seconds, newest first: what an agent
+        should know about before it starts (or retries) a field."""
+        now = time.monotonic()
+        failed = [j for j in self.jobs.values() if j.status == "failed" and j.finished and now - j.finished < within_s]
+        return [{"job": j.id, "key": j.key, "error": j.error, "minutes_ago": round((now - j.finished) / 60, 1)}
+                for j in sorted(failed, key=lambda j: j.finished, reverse=True)]
+
     # ── Regions: a plan is a saved spec (with cuts), counted before it is run ──
     def save_plan(self, spec: dict, name: str) -> str:
         """Store a region spec (validated by the caller) under a new plan id."""
