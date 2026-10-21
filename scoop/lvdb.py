@@ -24,6 +24,8 @@ class LVDBIndex:
         if self._rows is None:
             path = next(iter(sorted(self.root.glob(f"*/cache/{CACHE_NAME}"))), None)
             if path is None:
+                path = self._shared_copy()
+            if path is None:
                 return None
             from astropy.table import Table
 
@@ -33,6 +35,20 @@ class LVDBIndex:
                            "rhalf_arcmin": num(r["rhalf"]), "distance_kpc": num(r["distance"])}
                           for r in table]
         return self._rows
+
+    def _shared_copy(self) -> Path | None:
+        """The table the proper-motion tools keep in <fields>/lvdb_cache/, downloaded
+        once if no field has cached it yet: on a fresh install find_lvdb had nothing to
+        search, so a dwarf galaxy became a plain cone (2026-10-21)."""
+        from .pm import LVDB_RELEASE, load_lvdb
+
+        path = self.root / "lvdb_cache" / f"lvdb_{LVDB_RELEASE}_comb_all.ecsv"
+        if not path.exists():
+            try:
+                load_lvdb(path.parent)
+            except Exception:  # offline: no index yet, as before
+                return None
+        return path if path.exists() else None
 
     def search(self, text: str, limit: int = 10) -> list[dict] | None:
         """Objects whose key or name contains the text (ignoring case, spaces and

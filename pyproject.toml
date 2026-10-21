@@ -16,8 +16,21 @@ chat = [
     "langgraph>=1.2.16,<2",
     "langchain-core>=1.6.12,<2",
 ]
-# The exoplanet data source runs Xuan Ji's exoplanets/archive.py (plain requests).
-exoplanets = ["requests>=2.32,<3"]
+# The exoplanet data source runs Xuan Ji's exoplanets/archive.py (plain requests); the
+# exoplanet agent runs on agentbook (tool schemas checked with jsonschema).
+exoplanets = ["requests>=2.32,<3", "jsonschema>=4.21,<5"]
+# The field pipeline (smoke_tests/lvdb_field.py), which the workspace runs for new fields:
+# MOCs for footprints and coverage, astroquery for MAST/Gaia/VizieR/SIMBAD, matplotlib for
+# the static map. A fresh `.[server]` install lacked mocpy and could not build any field.
+fields = [
+    "mocpy>=0.13,<1",
+    "astropy>=7",
+    "astroquery>=0.4.11",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "requests>=2.32,<3",
+    "pyvo>=1.5,<2",
+]
 # The monthly dataset scout: ADS over httpx, the agentbook loop (jsonschema), and
 # a model client. Data sources it generates query TAP with pyvo.
 scout = [
@@ -38,7 +51,7 @@ discovery = [
 # Stellar-stream tracks for region searches along streams (scoop/streams.py reads its files).
 streams = ["galstreams>=1.2.1,<2"]
 server = [
-    "scoop-sky[chat,literature,discovery,streams]",
+    "scoop-sky[chat,literature,discovery,streams,fields,exoplanets]",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",

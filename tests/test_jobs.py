@@ -121,9 +121,11 @@ except ModuleNotFoundError:
 @unittest.skipUnless(Table, "astropy absent")
 class LVDBIndexTests(unittest.TestCase):
     def test_search_by_name_or_key(self):
+        from unittest import mock
         from scoop.lvdb import CACHE_NAME, LVDBIndex
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(LVDBIndex(Path(tmp)).search("leo"))
+            with mock.patch("scoop.pm.load_lvdb", side_effect=OSError("offline")):
+                self.assertIsNone(LVDBIndex(Path(tmp)).search("leo"))  # no copy anywhere, and offline
             (Path(tmp) / "draco" / "cache").mkdir(parents=True)
             Table({"key": ["leo_1", "leo_2", "ursa_minor_1"], "name": ["Leo I", "Leo II", "Ursa Minor"],
                    "ra": [152.1, 168.4, 227.3], "dec": [12.3, 22.2, 67.2], "rhalf": [3.6, 2.5, 18.2],
@@ -135,6 +137,24 @@ class LVDBIndexTests(unittest.TestCase):
             self.assertEqual(index.search("  "), [])
             self.assertTrue(index.has("leo_2"))
             self.assertFalse(index.has("leo_9"))
+
+    def test_a_fresh_install_uses_the_shared_copy(self):
+        # No field has cached the LVDB yet: the index reads (or fetches once) the copy the
+        # proper-motion tools keep in <fields>/lvdb_cache/.
+        from unittest import mock
+        from scoop.lvdb import LVDBIndex
+        from scoop.pm import LVDB_RELEASE
+
+        def fetch(cache):
+            cache.mkdir(parents=True, exist_ok=True)
+            Table({"key": ["draco_1"], "name": ["Draco"], "ra": [260.07], "dec": [57.92], "rhalf": [9.67],
+                   "distance": [81.6]}).write(cache / f"lvdb_{LVDB_RELEASE}_comb_all.ecsv")
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("scoop.pm.load_lvdb", side_effect=fetch) as fetched:
+                index = LVDBIndex(Path(tmp))
+                self.assertEqual([r["key"] for r in index.search("Draco")], ["draco_1"])
+                self.assertTrue(index.has("draco_1"))
+            fetched.assert_called_once()
 
 
 if __name__ == "__main__":

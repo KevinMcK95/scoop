@@ -369,3 +369,22 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   `scoop/server/app.py`). `tests/test_freshness.py` (new).
 - `scoop/chat/data_agent.py`: the prompt lists `add_data`'s source names from the plug-in
   registry (the triage agent's first report: the data agent guessed "toi" and "tess").
+
+## A fresh clone installs and runs; the README starts with the workspace
+
+Tested from a fresh clone and a new Python 3.12 environment, following the README.
+
+- `pyproject.toml`: a `fields` extra (mocpy, astropy, astroquery, numpy, matplotlib,
+  requests, pyvo) for the field pipeline, and `jsonschema` in `exoplanets` (agentbook needs
+  it), both now in `server`. Before, `pip install -e '.[server]'` started a workspace that
+  could not build any field (no mocpy) or answer exoplanet questions.
+- `scoop/lvdb.py` (Yilun's): on a fresh install no field had cached the LVDB yet, so
+  `find_lvdb` had nothing to search and Draco became a plain cone. The index now reads the
+  copy the proper-motion tools keep in `<fields>/lvdb_cache/`, downloading it once if needed
+  (additive; offline it behaves as before). `tests/test_jobs.py`: the index test is offline
+  explicitly; a new test for the shared copy.
+- `README.md`: reviewed throughout. A tested quick start for the web workspace first, then
+  what works today, the agents, the workspace, data coverage (today vs planned), costs (a
+  budget is optional), the scout, evaluation and demos, other ways in (the pipeline; the
+  planned Python API and CLI marked as planned), the original vision (kept, labelled), an
+  updated roadmap, and Yilun in the team list. Teammates' plan sections are unchanged.
