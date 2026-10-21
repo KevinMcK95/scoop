@@ -21,6 +21,27 @@ NAME = re.compile(r"[^\W_][\w .+\-()′'\"]{0,59}")
 MAX_CONE_ARCMIN = 60.0  # larger cones exceed the pipeline's Gaia row-limit check
 MAX_LINES = 200
 PLAN = re.compile(r"[0-9a-f]{12}")
+# Symbols agents put in labels ("0.5 deg² box", "NGC 300: 30′ cone", "Leo I/II"), mapped
+# to what NAME allows; anything else becomes a space.
+_NAME_SYMBOLS = {"°": " deg", "²": "2", "³": "3", "″": '"', "’": "'", "‘": "'", "“": '"', "”": '"',
+                 "–": "-", "—": "-", "±": "+-", "×": "x", "&": "and", "/": "-", ":": " -", ",": " ",
+                 "~": "", "≈": "", "−": "-", "∈": " in ", "=": " "}
+
+
+def clean_name(text) -> str:
+    """A label the pipeline accepts (NAME), made from whatever the agent wrote: symbols
+    mapped or dropped, spaces collapsed, at most 60 characters at a word boundary. Run
+    logs showed most failed first run_cone calls were labels with ':', ',', '°', '²' or
+    more than 60 characters (2026-10-21)."""
+    out = "".join(_NAME_SYMBOLS.get(c, c) for c in str(text or ""))
+    out = re.sub(r"[^\w .+\-()′'\"]", " ", out).replace("_", " ")
+    out = re.sub(r"\s+", " ", out).strip(" .+-()'\"")
+    if len(out) > 60:
+        out = out[:61].rsplit(" ", 1)[0] if " " in out[:61] else out[:60]
+    out = out.strip(" .+-('\"")
+    if not NAME.fullmatch(out):
+        raise ValueError("the name needs letters or digits (e.g. 'NGC 300 30 arcmin')")
+    return out
 
 
 @dataclass
@@ -69,8 +90,7 @@ class JobManager:
             raise ValueError("ra must be in [0, 360) and dec in [-90, 90] degrees")
         if not (number(radius_arcmin) and 0 < radius_arcmin <= MAX_CONE_ARCMIN):
             raise ValueError(f"radius must be in (0, {MAX_CONE_ARCMIN:g}] arcmin")
-        if not isinstance(name, str) or not NAME.fullmatch(name):
-            raise ValueError("name must be 1-60 letters, digits, spaces or simple punctuation")
+        name = clean_name(name)
         # The pipeline derives the output key from the name the same way.
         key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
         if not KEY.fullmatch(key):
@@ -81,8 +101,7 @@ class JobManager:
     # ── Regions: a plan is a saved spec (with cuts), counted before it is run ──
     def save_plan(self, spec: dict, name: str) -> str:
         """Store a region spec (validated by the caller) under a new plan id."""
-        if not isinstance(name, str) or not NAME.fullmatch(name):
-            raise ValueError("name must be 1-60 letters, digits, spaces or simple punctuation")
+        name = clean_name(name)
         plan_id = uuid.uuid4().hex[:12]
         self.plans.mkdir(parents=True, exist_ok=True)
         (self.plans / f"{plan_id}.json").write_text(json.dumps({"name": name, "spec": spec}))

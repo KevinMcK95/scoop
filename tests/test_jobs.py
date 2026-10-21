@@ -70,10 +70,13 @@ class JobTests(unittest.IsolatedAsyncioTestCase):
         args = json.loads(next(l for l in job.lines if l.startswith("args"))[5:])
         self.assertEqual(args, ["--ra", "10.6847", "--dec", "41.269", "--radius-arcmin", "20.0",
                                 "--name", "M31 QSOs 20′"])
-        for bad in ((400, 0, 5, "x"), (10, 95, 5, "x"), (10, 0, 90, "x"), (10, 0, 5, "--out /tmp"),
-                    (10, 0, 5, "; rm -rf"), (10, 0, 5, "___"), (True, 0, 5, "x")):
+        for bad in ((400, 0, 5, "x"), (10, 95, 5, "x"), (10, 0, 90, "x"), (10, 0, 5, "___"), (True, 0, 5, "x")):
             with self.assertRaises(ValueError, msg=bad):
                 manager.start_cone(*bad)
+        # Labels are cleaned, not refused: nothing in them can read as an option or a command.
+        from scoop.server.jobs import clean_name
+        self.assertEqual(clean_name("--out /tmp"), "out -tmp")
+        self.assertEqual(clean_name("; rm -rf"), "rm -rf")
 
     async def test_arguments_are_validated_before_anything_runs(self):
         manager = JobManager(Path("."), Path("missing.py"))

@@ -30,5 +30,33 @@ class SesameTests(unittest.TestCase):
         self.assertIsNone(parse_sesame("<html>503</html"))
 
 
+class FallbackTests(unittest.IsolatedAsyncioTestCase):
+    async def test_simbad_answers_when_sesame_is_unreachable(self):
+        from scoop.resolve import sesame_resolver
+
+        class Response:
+            def __init__(self, text):
+                self.text = text
+
+            def raise_for_status(self):
+                pass
+
+        class Client:
+            queries = []
+
+            async def get(self, url, timeout):
+                raise ConnectionError("cds.unistra.fr unreachable")
+
+            async def post(self, url, data, timeout):
+                self.queries.append(data["QUERY"])
+                return Response('main_id,ra,dec,otype\n"NGC   300",13.7227,-37.6842,"GiG"\n')
+
+        client = Client()
+        found = await sesame_resolver(client)("O'Neil  NGC 300")
+        self.assertEqual((found["ra"], found["name"]), (13.7227, "NGC 300"))
+        self.assertIn("Sesame unreachable", found["resolver"])
+        self.assertIn("i.id = 'O''Neil NGC 300'", client.queries[0])  # quotes doubled, spaces collapsed
+
+
 if __name__ == "__main__":
     unittest.main()

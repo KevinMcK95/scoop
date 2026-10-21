@@ -20,6 +20,8 @@ from pydantic import Field
 from .tools import publish_result
 
 MAX_GAIA_ROWS = 60_000  # what the browser shows comfortably; beyond this, cut or shrink
+CONFIRM_ABOVE = 500_000  # estimated Gaia sources in a request: only with the user's go-ahead
+COUNT_MAX = 3_000_000  # above this an exact count takes minutes: plan on the estimate
 Pair = Annotated[list[float], Field(min_length=2, max_length=2)]
 
 
@@ -83,7 +85,10 @@ def _region_or_none(cls, spec: dict):
         return None
 
 
-def build_region_tools(*, jobs=None, resolver=None) -> list:
+def build_region_tools(*, jobs=None, resolver=None, confirmed: bool | None = None, estimate=None) -> list:
+    """``confirmed`` is the user's go-ahead as the data agent's hand-off carries it (None:
+    the caller has no hand-off, so run_region's own user_confirmed decides). ``estimate``
+    sizes a region (scoop.gaia_estimate.estimate); None disables sizing."""
     from .. import streams
     from ..regions import Region
 
@@ -204,32 +209,57 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
             plan_id = jobs.save_plan({**region.to_spec(), "cuts": counted_cuts}, name)
         except ValueError as exc:
             return _err(f"Could not save the plan: {exc}", tool_call_id)
+        _, _, radius = region.bounding_cone()
+        actions = [{"type": "annotate", "shape": "polygon", "ra": region.ra, "dec": region.dec,
+                    "text": f"{name} (planned)", "points": _outline_points(region.outline())},
+                   {"type": "focus", "ra": region.ra, "dec": region.dec, "fov": min(180.0, max(0.1, 2.4 * radius))}]
+        # Size it first (seconds): an exact count scans every source, so over a dense
+        # region the count is itself the expensive query.
+        sized = None
+        if estimate is not None:
+            try:
+                sized = await asyncio.to_thread(estimate, region)
+            except Exception as exc:
+                return _err(f"Could not size the region (plan {plan_id}): " + await diagnose_failure(exc, region),
+                            tool_call_id)
+        big = sized is not None and sized["sources"] > CONFIRM_ABOVE
+        out = {"plan_id": plan_id, "region": region.describe(), "source": spec.get("source"),
+               "archives": ["gaia", "simbad_galaxies", *sorted(set(include))],
+               "cuts": counted_cuts, "cuts_are": "proposed (not chosen by the user yet)" if (not cuts and proposed)
+               else ("given" if cuts else "none")}
+        if sized is not None:
+            out["gaia_estimate"] = sized
+        if region.kind == "band":
+            out["cut_frame"] = ("pm_window is in the stream frame: |mu_phi1 cos phi2 - track| <= w_phi1 and "
+                                "|mu_phi2 - track| <= w_phi2, with the track's motion taken at each star's phi1")
+        if big and not confirmed or (sized is not None and sized["sources"] > COUNT_MAX):
+            out.update(needs_confirmation=big and not confirmed, notes=[
+                f"About {sized['sources']:,} Gaia sources in the region (all G; sampled range "
+                f"{sized['low']:,}-{sized['high']:,}), above the {CONFIRM_ABOVE:,} that needs the user's "
+                "go-ahead" + (" and too many to count exactly in reasonable time" if sized["sources"] > COUNT_MAX
+                              else "") + ". Not counted exactly.",
+                *([crowding_note(region)] if crowding_note(region) else []),
+                "Tell the user the size and offer: a smaller area or shorter phi1 range, a brighter gmax, "
+                "a tighter pm_window, or going ahead (the run counts with the cuts first and stops if more "
+                f"than {MAX_GAIA_ROWS:,} rows pass)."])
+            return publish_result(tool_call_id, tool_call_id, {"kind": "map_actions", "status": "requested",
+                                                               "actions": actions}, json.dumps(out))
         try:
             counts = await jobs.count_plan(plan_id)
         except (ValueError, RuntimeError) as exc:
             return _err(f"Could not count the region (plan {plan_id}): " + await diagnose_failure(exc, region),
                         tool_call_id)
-        _, _, radius = region.bounding_cone()
-        out = {"plan_id": plan_id, "region": region.describe(), "source": spec.get("source"),
-               "archives": ["gaia", "simbad_galaxies", *sorted(set(include))],
-               "cuts": counted_cuts, "cuts_are": "proposed (not chosen by the user yet)" if (not cuts and proposed)
-               else ("given" if cuts else "none"),
+        out.update({
                "gaia_rows": {"in_region": counts["gaia_all"], "with_cuts_at_most": counts["gaia_with_cuts"]},
                "limit": MAX_GAIA_ROWS, "fits": counts["gaia_with_cuts"] <= MAX_GAIA_ROWS,
                "notes": [counts["note"],
                          "Fetched by default: Gaia DR3 (with the cuts) and SIMBAD galaxies. Also included: "
                          + (", ".join(sorted(set(include))) or "nothing else (HST/JWST, QSO catalogs and spectra "
                             "only if the user asks: include)") + ".",
-                         "Confirm the region and cuts with the user before run_region."]}
+                         "Confirm the region and cuts with the user before run_region."]})
         crowded = crowding_note(region)
         if crowded:
             out["notes"].insert(0, crowded)
-        if region.kind == "band":
-            out["cut_frame"] = ("pm_window is in the stream frame: |mu_phi1 cos phi2 - track| <= w_phi1 and "
-                                "|mu_phi2 - track| <= w_phi2, with the track's motion taken at each star's phi1")
-        actions = [{"type": "annotate", "shape": "polygon", "ra": region.ra, "dec": region.dec,
-                    "text": f"{name} (planned)", "points": _outline_points(region.outline())},
-                   {"type": "focus", "ra": region.ra, "dec": region.dec, "fov": min(180.0, max(0.1, 2.4 * radius))}]
         return publish_result(tool_call_id, tool_call_id, {"kind": "map_actions", "status": "requested",
                                                            "actions": actions}, json.dumps(out))
 
@@ -247,9 +277,10 @@ def build_region_tools(*, jobs=None, resolver=None) -> list:
         when it is ready."""
         if jobs is None:
             return _err("Running new fields is not available on this server.", tool_call_id)
-        if not user_confirmed:
-            return _err("Ask the user to confirm the region and cuts first (show the counts from plan_region).",
-                        tool_call_id)
+        if not user_confirmed or confirmed is False:
+            return _err("Ask the user to confirm the region and cuts first (show the counts from plan_region)"
+                        + ("; their go-ahead reaches the data agent as the hand-off's user_confirmed."
+                           if confirmed is False else "."), tool_call_id)
         plan = jobs.load_plan(plan_id)
         if plan is None:
             return _err(f"No plan {plan_id!r}; call plan_region first.", tool_call_id)

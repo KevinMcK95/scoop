@@ -25,6 +25,9 @@ class PromptTests(unittest.TestCase):
         names |= {t.name for t in build_web_tools(object(), object())}
         names |= {t.name for t in build_python_tools(object())}
         names |= {t.name for t in build_kernel_tools(object())}
+        # Tools that start downloads are the data agent's (its prompt describes them).
+        from scoop.chat.data_agent import FIELD_TOOLS
+        names -= set(FIELD_TOOLS)
         missing = [n for n in sorted(names) if not re.search(rf"\b{n}\b", WORKSPACE_PROMPT)]
         self.assertEqual(missing, [], "describe these tools in scoop/chat/prompt.py")
 

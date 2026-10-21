@@ -95,6 +95,23 @@ class RegionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Galactic plane", failed.content)  # b ~ -0.7 deg there
         self.assertIn("Do not repeat", failed.content)
 
+    async def test_large_regions_wait_for_the_go_ahead_and_are_not_counted(self):
+        est = {"sources": 14_600_000, "low": 3_000_000, "high": 25_000_000, "area_deg2": 40.0}
+        tools = {t.name: t for t in build_region_tools(jobs=self.jobs, resolver=resolver, confirmed=False,
+                                                       estimate=lambda region: est)}
+        counted = []
+        self.jobs.count_plan = lambda plan_id: counted.append(plan_id)  # never awaited if all is well
+        command = await tools["plan_region"].ainvoke({"type": "tool_call", "name": "plan_region", "id": "p1", "args": {
+            "shape": "box", "name": "plane box", "ra": 196.0, "dec": -63.5, "width_deg": 6}})
+        result = json.loads(command.update["messages"][0].content.rsplit("\nArtifact:", 1)[0])
+        self.assertTrue(result["needs_confirmation"])
+        self.assertEqual(result["gaia_estimate"]["sources"], 14_600_000)
+        self.assertEqual(counted, [])
+        refused = await tools["run_region"].ainvoke({"type": "tool_call", "name": "run_region", "id": "r1", "args": {
+            "plan_id": result["plan_id"], "user_confirmed": True}})
+        self.assertEqual(refused.status, "error")  # the hand-off did not carry the user's go-ahead
+        self.assertEqual(self.jobs.started, [])
+
     async def test_gaia_status_tool_reports_findings(self):
         from unittest import mock
         from scoop import gaia_status

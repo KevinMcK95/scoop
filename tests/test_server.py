@@ -471,3 +471,17 @@ class ParallelCommandEventTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CleanNameTests(unittest.TestCase):
+    def test_agent_labels_are_cleaned_not_refused(self):
+        try:
+            from scoop.server.jobs import clean_name
+        except ModuleNotFoundError:
+            self.skipTest("server dependencies absent")
+        self.assertEqual(clean_name("COSMOS 0.5 deg² box"), "COSMOS 0.5 deg2 box")
+        self.assertEqual(clean_name("Leo I/II, combined"), "Leo I-II combined")
+        self.assertEqual(clean_name("GD-1 (PWB18) φ1∈[−42.8,−22.8]"), "GD-1 (PWB18) φ1 in -42.8 -22.8")
+        self.assertLessEqual(len(clean_name("x " * 80)), 60)
+        with self.assertRaises(ValueError):
+            clean_name(":::")

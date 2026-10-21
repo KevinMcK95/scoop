@@ -28,7 +28,8 @@ from starlette.routing import Route
 
 from ..chat import build_chat_graph
 from ..chat.prompt import WORKSPACE_PROMPT
-from ..chat.data_agent import build_handoff_tool
+from .. import gaia_estimate
+from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
 from ..chat.pm_tools import build_pm_tools
 from ..chat.region_tools import build_region_tools
 from ..chat.visual import build_map_tools
@@ -479,14 +480,25 @@ def create_app(
                 current.clear()
                 current.update(refreshed)
 
-        # The data agent runs on the same model, for data the field doesn't have yet.
-        handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None)
+        # The data agent runs on the same model and decides every download: new fields (the map
+        # tools that start runs, the region tools), sized and gated on the user's go-ahead, and
+        # data the field doesn't have yet. The chat agent keeps the rest of the map tools.
+        starters = [t for t in map_tools if t.name in FIELD_TOOLS]
+
+        def field_tools(confirmed: bool) -> list:
+            return [*size_gated(starters, confirmed=confirmed,
+                                resolver=resolver, lvdb=lvdb),
+                    *build_region_tools(jobs=jobs, resolver=resolver, confirmed=confirmed,
+                                        estimate=gaia_estimate.estimate),
+                    build_estimate_tool(resolver=resolver)]
+
+        handoff = build_handoff_tool(model=model, field=current_field, store_rows=store_rows if fields else None,
+                                     field_tools=field_tools)
+        map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
         # Proper-motion expectations and planning; the LVDB tables are cached beside the fields.
         pm_tools = build_pm_tools(field=current_field, lvdb_cache=Path(fields.root) / "lvdb_cache" if fields else None,
                                   layers=layers, known_layers=known_layers)
-        # Fields over boxes, polygons and stream tracks: planned and counted, then run once confirmed.
-        region_tools = build_region_tools(jobs=jobs, resolver=resolver)
-        tools = [*map_tools, *region_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
+        tools = [*map_tools, handoff, *pm_tools, *ads_tools(), *(build_web_tools(*web) if web else []),
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),
                  *(extra_tools() if extra_tools else [])]

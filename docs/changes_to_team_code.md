@@ -251,3 +251,27 @@ queued every later query for hours, and the chat agent retried `plan_region` thr
   loads the alphabetically first field.
 - `smoke_tests/lvdb_field.py`: abandoned TAP jobs are aborted by id over UWS (astroquery's
   `job.abort()` refuses when its cached phase is stale).
+
+## The data agent decides every download; requests are sized first
+
+- `scoop/chat/data_agent.py`: the data agent now owns new fields as well as new data:
+  `find_lvdb`, `run_field`, `run_cone`, `add_data` (the map tools, unchanged, handed to it
+  by the server), `find_stream` / `plan_region` / `run_region` / `gaia_status`, and
+  `estimate_gaia`. It works with no field loaded. `run_cone` / `run_field` are wrapped
+  (`size_gated`) so each is sized before it starts and refused above 500,000 estimated Gaia
+  sources unless the hand-off carries the user's go-ahead (`ask_data_agent(...,
+  user_confirmed=true)`); a name given with coordinates becomes the label. The fields and
+  map actions it starts reach the browser through the hand-off. A failing data agent
+  (e.g. the model endpoint unreachable) returns a report instead of ending the turn.
+- `scoop/gaia_estimate.py` (new): Gaia source counts in ~1 s from 8 small cones counted
+  exactly on the TAP sync endpoint, scaled by area (within ~2x; exact counts over dense
+  regions take minutes).
+- `scoop/chat/region_tools.py`: `plan_region` sizes the region first; above 500,000 it
+  needs the go-ahead before an exact count, and above 3 million it plans on the estimate.
+- `scoop/server/app.py`: the chat agent no longer has the field-starting tools; it keeps
+  `load_field` and routes every data request through `ask_data_agent`
+  (`scoop/chat/prompt.py`, `tests/test_prompt.py`).
+- `scoop/server/jobs.py`: labels are cleaned (`clean_name`: `:`, `,`, `/`, `°`, `²`, length)
+  instead of refused, the most common first-try `run_cone` failure in the run logs.
+- `scoop/resolve.py`: when Sesame is unreachable, names resolve through SIMBAD's TAP
+  identifier table.

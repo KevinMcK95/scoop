@@ -262,7 +262,7 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         update = result.update
         self.assertEqual(update["artifacts"]["h1"], {"kind": "field_refresh", "key": field["key"], "added": ["lamost"]})
         self.assertIn("Added table lamost", update["messages"][0].content)
-        self.assertIn("<field>", model.last[1].content)  # the request carried the field context
+        self.assertIn('"field": {"key": "mini_1"', model.last[1].content)  # the request carried the field context
         self.assertIn("survey_inventory", model.tools)
 
     async def test_existing_pipeline_tables_are_not_overwritten(self):
@@ -316,11 +316,67 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(refused.status, "error")
             self.assertEqual((skills / "surveys" / "lamost.md").read_text(), "reviewed")
 
+    async def test_new_fields_are_sized_and_need_the_users_go_ahead(self):
+        from langchain_core.tools import tool
+        from typing import Annotated
+        from langchain_core.tools import InjectedToolCallId
+        from scoop.chat.data_agent import build_estimate_tool, size_gated
+        from scoop.chat.tools import publish_result
+        started = []
+
+        @tool
+        async def run_cone(radius_arcmin: float, tool_call_id: Annotated[str, InjectedToolCallId],
+                           ra: float | None = None, dec: float | None = None, name: str | None = None,
+                           label: str | None = None):
+            """Start a cone."""
+            started.append({"ra": ra, "dec": dec, "name": name, "label": label})
+            return publish_result(tool_call_id, tool_call_id, {"kind": "field_job", "job": "j1", "key": "ngc_300"},
+                                  "Started field 'ngc_300'.")
+
+        sizes = {"sources": 2_000_000}
+
+        def estimate(region, gmax=None):
+            return {"sources": sizes["sources"], "low": 1, "high": 3, "area_deg2": region.area_deg2}
+
+        def factory(confirmed):
+            return [*size_gated([run_cone], confirmed=confirmed, estimate=estimate),
+                    build_estimate_tool(estimate=estimate)]
+
+        def handoff_with(*responses):
+            model = ScriptedModel(*responses)
+            return model, build_handoff_tool(model=model, field=None, store_rows=None, field_tools=factory)
+
+        cone = {"radius_arcmin": 60, "ra": 13.72, "dec": -37.68, "name": "NGC 300: a cone"}
+        model, handoff = handoff_with(call("run_cone", cone, "c1"), AIMessage(content="Needs a go-ahead."))
+        result = await handoff.ainvoke({"type": "tool_call", "name": "ask_data_agent", "id": "h1",
+                                        "args": {"request": "a degree around NGC 300"}})
+        self.assertEqual(started, [])  # 2 million sources: refused without the user's go-ahead
+        refusal = next(m for m in model.last if getattr(m, "tool_call_id", None) == "c1")
+        self.assertIn("needs_confirmation", refusal.content)
+        self.assertIn('"field": null', model.last[1].content)
+        self.assertNotIn("query_catalog", model.tools)  # no field: nothing to query over yet
+        self.assertIn("estimate_gaia", model.tools)
+
+        model, handoff = handoff_with(call("run_cone", cone, "c2"), AIMessage(content="Started ngc_300."))
+        result = await handoff.ainvoke({"type": "tool_call", "name": "ask_data_agent", "id": "h2",
+                                        "args": {"request": "go ahead", "user_confirmed": True}})
+        # Coordinates and a name: the name becomes the label rather than a second centre.
+        self.assertEqual(started, [{"ra": 13.72, "dec": -37.68, "name": None, "label": "NGC 300: a cone"}])
+        # The field job the data agent started reaches the browser through the hand-off.
+        self.assertEqual(result.update["artifacts"]["c2"]["kind"], "field_job")
+        self.assertIn("Fields started: ['ngc_300']", result.update["messages"][0].content)
+        sized = next(m for m in model.last if getattr(m, "tool_call_id", None) == "c2")
+        self.assertIn("about 2,000,000 Gaia sources", sized.content)
+
     def test_prompts_describe_every_tool(self):
         self.assertRegex(WORKSPACE_PROMPT, r"\bask_data_agent\b")
         field = field_from_viewer_data(viewer_data())
         for t in build_data_tools(field=field, store_rows=None, added=[]):
             self.assertTrue(re.search(rf"\b{t.name}\b", DATA_AGENT_PROMPT), t.name)
+        from scoop.chat.data_agent import FIELD_TOOLS
+        from scoop.chat.region_tools import build_region_tools
+        for name in [*FIELD_TOOLS, "estimate_gaia", *(t.name for t in build_region_tools())]:
+            self.assertTrue(re.search(rf"\b{name}\b", DATA_AGENT_PROMPT), name)
 
 
 if __name__ == "__main__":
