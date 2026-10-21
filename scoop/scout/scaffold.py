@@ -28,6 +28,10 @@ from datetime import date
 from pathlib import Path
 
 SLUG = re.compile(r"[a-z][a-z0-9_]{1,40}")
+# Text that goes into the generated Python (string literals, f-strings, comments) can
+# neither end the literal nor start an expression or a new line.
+TEXT = re.compile(r"[^\x00-\x1f\x7f\"\\{}]{1,200}")
+URL = re.compile(r"https://[^\s\"'\\{}]+")
 SECTIONS = (
     ("what_is_here", "What's here"),
     ("what_is_not_here", "What's NOT here"),
@@ -59,11 +63,11 @@ class Service:
     extra_columns: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.tap_url.startswith("https://"):
+        if not URL.fullmatch(self.tap_url or ""):
             raise ScaffoldError("tap_url must be an https URL read from the archive's own docs")
         for name, value in (("table", self.table), ("ra_column", self.ra_column),
                             ("dec_column", self.dec_column), ("id_column", self.id_column)):
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.\"]*", value or ""):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", value or ""):
                 raise ScaffoldError(f"{name} must be an identifier read from the service's schema, "
                                     f"got {value!r}")
         for column in self.extra_columns:
@@ -97,6 +101,10 @@ class Proposal:
     def __post_init__(self) -> None:
         if not SLUG.fullmatch(self.slug):
             raise ScaffoldError(f"slug must be lowercase snake_case, got {self.slug!r}")
+        for name in ("survey", "release", "bibcode", "probe_field"):
+            if not TEXT.fullmatch(getattr(self, name) or ""):
+                raise ScaffoldError(f"{name} must be one line of plain text without double quotes, "
+                                    f"backslashes or braces, got {getattr(self, name)!r}")
         if not self.sources_checked:
             raise ScaffoldError("sources_checked is empty: a skill may only state facts that were "
                                 "fetched from the archive in this scan")

@@ -297,6 +297,27 @@ class FetchTests(unittest.TestCase):
         with self.assertRaisesRegex(FetchError, "does not read"):
             Fetcher(client=transport, min_interval=0.0).get("https://sdss.org/a.fits")
 
+    def test_every_redirect_hop_is_checked(self):
+        def moved(location):
+            response = FakeResponse("", 302)
+            response.headers["location"] = location
+            return response
+        transport = FakeTransport({
+            "https://sdss.org/robots.txt": FakeResponse("", 404, "text/plain"),
+            "https://sdss.org/old": moved("/dr20/"),
+            "https://sdss.org/dr20/": FakeResponse("<p>DR20</p>"),
+            "https://sdss.org/out": moved("http://169.254.169.254/latest/meta-data/"),
+            "https://sdss.org/loop": moved("/loop"),
+        })
+        fetcher = Fetcher(client=transport, min_interval=0.0)
+        self.assertEqual(fetcher.get("https://sdss.org/old"), "DR20")
+        self.assertEqual(fetcher.fetched, ["https://sdss.org/dr20/"])
+        with self.assertRaisesRegex(FetchError, "not an allowed source"):
+            fetcher.get("https://sdss.org/out")
+        self.assertNotIn("http://169.254.169.254/latest/meta-data/", transport.requested)
+        with self.assertRaisesRegex(FetchError, "redirected more than"):
+            fetcher.get("https://sdss.org/loop")
+
     def test_oversized_text_is_truncated_with_a_note(self):
         transport = FakeTransport({
             "https://sdss.org/robots.txt": FakeResponse("", 404, "text/plain"),
@@ -341,6 +362,18 @@ class ProposalTests(unittest.TestCase):
         with self.assertRaisesRegex(ScaffoldError, "table"):
             Service(tap_url="https://x/tap", table="t; DROP TABLE x", ra_column="ra",
                     dec_column="dec", id_column="id")
+
+    def test_text_cannot_escape_into_the_generated_code(self):
+        for field, value in (("survey", "Foo {__import__('os').system('x')}"), ("release", 'DR1"\nimport os'),
+                             ("probe_field", "M31\nimport os"), ("bibcode", "2026a\\x")):
+            with self.subTest(field=field), self.assertRaisesRegex(ScaffoldError, field):
+                a_proposal(**{field: value})
+        for bad in ({"tap_url": 'https://x/tap"; import os; "'}, {"ra_column": 'ra"'}, {"table": '"t"'}):
+            fields = {"tap_url": "https://x/tap", "table": "t", "ra_column": "ra", "dec_column": "dec",
+                      "id_column": "id", **bad}
+            with self.subTest(bad=bad), self.assertRaises(ScaffoldError):
+                Service(**fields)
+        self.assertEqual(a_proposal(survey="Hubble's Legacy Field").survey, "Hubble's Legacy Field")
 
     def test_a_service_needs_the_position_that_was_probed(self):
         with self.assertRaisesRegex(ScaffoldError, "probe_ra"):
