@@ -309,6 +309,35 @@ describe('field workspace', () => {
       expect(createWorkspace().conversations).toEqual([]); // loaded on connect, not before
     });
 
+    it('keeps the current conversation while its turn runs, and deleting it later starts afresh', async () => {
+      const { fake } = backend();
+      const deleted: string[] = [];
+      fake.deleteFigures = async (id) => { deleted.push(id); };
+      let finish!: () => void;
+      fake.chat = async function* () {
+        yield { type: 'assistant', id: 'm1', text: 'Working.' } as ChatEvent;
+        await new Promise<void>((resolve) => { finish = resolve; });
+        yield { type: 'done' } as ChatEvent;
+      };
+      const workspace = createWorkspace(fake, { pollMs: 1 });
+      await workspace.connect();
+      workspace.draft = 'Long question';
+      const sending = workspace.send();
+      await vi.waitFor(() => expect(workspace.messages.some((m) => m.text === 'Working.')).toBe(true));
+      expect(workspace.busy).toBe(true);
+      const current = workspace.conversationId;
+      workspace.deleteConversation(current);  // refused: the turn would save it again, without its figures
+      expect(deleted).toEqual([]);
+      finish();
+      await sending;
+      expect(workspace.conversations.map((c) => c.id)).toEqual([current]);
+      workspace.deleteConversation(current);
+      expect(workspace.conversations).toEqual([]);
+      expect(deleted).toEqual([current]);
+      expect(workspace.conversationId).not.toBe(current);
+      expect(workspace.messages).toEqual([]);
+    });
+
     it('restores a view saved on another field by loading that field first', async () => {
       const { workspace } = await ready();
       const view = { role: 'assistant' as const, id: 9, text: 'x', scene: { field: 'leo_1', survey: 'CDS/P/DSS2/color',

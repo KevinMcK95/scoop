@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from '../errors';
   import type { Workspace } from '../workspace/state.svelte';
   import { bar, cacheShare, seconds, stepTitle, tokens, type Trace, type TraceStep } from '../chat/trace';
   let { workspace }: { workspace: Workspace } = $props();
@@ -16,7 +17,7 @@
       error = '';
       openTurn ??= traces[0]?.request_id ?? null;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = errorText(e);
     } finally {
       loading = false;
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorText } from '../errors';
   import type { Workspace } from '../workspace/state.svelte';
   import type { ModelInfo, SettingName, SettingsView } from '../api/client';
   import ModelPicker from './ModelPicker.svelte';
@@ -41,7 +42,7 @@
         const found = await backend.listModels!(url);
         if (current) { listed = found; listStatus = found.length ? `${found.length} models at this endpoint; type to search.` : ''; }
       } catch (error) {
-        if (current) listStatus = `Could not list models (${error instanceof Error ? error.message : error}); type a model id.`;
+        if (current) listStatus = `Could not list models (${errorText(error)}); type a model id.`;
       }
     }, endpoint ? 0 : 400);
     return () => { current = false; clearTimeout(timer); };
@@ -57,7 +58,7 @@
       kernel = view.kernel ?? 'off';
       kernelCwd = view.kernel_cwd ?? '';
     } catch (error) {
-      status = `Settings unavailable: ${error instanceof Error ? error.message : error}`;
+      status = `Settings unavailable: ${errorText(error)}`;
     }
   }
   $effect(() => { if (workspace.backend) void load(); });
@@ -81,7 +82,7 @@
       await workspace.refreshServices();
       status = view.problems?.length ? `Saved, but: ${view.problems.join('; ')}` : 'Saved ✓';
     } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
+      status = errorText(error);
     } finally {
       saving = false;
     }

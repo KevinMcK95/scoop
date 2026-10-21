@@ -4,6 +4,7 @@
   import { catalog, groupLayers, type CatalogGroup } from '../field/catalog';
   import { adsUrl, bibcodeOf } from '../chat/markdown';
   import { download, layerCsv } from '../field/export';
+  import { DEFAULT_SURVEY } from '../workspace/contracts';
   let { workspace }: { workspace: Workspace } = $props();
   const field = $derived(workspace.field);
   const target = $derived(field?.target);
@@ -17,7 +18,7 @@
     const who = bibcode ? ref.slice(0, -19) : ref;
     return { property: property.replace(/_/g, ' '), label: bibcode ? `${who} ${bibcode.slice(0, 4)}` : ref, url: bibcode ? adsUrl(bibcode) : null };
   }));
-  const surveys = $derived(field?.surveys ?? [['CDS/P/DSS2/color', 'DSS2 color']]);
+  const surveys = $derived(field?.surveys ?? [[DEFAULT_SURVEY, 'DSS2 color']]);
   let runKey = $state('');
   let runError = $state('');
   async function run() { runError = (await workspace.runField(runKey)) ?? ''; if (!runError) runKey = ''; }

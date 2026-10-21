@@ -100,7 +100,7 @@
   });
   async function ask() {
     chatOpen = true;
-    if (window.matchMedia('(max-width: 800px)').matches) layersOpen = false;
+    if (narrow()) layersOpen = false;
     workspace.askAboutSelection();
     await tick();
     document.getElementById('chat-draft')?.focus();
@@ -108,7 +108,7 @@
   // One click: the agent checks SIMBAD and the literature at the selected row.
   async function lookupSelection() {
     const row = workspace.selectedRow;
-    if (!row) return;
+    if (!row || workspace.busy) return;  // send() would refuse, after the user's draft was replaced
     workspace.draft = `What is known about ${row.table} ${row.id}? Check SIMBAD near it and summarize the key references.`;
     chatOpen = true;
     await workspace.send();
@@ -124,18 +124,18 @@
   }
   function showResults(open: boolean) {
     resultsOpen = open;
-    if (open && window.matchMedia('(max-width: 800px)').matches) {
+    if (open && narrow()) {
       layersOpen = false;
       chatOpen = false;
     }
   }
   function toggleLayers() {
     layersOpen = !layersOpen;
-    if (layersOpen && window.matchMedia('(max-width: 800px)').matches) chatOpen = false;
+    if (layersOpen && narrow()) chatOpen = false;
   }
   function toggleChat() {
     chatOpen = !chatOpen;
-    if (chatOpen && window.matchMedia('(max-width: 800px)').matches) layersOpen = false;
+    if (chatOpen && narrow()) layersOpen = false;
   }
 </script>
 
