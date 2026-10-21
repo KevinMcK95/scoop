@@ -339,7 +339,43 @@ scoop chat   # interactive session
 
 ### What runs today
 
-Two LangGraph agents serve the workspace, each with typed tools
+SCOOP has **four agents** (a model working in a loop with tools). Two serve the
+workspace; two run on their own. Everything else (the field pipeline, data-source
+plug-ins, budgets, Gaia sizing and health checks, evaluation) is ordinary code the
+agents call or that checks them.
+
+```mermaid
+flowchart LR
+    U(["User"]) <--> C
+    subgraph WS["Web workspace (every chat turn)"]
+        C["Chat agent<br/>talks, analyses, shows"] ==>|"ask_data_agent"| D["Data agent<br/>decides every download"]
+    end
+    D --> J[["Field pipeline and<br/>data-source plug-ins"]]
+    J --> FS[("Fields")]
+    FS --> C
+    X["Exoplanet agent<br/>checked, quoted answers<br/>(standalone)"] --> EQ[["exoplanets/ archive queries<br/>(NASA Exoplanet Archive, TESS, TIC, MAST)"]]
+    EQ -->|"reused as plug-ins"| J
+    SC["Dataset scout<br/>(monthly, GitHub Actions)"] -->|"draft skills and sources"| PR["Branch / PR<br/>for review"]
+    TR["/triage<br/>(Claude Code skill, on request;<br/>not a SCOOP agent)"] -->|"tested fixes"| PR
+    FS -.->|"failed runs, audit log"| TR
+    classDef agent fill:#fde7c8,stroke:#c77700,stroke-width:2px,color:#000
+    class C,D,X,SC agent
+```
+
+| Agent | Runs | Built on | Started by |
+| --- | --- | --- | --- |
+| **Chat agent** | in the workspace | LangGraph ([`scoop/chat/graph.py`](scoop/chat/graph.py)) | every user message |
+| **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/data_agent.py`](scoop/chat/data_agent.py)) | the chat agent's `ask_data_agent` |
+| **Exoplanet agent** | standalone (not yet in the workspace) | [`agentbook`](agentbook/loop.py) ([`exoplanets/agent.py`](exoplanets/agent.py)) | Python, its benchmark |
+| **Dataset scout** | GitHub Actions, monthly | `agentbook` ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
+
+No agent fixes SCOOP automatically when something fails: the data agent reads failed
+runs and reports them during a turn, and `/triage` turns the recorded failures into
+fixes when a person runs it.
+
+#### The workspace agents
+
+The chat agent and the data agent are LangGraph agents with typed tools
 (`START → agent → tools → agent → END`; see the [layout](docs/langgraph_chat.md)).
 The **chat agent** talks to the user and works on the loaded field; the **data agent**
 decides everything that is downloaded. Archive access stays in deterministic tools,
@@ -380,8 +416,9 @@ Around them:
 - **Cost budgets** ([What a command costs](#what-a-command-costs)): an optional per-conversation
   budget, an estimate before each command and its actual cost after.
 - **Exoplanet agent** ([`exoplanets/`](exoplanets/agent.py)): answers planet questions with
-  every claim quoted from a tool result and checked; standalone for now, and its archive
-  queries already feed the workspace as plug-ins (TIC, TESS sectors and TOIs, planet hosts).
+  every claim quoted from a tool result and checked (one retry when a check fails);
+  standalone for now, and its archive queries already feed the workspace as plug-ins
+  (TIC, TESS sectors and TOIs, planet hosts).
 - **Keeping SCOOP working**, outside the chat:
 
 ```mermaid
@@ -389,7 +426,7 @@ flowchart LR
     A[("Audit log: failed calls with arguments,<br/>incl. the data agent's")] --> T["triage<br/>(Claude Code skill)"]
     R[("Failed field runs<br/>log + traceback")] --> T
     T -->|"reproduce, test, fix"| B["Branch / PR for review"]
-    ADS[("ADS / arXiv<br/>data-release papers")] --> SC["Dataset scout<br/>(monthly)"]
+    ADS[("ADS / arXiv<br/>data-release papers")] --> SC["Dataset scout agent<br/>(monthly)"]
     SC -->|"draft skills, sources, probes"| B
     E["Evaluation<br/>benchmarks and checks"] --> B
 ```
