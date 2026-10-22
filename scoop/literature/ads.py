@@ -14,8 +14,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ..domain import EntityRef, Publication
-from ..models import Provenance, SearchStatus
+from .records import EntityRef, Provenance, Publication, SearchStatus
 from .models import (
     ADSError, ADSResult, BibliographicPaper, CitationsRequest, PaperRequest,
     SearchRequest,

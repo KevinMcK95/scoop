@@ -16,9 +16,9 @@ chat = [
     "langgraph>=1.2.16,<2",
     "langchain-core>=1.6.12,<2",
 ]
-# The exoplanet data source runs Xuan Ji's scoop/exoplanets/archive.py (plain requests); the
-# exoplanet agent runs on agentbook (tool schemas checked with jsonschema).
-exoplanets = ["requests>=2.32,<3", "jsonschema>=4.21,<5"]
+# The exoplanet data source and agent (scoop/exoplanets/): archive queries over plain
+# requests; the agent's tool arguments are checked with jsonschema, and it runs on LangGraph.
+exoplanets = ["scoop-sky[chat]", "requests>=2.32,<3", "jsonschema>=4.21,<5"]
 # The field pipeline (python -m scoop.pipeline.lvdb_field), which the workspace runs for new fields:
 # MOCs for footprints and coverage, astroquery for MAST/Gaia/VizieR/SIMBAD, matplotlib for
 # the static map. A fresh `.[server]` install lacked mocpy and could not build any field.
@@ -31,12 +31,15 @@ fields = [
     "requests>=2.32,<3",
     "pyvo>=1.5,<2",
 ]
-# The monthly dataset scout: ADS over httpx, the agentbook loop (jsonschema), and
-# a model client. Data sources it generates query TAP with pyvo.
+# The monthly dataset scout: ADS over httpx, a LangChain model (Anthropic, or any
+# OpenAI-compatible endpoint), tool arguments checked with jsonschema. Data sources it
+# generates query TAP with pyvo.
 scout = [
     "scoop-sky[literature]",
+    "langchain-core>=1.6.12,<2",
+    "langchain-anthropic>=1,<2",
+    "langchain-openai>=1,<2",
     "jsonschema>=4.21,<5",
-    "anthropic>=0.49,<1",
     "pyvo>=1.5,<2",
 ]
 # run_kernel (scoop/runtime/kernel.py): a Jupyter kernel in the user's own analysis environment.

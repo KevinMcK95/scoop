@@ -55,8 +55,8 @@ Code: [`scoop/scout/`](../../scoop/scout/). Design:
 
 | Guardrail | Where |
 |---|---|
-| Step, token and wall-clock budget | `agentbook.guardrails.Budget`, `triage()` |
-| An identical repeated tool call is refused | `CountingGuard` (a `LoopGuard`) |
+| Step, token and wall-clock budget | `run_loop()` in `scoop/scout/triage.py` |
+| An identical repeated tool call is refused | `CountingGuard` |
 | At most `--max-proposals` drafts per scan | `propose_dataset` |
 | Facts must come from a page fetched this scan | `propose_dataset` checks `sources_checked` against `Fetcher.fetched` |
 | https, archive-domain allowlist, robots.txt, rate limit, size and MIME caps, scripts stripped | `scout/fetch.py` |

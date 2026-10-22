@@ -113,9 +113,8 @@ eval_tools = asyncio.run(client.get_tools())
 app = create_app(..., extra_tools=lambda: eval_tools)
 ```
 
-**agentbook** can skip MCP and wrap the functions directly, e.g.
-`Tool("verify_field", "...", {"type": "object", "properties": {"field": {"type": "string"}},
-"required": ["field"]}, verify.verify_field)`.
+A LangChain agent in this repo can skip MCP and wrap the functions directly, e.g.
+`StructuredTool.from_function(verify.verify_field, name="verify_field", description="...")`.
 
 ## What the pipeline should record
 

@@ -47,7 +47,7 @@ def result_from_ads_payload(payload: dict, target: str | None = None) -> dict:
 
 
 def normalize_result(result: dict, target: str | None = None) -> dict:
-    """Accept the shapes teammates' code produces: nested ``provenance`` dicts (scoop.models),
+    """Accept the shapes teammates' code produces: nested ``provenance`` dicts (scoop.literature.records),
     kind "publication", and ADS payloads from scoop.literature."""
     if "records" not in result and "papers" in result:
         result = result_from_ads_payload(result, target)

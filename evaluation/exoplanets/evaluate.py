@@ -11,13 +11,13 @@ Live runs spend model credits.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from scoop.exoplanets.agent import CheckedAnswer
-from scoop.exoplanets.checks import parse_claims
 
 BENCHMARK = Path(__file__).resolve().parent / "qa_benchmark.json"
 
@@ -35,26 +35,27 @@ class Score:
 
 
 def score(case: dict, answer: CheckedAnswer) -> Score:
-    cited = {str(c.get("source")) for c in parse_claims(answer.run.text) or []}
+    # The claims of the final answer (a clarification or proposal cites nothing).
+    cited = {str(c.get("source")) for c in answer.report.claims} if answer.kind == "result" else set()
     return Score(case["id"], answer.checked, [b for b in case.get("must_cite", []) if b not in cited],
                  answer.attempts)
 
 
 def settings_model():
-    """The chat model saved in SCOOP's Settings tab, through agentbook's OpenAIModel."""
-    from agentbook.models import OpenAIModel
+    """The chat model saved in SCOOP's Settings tab, built as the server builds it."""
+    from scoop.server.__main__ import make_model
 
     s = json.loads((Path.home() / ".config" / "scoop" / "settings.json").read_text())
-    return OpenAIModel(s["model"], base_url=s.get("base_url"), api_key=s["api_key"])
+    return make_model(s)
 
 
-def main(ids: list[str]) -> int:
+async def main(ids: list[str]) -> int:
     from scoop.exoplanets.agent import ask
 
     cases = [c for c in json.loads(BENCHMARK.read_text())["cases"] if not ids or c["id"] in ids]
     model, scores = settings_model(), []
     for case in cases:
-        answer = ask(case["question"], model)
+        answer = await ask(case["question"], model)
         scores.append(s := score(case, answer))
         print(f"{'PASS' if s.passed else 'FAIL'}  {case['id']}: checked={s.checked} attempts={s.attempts}"
               + (f" missing={s.missing}" if s.missing else ""))
@@ -64,4 +65,4 @@ def main(ids: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(asyncio.run(main(sys.argv[1:])))

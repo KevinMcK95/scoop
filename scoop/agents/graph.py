@@ -73,13 +73,15 @@ def build_chat_graph(
     tools: list,
     checkpointer: Any = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+    old_result_chars: int | None = OLD_RESULT_CHARS,
 ) -> Any:
     """Compile START -> agent -> (tools -> agent | END).
 
     The model must implement ``bind_tools`` and its bound model must implement
     ``ainvoke(messages, config=...)``. Tools use runtime-injected call IDs and
     return ToolMessages, or publish_result Commands for artifacts. Invoke the compiled graph with ``ainvoke``;
-    supply a thread_id in config when using a checkpointer.
+    supply a thread_id in config when using a checkpointer. Tool results from before the
+    last user message are shortened to ``old_result_chars`` for the model (None: kept whole).
     """
     if not isinstance(tools, list) or not tools:
         raise ValueError("tools must be a nonempty list")
@@ -89,7 +91,10 @@ def build_chat_graph(
     bound_model = model.bind_tools(tools)
 
     async def agent(state: ChatState, config: RunnableConfig) -> dict:
-        messages = [SystemMessage(content=system_prompt), *with_images(shorten_old_results(state["messages"]))]
+        messages = state["messages"]
+        if old_result_chars is not None:
+            messages = shorten_old_results(messages, old_result_chars)
+        messages = [SystemMessage(content=system_prompt), *with_images(messages)]
         response = await bound_model.ainvoke(messages, config=config)
         return {"messages": [response]}
 

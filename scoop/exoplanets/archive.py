@@ -1,9 +1,9 @@
 """NASA Exoplanet Archive and Sesame lookups, as plain functions.
 
-Split out of tools.py so they can be used without the agentbook harness (the
-SCOOP workspace's exoplanet data source calls exoplanet_cone_search). tools.py
-wraps these as agentbook Tools, unchanged in behavior: an ArchiveError becomes
-the ToolError the model sees.
+Split out of tools.py so they can be used without the agent's tools (the SCOOP
+workspace's exoplanet data source calls exoplanet_cone_search). tools.py wraps
+these as LangChain tools, unchanged in behavior: an ArchiveError becomes the
+error result the model sees.
 
 HTTP goes through `http_get`, which can record responses to exoplanets/fixtures/
 and replay them (SCOOP_HTTP=live|record|replay); see tools.py.

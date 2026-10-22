@@ -71,10 +71,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def build_model(provider: str, name: str):
-    from agentbook.models import AnthropicModel, OpenAIModel
+# The longest reply a scan needs is one propose_dataset call with every template section.
+MAX_OUTPUT_TOKENS = 4096
 
-    return AnthropicModel(name) if provider == "anthropic" else OpenAIModel(name)
+
+def build_model(provider: str, name: str):
+    """The LangChain chat model for ``--model-provider``.
+
+    ChatAnthropic reads ``ANTHROPIC_API_KEY``; ChatOpenAI reads ``OPENAI_API_KEY``
+    and, for an OpenAI-compatible server, ``OPENAI_BASE_URL``.
+    """
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+
+        return ChatAnthropic(model=name, max_tokens=MAX_OUTPUT_TOKENS)
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(model=name, max_tokens=MAX_OUTPUT_TOKENS)
 
 
 async def _harvest(since: date, until: date, limit: int, skip: frozenset[str]):

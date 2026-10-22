@@ -232,15 +232,6 @@ def create_app(
         from ..literature.tools import build_ads_tools
         return build_ads_tools(live["ads"])
 
-    def exoplanet_model(settings):
-        """The Settings model as an agentbook model, for the exoplanet agent (or None)."""
-        if settings is None or not settings.get("model"):
-            return None
-        from agentbook.models import OpenAIModel
-
-        return OpenAIModel(settings.get("model"), base_url=settings.get("base_url"),
-                           api_key=settings.get("api_key") or "unset")
-
     async def root(request: Request) -> Response:
         # This port is the API; people who open it in a browser want the workspace page.
         return Response(
@@ -602,8 +593,8 @@ def create_app(
             *pm_tools, *(t for t in map_tools if t.name in FIELD_READ_TOOLS), *ads_tools(),
             *(t for t in web_tools if t.name == "web_fetch")])
         map_tools = [t for t in map_tools if t.name not in FIELD_TOOLS]
-        # Exoplanet questions go to the fact-checked exoplanet agent, on the model from Settings.
-        exoplanet = build_exoplanet_tool(field=current_field, make_model=lambda: exoplanet_model(settings))
+        # Exoplanet questions go to the fact-checked exoplanet agent, on the chat's model.
+        exoplanet = build_exoplanet_tool(field=current_field, model=model)
         tools = [*map_tools, handoff, pm_handoff, exoplanet, *ads_tools(), *web_tools,
                  *(build_python_tools(python, current_field) if python else []),
                  *(build_kernel_tools(live["kernel"], current_field) if live["kernel"] else []),

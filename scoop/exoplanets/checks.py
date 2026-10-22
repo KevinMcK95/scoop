@@ -11,7 +11,7 @@ Every claim must be traceable to a tool result:
     report = check_answer(result.text, result.messages)
     report.ok, report.problems
 
-Like agentbook's check_numbers, these checks are deliberately simple. They catch a
+These checks are deliberately simple. They catch a
 value or reference that came from nowhere; they cannot tell that a real value was
 attached to the wrong planet. A failed check is something to send back to the model
 or show the user, never something to hide.
@@ -23,8 +23,9 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from agentbook.guardrails import tool_outputs
-from agentbook.provenance import NumberClaim, find_numbers
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from .numbers import NumberClaim, find_numbers
 
 # ADS bibcodes are 19 characters: year, journal, volume, qualifier, page, first author's
 # initial, e.g. 2016Natur.533..221G, 2014ApJ...781...18C, 2021PSJ.....2....1A.
@@ -137,7 +138,17 @@ class AnswerReport:
         return "\n".join(["Answer failed the checks:"] + [f"- {p}" for p in self.problems])
 
 
-def check_answer(answer: str, evidence: list[dict] | list[str]) -> AnswerReport:
+def _content(message: ToolMessage) -> str:
+    """A tool result's text (content that is not a string is sent as JSON)."""
+    return message.content if isinstance(message.content, str) else json.dumps(message.content)
+
+
+def tool_outputs(messages: list) -> list[str]:
+    """The text of every tool result in a message list, failed ones included."""
+    return [_content(m) for m in messages if isinstance(m, ToolMessage)]
+
+
+def check_answer(answer: str, evidence: list | list[str]) -> AnswerReport:
     """Check `answer` against the tool results in `evidence` (a message list, or a list
     of tool-output strings)."""
     outputs = evidence if evidence and isinstance(evidence[0], str) else tool_outputs(evidence)
@@ -209,13 +220,11 @@ def quote_in(quote: str, text: str) -> bool:
     return position > 0
 
 
-def tool_results_by_name(messages: list[dict]) -> list[tuple[str, str]]:
-    """(tool name, result text) for every tool result in a message list."""
-    names = {b["id"]: b["name"] for m in messages if m["role"] == "assistant" and not isinstance(m["content"], str)
-             for b in m["content"] if b["type"] == "tool_use"}
-    return [(names.get(b["tool_use_id"], "?"), b["content"] if isinstance(b["content"], str) else json.dumps(b["content"]))
-            for m in messages if m["role"] == "user" and not isinstance(m["content"], str)
-            for b in m["content"] if b["type"] == "tool_result"]
+def tool_results_by_name(messages: list) -> list[tuple[str, str]]:
+    """(tool name, result text) for every tool result in a message list: the name is the
+    one the model called, matched by tool call id."""
+    names = {c["id"]: c["name"] for m in messages if isinstance(m, AIMessage) for c in m.tool_calls}
+    return [(names.get(m.tool_call_id, "?"), _content(m)) for m in messages if isinstance(m, ToolMessage)]
 
 
 def _decoded(text: str) -> str:
@@ -256,7 +265,7 @@ class ClaimsReport:
         return "\n".join(["Answer failed the checks:"] + [f"- {p}" for p in self.problems])
 
 
-def check_claims(answer: str, messages: list[dict]) -> ClaimsReport:
+def check_claims(answer: str, messages: list) -> ClaimsReport:
     """Check a structured answer against this run's tool results (see the comment above)."""
     claims = parse_claims(answer)
     if claims is None:
@@ -370,7 +379,7 @@ def parse_answer(answer: str) -> dict | None:
     return None
 
 
-def check_clarify(clarify, messages: list[dict] | None = None) -> list[str]:
+def check_clarify(clarify, messages: list | None = None) -> list[str]:
     """A clarification names the constraints and the table, and gives the number of objects
     in it, counted with a tool (so the user knows what checking claims for each would cost)."""
     if not isinstance(clarify, dict) or not clarify.get("constraints") \
@@ -389,14 +398,14 @@ SUGGEST_RE = re.compile(r"\b(?:suggest\w*|recommend\w*|propos\w*|no idea|not sur
                         r"do not know|from the literature|in the literature|you (?:choose|decide|pick))\b", re.I)
 
 
-def user_asked_for_suggestion(messages: list[dict]) -> bool:
+def user_asked_for_suggestion(messages: list) -> bool:
     """Did the user's own words (not tool results or the checks' retry notes) ask for one?"""
-    texts = [m["content"] for m in messages if m["role"] == "user" and isinstance(m["content"], str)
-             and not m["content"].startswith("Your answer failed the checks")]
+    texts = [m.content for m in messages if isinstance(m, HumanMessage) and isinstance(m.content, str)
+             and not m.content.startswith("Your answer failed the checks")]
     return any(SUGGEST_RE.search(t) for t in texts)
 
 
-def check_proposal(proposal, messages: list[dict] | None = None) -> list[str]:
+def check_proposal(proposal, messages: list | None = None) -> list[str]:
     """A proposal needs criteria, each with what it means and whether it uses the archive or
     papers; a criterion suggested from the literature needs its reference, quoted exactly."""
     if not isinstance(proposal, dict) or not isinstance(proposal.get("criteria"), list) or not proposal["criteria"]:
@@ -428,7 +437,7 @@ def check_proposal(proposal, messages: list[dict] | None = None) -> list[str]:
     return problems
 
 
-def check_highlight(highlight, messages: list[dict]) -> list[str]:
+def check_highlight(highlight, messages: list) -> list[str]:
     """Rows to highlight must name a field table and ids that a tool returned in this run."""
     if highlight is None:
         return []

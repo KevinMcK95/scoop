@@ -1,24 +1,28 @@
 """The exoplanet agent: answers questions about planets, every claim quoted and checked.
 
-    from agentbook.models import OpenAIModel
+    from langchain_openai import ChatOpenAI
     from scoop.exoplanets.agent import ask
-    result = ask("Does TOI-561 b have an atmosphere?", OpenAIModel("..."))
+    result = await ask("Does TOI-561 b have an atmosphere?", ChatOpenAI(model="..."))
     print(result.text); print(result.report.summary())
 
-The loop is agentbook's run_agent. The model answers with a list of claims, each with a
+The loop is the chat's LangGraph loop (agents.graph.build_chat_graph), on any LangChain
+chat model that can bind tools. The model answers with a list of claims, each with a
 source and a word-for-word quote of the tool result it rests on (checks.check_claims).
-If the answer fails, the problems go back to the model once, as a user message, and it
-answers again with its tools still available. An answer that still fails is returned
-with its report, never passed off as checked: `result.checked` says which.
+If the answer fails, the problems go back to the model once, as a user message after
+the whole conversation so far, and it answers again with its tools still available. An
+answer that still fails, or a run that hit the step limit, is returned with its report,
+never passed off as checked: `result.checked` says which.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from agentbook.loop import AgentResult, run_agent
-from agentbook.models import Model
-from agentbook.tools import ToolRegistry
+from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.errors import GraphRecursionError
+
+from ..agents.graph import build_chat_graph
 
 from .checks import (CLAIM_SOURCES, HIGHLIGHT_TABLES, ClaimsReport, check_claims, check_clarify,
                      check_highlight, check_proposal, parse_answer, render_claims)
@@ -95,14 +99,15 @@ class CheckedAnswer:
     report: ClaimsReport
     checked: bool          # True only if the final answer passed every check
     attempts: int          # 1, or 2 if the first answer was sent back
-    run: AgentResult       # the last run, with every message (for tracing and the checks)
+    messages: list         # the last run's LangChain messages, tool results included (for
+                           # tracing and the checks)
     kind: str = "result"   # "result" (claims), "clarify" (asks for a definition), "proposal"
                            # (criteria to confirm), or "invalid"
     proposal: dict | None = None
     highlight: dict | None = None
 
 
-def check(answer: str, messages: list[dict]) -> tuple[str, ClaimsReport, dict]:
+def check(answer: str, messages: list) -> tuple[str, ClaimsReport, dict]:
     """Which kind of answer this is, its checks, and the parsed JSON."""
     data = parse_answer(answer)
     if data is not None and "clarify" in data:
@@ -157,24 +162,50 @@ def request_text(question: str, context: str | None, criteria: str | None) -> st
     return "\n\n".join(parts)
 
 
-def ask(question: str, model: Model, tools: ToolRegistry | None = None, max_steps: int = 12,
-        retries: int = 1, context: str | None = None, criteria: str | None = None) -> CheckedAnswer:
-    """Answer `question`, check the answer, and send failures back `retries` times.
+def final_text(message) -> str:
+    """The text of the model's last message (content may be a list of blocks)."""
+    content = message.content if isinstance(message, AIMessage) else ""
+    if isinstance(content, str):
+        return content
+    return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+
+
+async def run(graph, messages: list, max_steps: int) -> tuple[str, list, bool]:
+    """Run the loop on `messages`: the final answer, every message, and whether the model
+    finished (False when it was still calling tools after `max_steps` model calls; the
+    answer is then empty)."""
+    state = {"messages": messages}
+    try:  # each model call and each round of tools is one LangGraph step
+        async for state in graph.astream({"messages": messages, "artifacts": {}},
+                                         config={"recursion_limit": 2 * max_steps}, stream_mode="values"):
+            pass
+    except GraphRecursionError:
+        return "", state["messages"], False
+    return final_text(state["messages"][-1]), state["messages"], True
+
+
+async def ask(question: str, model: Any, tools: list | None = None, max_steps: int = 12,
+              retries: int = 1, context: str | None = None, criteria: str | None = None) -> CheckedAnswer:
+    """Answer `question` with `model` (a LangChain chat model), check the answer, and send
+    failures back `retries` times.
 
     `context` describes the user's field (center, radius, tables); `criteria` are constraints
     the user has confirmed. Without confirmed criteria, a request with constraints gets a
     proposal back, to show the user and confirm."""
     if tools is None:
         from .tools import agent_tools
-        tools = ToolRegistry(agent_tools())
-    run = run_agent(model, tools, request_text(question, context, criteria), system=SYSTEM, max_steps=max_steps)
-    kind, report, data = check(run.text, run.messages)
+        tools = agent_tools()
+    # Tool results stay whole after a retry note: the quotes are checked against them.
+    graph = build_chat_graph(model, list(tools), system_prompt=SYSTEM, old_result_chars=None)
+    answer, messages, done = await run(graph, [HumanMessage(content=request_text(question, context, criteria))],
+                                       max_steps)
+    kind, report, data = check(answer, messages)
     attempts = 1
-    while not report.ok and attempts <= retries and run.stop_reason == "done":
+    while not report.ok and attempts <= retries and done:
         problems = "\n".join(f"- {p}" for p in report.problems)
-        messages = run.messages + [{"role": "user", "content": RETRY.format(problems=problems)}]
-        run = run_agent(model, tools, messages, system=SYSTEM, max_steps=max_steps)
-        kind, report, data = check(run.text, run.messages)
+        answer, messages, done = await run(graph, messages + [HumanMessage(content=RETRY.format(problems=problems))],
+                                           max_steps)
+        kind, report, data = check(answer, messages)
         attempts += 1
     if kind == "clarify" and report.ok:
         text = render_clarify(data["clarify"])
@@ -183,6 +214,6 @@ def ask(question: str, model: Model, tools: ToolRegistry | None = None, max_step
     elif data.get("claims"):
         text = render_claims(data["claims"])
     else:
-        text = run.text
-    return CheckedAnswer(text, report, report.ok and run.stop_reason == "done", attempts, run, kind,
+        text = answer
+    return CheckedAnswer(text, report, report.ok and done, attempts, messages, kind,
                          data.get("proposal"), data.get("highlight") if kind == "result" else None)

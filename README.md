@@ -78,8 +78,8 @@ Volume Database is downloaded once) and the map loads it. Follow with *"can you 
 proper motion measurement for draco? population fitting after identifying likely
 members?"*. More in [docs/demos.md](docs/demos.md).
 
-Optional extras: `run_python` (sandboxed Python for the agent, macOS + Node: `cd sandbox
-&& npm ci && npm run setup`) and `run_kernel` (your own Jupyter environment); see
+Optional extras: `run_python` (sandboxed Python for the agent, macOS + Node: `cd
+scoop/runtime/sandbox && npm ci && npm run setup`) and `run_kernel` (your own Jupyter environment); see
 [More about the workspace](#more-about-the-workspace).
 
 ## What you can do today
@@ -143,9 +143,9 @@ flowchart LR
 | **Chat agent** | in the workspace | LangGraph ([`scoop/agents/graph.py`](scoop/agents/graph.py)) | every user message |
 | **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/agents/data_agent.py`](scoop/agents/data_agent.py)) | the chat agent's `ask_data_agent` |
 | **Proper-motion agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/agents/pm_agent.py`](scoop/agents/pm_agent.py)) | the chat agent's `ask_pm_agent` |
-| **Exoplanet agent** | in the workspace, inside a chat turn (also standalone) | [`agentbook`](agentbook/loop.py) ([`scoop/exoplanets/agent.py`](scoop/exoplanets/agent.py), chat tool [`scoop/agents/exoplanet_agent.py`](scoop/agents/exoplanet_agent.py)) | the chat agent's `ask_exoplanet_agent`; Python, its benchmark |
+| **Exoplanet agent** | in the workspace, inside a chat turn (also standalone) | LangGraph, answers checked in code ([`scoop/exoplanets/agent.py`](scoop/exoplanets/agent.py), chat tool [`scoop/agents/exoplanet_agent.py`](scoop/agents/exoplanet_agent.py)) | the chat agent's `ask_exoplanet_agent`; Python, its benchmark |
 | **Triage agent** | in the workspace server, on a timer | LangGraph ([`scoop/agents/triage_agent.py`](scoop/agents/triage_agent.py)) | at most hourly (`--triage-every`), after 10 idle minutes, when there are new failures |
-| **Dataset scout** | GitHub Actions, monthly | `agentbook` ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
+| **Dataset scout** | GitHub Actions, monthly | a LangChain model in a budgeted loop ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
 
 No agent changes SCOOP's code: the data agent reads failed runs and reports them during
 a turn; the triage agent reads new failures, the traces of the turns they happened in
@@ -161,7 +161,7 @@ The **chat agent** talks to the user and works on the loaded field; the **data a
 decides everything that is downloaded; the **proper-motion agent** selects members and
 measures and plans proper motions. These two run inside the chat agent's turn
 ([`scoop/agents/subagent.py`](scoop/agents/subagent.py)): what they show reaches the map,
-and their failed calls reach the audit log. The **exoplanet agent** (on `agentbook`) is
+and their failed calls reach the audit log. The **exoplanet agent** (on the same chat model) is
 handed exoplanet questions the same way, through `ask_exoplanet_agent`. Archive access stays in deterministic tools,
 the field pipeline and data-source modules; the agents choose and explain, they never
 invent data.
@@ -211,7 +211,7 @@ Around them:
   built, and when the dataset scout last looked for new data releases. On the first turn of
   a conversation the chat agent mentions an old field (over 30 days) or new sources once,
   and offers to refresh it or add them through the data agent.
-- **Exoplanet agent** ([`exoplanets/`](scoop/exoplanets/agent.py)): answers planet questions with
+- **Exoplanet agent** ([`scoop/exoplanets/`](scoop/exoplanets/agent.py)): answers planet questions with
   every claim quoted from a tool result and checked (one retry when a check fails); the
   chat agent hands it exoplanet questions (`ask_exoplanet_agent`) and shows its answer
   word for word with its checked line, and it highlights matching rows of the field's
@@ -325,7 +325,7 @@ starts a fresh conversation with no field, looking at the whole sky.
 The agent can also run its own Python (`run_python`): numpy, pandas, scipy, astropy,
 matplotlib and scikit-learn in Pyodide (Python in WebAssembly), with the field's
 tables and no network or file access. It needs macOS and Node; set it up once with
-`cd sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/runtime/sandbox.py`](scoop/runtime/sandbox.py).
+`cd scoop/runtime/sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/runtime/sandbox.py`](scoop/runtime/sandbox.py).
 
 For work the sandbox cannot do (your own packages and data files, more memory and time),
 `run_kernel` runs the agent's code in a persistent Jupyter kernel in your own environment, keeping variables
@@ -587,6 +587,32 @@ coordinates and a radius), SCOOP:
   archive query.
 - **Downloads.** Each result keeps the access URL (DataLink, SIA/SSA, archive
   APIs) for its products, so files can be fetched on demand, with caching.
+
+## Repository layout
+
+```
+scoop/                the installable package (pip install -e '.[server]')
+  server/             HTTP API, settings, background jobs, traces   python -m scoop.server
+  agents/             the LangGraph agents: chat, data, proper-motion, exoplanet, triage, and their tools
+  sources/            data-source plug-ins (one module per archive table)
+  pipeline/           the field pipeline the server runs for new fields   python -m scoop.pipeline.lvdb_field
+  science/            fields, regions, streams, footprints, proper motions, member fits
+  archives/           clients: SIMBAD, Sesame, LVDB, Gaia status, VO discovery, image cutouts, the web
+  exoplanets/         exoplanet archive queries and the exoplanet agent's checks
+  literature/         ADS client and records
+  runtime/            cost budgets, run_python sandbox (with its Node runner), run_kernel, freshness, triage
+  scout/              the monthly dataset scout                         python -m scoop.scout
+  skills/             what each archive holds and how to query it; read by the agents
+web/                  the SvelteKit workspace
+evaluation/           data checks, spot checks, benchmarks, the metrics scorecard (pip install -e '.[eval]')
+smoke_tests/          hand-run probes against live archives
+tests/                unit tests, offline (python -m pytest)
+docs/                 design notes
+```
+
+Fields and the audit log go to `$SCOOP_DATA_DIR`: by default `out/` in a checkout and
+`~/.local/share/scoop` for an installed package. Settings, conversations, traces and budgets
+are in `~/.config/scoop/`.
 
 ## Contributing
 

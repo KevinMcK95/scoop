@@ -3,15 +3,14 @@
 The chat agent hands exoplanet questions to it: planet properties and what papers found,
 TESS candidates and light curves, short-cadence candidates, and soft constraints on the
 field's planet hosts, TOIs or TIC stars ("habitable", "atmosphere claimed"). It runs Xuan
-Ji's agent (scoop/exoplanets/agent.py, on agentbook) with the model from Settings: every claim
+Ji's agent (scoop/exoplanets/agent.py) on the chat's own model: every claim
 is quoted from the tool result it rests on and checked in code; vague constraints come
 back as a question, concrete ones as a proposal to confirm, and confirmed ones as a
 checked answer plus rows to highlight on the map. The chat relays the answer unchanged.
 """
 from __future__ import annotations
 
-import asyncio
-from typing import Annotated, Callable
+from typing import Annotated
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import InjectedToolCallId, tool
@@ -44,9 +43,9 @@ def relay_text(answer) -> str:
     return "\n\n".join(part for part in (answer.text, status) if part)
 
 
-def build_exoplanet_tool(*, field, make_model: Callable[[], object | None]):
-    """``field`` is the field or a function returning the turn's field; ``make_model``
-    returns an agentbook model (e.g. OpenAIModel) from Settings, or None."""
+def build_exoplanet_tool(*, field, model):
+    """``field`` is the field or a function returning the turn's field; ``model`` is the
+    chat's LangChain model (the agent runs its own loop on it), or None."""
     current_field = field if callable(field) else (lambda: field)
 
     @tool
@@ -61,7 +60,6 @@ def build_exoplanet_tool(*, field, make_model: Callable[[], object | None]):
         definition or proposes criteria; when the user confirms, call again with the same
         question and the confirmed criteria in criteria. Show its answer to the user word for
         word, including the checked / not checked line."""
-        model = make_model()
         if model is None:
             return ToolMessage(content="The exoplanet agent needs a chat model (set one in Settings).",
                                tool_call_id=tool_call_id, status="error")
@@ -70,7 +68,7 @@ def build_exoplanet_tool(*, field, make_model: Callable[[], object | None]):
         current = current_field()
         context = field_context(current) if current else None
         try:
-            answer = await asyncio.to_thread(ask, question, model, context=context, criteria=criteria)
+            answer = await ask(question, model, context=context, criteria=criteria)
         except Exception as exc:  # a model or network failure is an outcome to report
             return ToolMessage(content=f"The exoplanet agent failed ({type(exc).__name__}: {exc}); say so.",
                                tool_call_id=tool_call_id, status="error")

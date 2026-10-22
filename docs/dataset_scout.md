@@ -84,12 +84,16 @@ worse than none.
 
 ## What is enforced, and where
 
-Every control is code, not prompt text, following `agentbook.guardrails`:
+Every control is code, not prompt text. `triage()` runs a LangChain chat model
+(ChatAnthropic, or ChatOpenAI with `--model-provider openai`) in a small loop
+over `bind_tools`, and checks each budget between steps against counts kept on
+the `Scan`, so a scan a budget stopped still reports its steps, tokens and cost:
 
 | Risk | Control | Where |
 |---|---|---|
-| A runaway loop | step, token and wall-clock budget | `triage()`, `agentbook.guardrails.Budget` |
-| The same call repeated | refused with a reason the model can act on | `CountingGuard` (a `LoopGuard`) |
+| A runaway loop | step, token (from the model's reported usage) and wall-clock budget | `run_loop()` in `triage.py` |
+| The same call repeated | refused with a reason the model can act on | `CountingGuard` |
+| Malformed tool arguments | checked against the tool's JSON schema; the error goes back to the model | `make_tool()` |
 | Too much to review | `--max-proposals` (default 3) | `propose_dataset` |
 | Facts from memory | `sources_checked` must be URLs fetched this scan | `propose_dataset` |
 | The open web | https only, archive-domain allowlist, robots.txt, per-host rate limit, 400 kB and MIME caps, scripts stripped | `scout/fetch.py` |

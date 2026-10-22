@@ -2,8 +2,14 @@
 import json
 import unittest
 
-from agentbook.models import tool_result_block, tool_use_block
-from scoop.exoplanets.checks import check_claims, quote_in, render_claims
+try:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from scoop.exoplanets.checks import check_claims, quote_in, render_claims
+except ModuleNotFoundError as exc:  # the light environment has no chat dependencies
+    if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
+        raise
+    raise unittest.SkipTest("optional chat dependencies absent")
+
 from tests.test_exoplanet_checks import PLANETS
 
 TESKE = "2025ApJ...995L..39T"
@@ -22,10 +28,11 @@ OTHER = {"bibcode": "2023A&A...679A..92P", "title": "CHEOPS and TESS view of the
 
 def conversation(*results):
     """A message list in which each (tool, input, result) was called and answered."""
-    messages = [{"role": "user", "content": "Does TOI-561 b have an atmosphere?"}]
+    messages = [HumanMessage(content="Does TOI-561 b have an atmosphere?")]
     for i, (name, tool_input, result) in enumerate(results):
-        messages.append({"role": "assistant", "content": [tool_use_block(f"t{i}", name, tool_input)]})
-        messages.append({"role": "user", "content": [tool_result_block(f"t{i}", json.dumps(result))]})
+        messages.append(AIMessage(content="", tool_calls=[{"name": name, "args": tool_input, "id": f"t{i}",
+                                                           "type": "tool_call"}]))
+        messages.append(ToolMessage(content=json.dumps(result), tool_call_id=f"t{i}"))
     return messages
 
 

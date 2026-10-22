@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from ..domain import Publication
-from ..models import SearchStatus
+from .records import Publication, SearchStatus
 
 SORTS = ("relevance", "date", "citation_count", "read_count")
 DATABASES = ("astronomy", "physics", "general")

@@ -2,8 +2,13 @@
 import json
 import unittest
 
-from agentbook.models import tool_result_block, tool_use_block
-from scoop.exoplanets.checks import check_answer, find_bibcodes, sentences
+try:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from scoop.exoplanets.checks import check_answer, find_bibcodes, sentences
+except ModuleNotFoundError as exc:  # the light environment has no chat dependencies
+    if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
+        raise
+    raise unittest.SkipTest("optional chat dependencies absent")
 
 # What get_planets returns, trimmed to one planet (values as in the archive).
 PLANETS = {"hostname": "TRAPPIST-1", "distance_pc": 12.429888, "n_planets": 7, "planets": [{
@@ -14,9 +19,10 @@ PLANETS = {"hostname": "TRAPPIST-1", "distance_pc": 12.429888, "n_planets": 7, "
     "access_url": "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"}]}
 
 MESSAGES = [
-    {"role": "user", "content": "Tell me about TRAPPIST-1 e."},
-    {"role": "assistant", "content": [tool_use_block("toolu_001", "get_planets", {"hostname": "TRAPPIST-1"})]},
-    {"role": "user", "content": [tool_result_block("toolu_001", json.dumps(PLANETS))]},
+    HumanMessage(content="Tell me about TRAPPIST-1 e."),
+    AIMessage(content="", tool_calls=[{"name": "get_planets", "args": {"hostname": "TRAPPIST-1"},
+                                       "id": "toolu_001", "type": "tool_call"}]),
+    ToolMessage(content=json.dumps(PLANETS), tool_call_id="toolu_001"),
 ]
 
 

@@ -19,7 +19,7 @@ except ModuleNotFoundError as exc:
 else:
     HAS_SERVER_DEPS = True
     from scoop.literature.models import ADSResult
-    from scoop.models import SearchStatus
+    from scoop.literature.records import SearchStatus
     from scoop.science.fields import FieldStore
     from scoop.server import create_app
     from tests.field_fixture import viewer_data

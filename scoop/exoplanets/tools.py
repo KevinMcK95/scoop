@@ -1,8 +1,8 @@
 """Exoplanet-host tools: resolve a name, find known hosts in a cone, list a host's planets.
 
-Each tool is a plain Python function plus a `Tool` wrapper (name, description,
-JSON schema). The functions return dicts; the ToolRegistry turns them into
-JSON text for the model. Every planet or host comes back as a record in the
+Each tool is a plain Python function wrapped as a LangChain tool (name, description,
+JSON schema) by `exoplanet_tool`. The functions return dicts; the wrapper checks the
+arguments against the schema and turns the result into JSON text for the model. Every planet or host comes back as a record in the
 provenance format of evaluation/checks.py (kind, archive, native_id, ra, dec,
 query, access_url, retrieved_at), so the team's checks can run on it.
 
@@ -20,30 +20,55 @@ and replay them, so tests and offline examples run without the network:
 
 from __future__ import annotations
 
-import functools
+import json
+from typing import Any, Callable
 
-from agentbook import Tool, ToolError
+import jsonschema
+from langchain_core.tools import StructuredTool, ToolException
 
-from .archive import ArchiveError, exoplanet_cone_search, get_planets, resolve_target  # noqa: F401
+from .archive import MAX_RADIUS_ARCMIN, ArchiveError, exoplanet_cone_search, get_planets, resolve_target
 from .archive import toi_cone_search
 from .mast import hst_jwst_programs
 from .papers import find_papers, get_abstract
 from .tess import SHORT_CADENCE_DEFAULTS, extractable_light_curves, short_cadence_candidates
-from .archive import *  # noqa: F401,F403  (constants and helpers, for existing imports)
 
 
-def _as_tool_error(fn):
-    """The archive functions raise ArchiveError; agentbook expects ToolError."""
-    @functools.wraps(fn)
-    def wrapped(*args, **kwargs):
+MAX_OUTPUT_CHARS = 8000  # longer results are cut, with a note the model can act on
+
+
+def format_result(result: Any, max_chars: int = MAX_OUTPUT_CHARS) -> str:
+    """A tool result as the model reads it: dicts and lists as JSON, cut to `max_chars`."""
+    text = result if isinstance(result, str) else json.dumps(result, indent=1, ensure_ascii=False, default=str)
+    if len(text) <= max_chars:
+        return text
+    return (text[:max_chars] + f"\n[... truncated: showing {max_chars} of {len(text)} "
+            "characters. Ask for a narrower section or a more specific query.]")
+
+
+def exoplanet_tool(name: str, description: str, input_schema: dict, fn: Callable[..., Any]) -> StructuredTool:
+    """`fn` as a tool the model may call. Every failure comes back to the model as an error
+    result it can read, never an exception: arguments that do not fit the schema, an
+    ArchiveError (its message, which says what to do), or any other bug."""
+    def run(**kwargs):
         try:
-            return fn(*args, **kwargs)
+            jsonschema.validate(kwargs, input_schema)
+        except jsonschema.ValidationError as e:
+            where = ".".join(str(p) for p in e.path) or "arguments"
+            raise ToolException(f"Invalid arguments for {name} ({where}): {e.message}. "
+                                f"Expected: {json.dumps(input_schema.get('properties', {}))}")
+        try:
+            result = fn(**kwargs)
         except ArchiveError as exc:
-            raise ToolError(str(exc)) from exc
-    return wrapped
+            raise ToolException(str(exc)) from exc
+        except Exception as exc:
+            raise ToolException(f"{name} failed with {type(exc).__name__}: {exc}") from exc
+        return format_result(result)
+
+    return StructuredTool(name=name, description=description, args_schema=input_schema, func=run,
+                          handle_tool_error=True)
 
 
-RESOLVE_TARGET = Tool(
+RESOLVE_TARGET = exoplanet_tool(
     name="resolve_target",
     description=(
         "Resolve an astronomical object name (e.g. 'TRAPPIST-1', 'HD 209458', 'M87') to its "
@@ -56,10 +81,10 @@ RESOLVE_TARGET = Tool(
         "properties": {"name": {"type": "string", "minLength": 1,
                                 "description": "Object name or identifier"}},
         "required": ["name"], "additionalProperties": False},
-    fn=_as_tool_error(resolve_target),
+    fn=resolve_target,
 )
 
-EXOPLANET_CONE_SEARCH = Tool(
+EXOPLANET_CONE_SEARCH = exoplanet_tool(
     name="exoplanet_cone_search",
     description=(
         "List the confirmed exoplanet host stars within a radius of a sky position, from the "
@@ -80,10 +105,10 @@ EXOPLANET_CONE_SEARCH = Tool(
                               "maximum": MAX_RADIUS_ARCMIN,
                               "description": "Search radius in arcminutes"}},
         "required": ["ra", "dec", "radius_arcmin"], "additionalProperties": False},
-    fn=_as_tool_error(exoplanet_cone_search),
+    fn=exoplanet_cone_search,
 )
 
-GET_PLANETS = Tool(
+GET_PLANETS = exoplanet_tool(
     name="get_planets",
     description=(
         "Get every confirmed planet of one host star from the NASA Exoplanet Archive: orbital "
@@ -96,11 +121,11 @@ GET_PLANETS = Tool(
         "properties": {"hostname": {"type": "string", "minLength": 1,
                                     "description": "Host name exactly as in the archive"}},
         "required": ["hostname"], "additionalProperties": False},
-    fn=_as_tool_error(get_planets),
+    fn=get_planets,
 )
 
 
-FIND_PAPERS = Tool(
+FIND_PAPERS = exoplanet_tool(
     name="find_papers",
     description=(
         "Search ADS (the astronomy literature) for papers, most relevant first: bibcode, "
@@ -120,10 +145,10 @@ FIND_PAPERS = Tool(
                      "description": "Number of papers (default 10)"},
             "refereed_only": {"type": "boolean", "description": "Only refereed papers"}},
         "required": ["query"], "additionalProperties": False},
-    fn=_as_tool_error(find_papers),
+    fn=find_papers,
 )
 
-GET_ABSTRACT = Tool(
+GET_ABSTRACT = exoplanet_tool(
     name="get_abstract",
     description=(
         "Get one paper's title, authors and full abstract from ADS, by bibcode. Any claim "
@@ -134,7 +159,7 @@ GET_ABSTRACT = Tool(
         "properties": {"bibcode": {"type": "string", "minLength": 19, "maxLength": 19,
                                    "description": "ADS bibcode, e.g. 2017Natur.542..456G"}},
         "required": ["bibcode"], "additionalProperties": False},
-    fn=_as_tool_error(get_abstract),
+    fn=get_abstract,
 )
 
 
@@ -152,7 +177,7 @@ def _cone_schema(**extra) -> dict:
             "required": ["ra", "dec", "radius_arcmin"], "additionalProperties": False}
 
 
-TOI_CONE_SEARCH = Tool(
+TOI_CONE_SEARCH = exoplanet_tool(
     name="toi_cone_search",
     description=(
         "List the TESS Objects of Interest (TOIs) within a radius of a sky position, from the "
@@ -161,10 +186,10 @@ TOI_CONE_SEARCH = Tool(
         "magnitude. Use it for TESS candidates, which exoplanet_cone_search (confirmed planets "
         "only) does not list. Positions are J2000. An empty result is a real answer."),
     input_schema=_cone_schema(),
-    fn=_as_tool_error(toi_cone_search),
+    fn=toi_cone_search,
 )
 
-HST_JWST_PROGRAMS = Tool(
+HST_JWST_PROGRAMS = exoplanet_tool(
     name="hst_jwst_programs",
     description=(
         "List the HST and JWST programs that took spectra, time series (transit and eclipse "
@@ -174,10 +199,10 @@ HST_JWST_PROGRAMS = Tool(
         "JWST/HST observed this planet's atmosphere?'. A program title says why it was "
         "proposed, not what it found: for findings, find the papers."),
     input_schema=_cone_schema(),
-    fn=_as_tool_error(hst_jwst_programs),
+    fn=hst_jwst_programs,
 )
 
-EXTRACTABLE_LIGHT_CURVES = Tool(
+EXTRACTABLE_LIGHT_CURVES = exoplanet_tool(
     name="extractable_light_curves",
     description=(
         "For the TESS Input Catalog stars in a field brighter than tmag_max (default 16), say "
@@ -191,10 +216,10 @@ EXTRACTABLE_LIGHT_CURVES = Tool(
                   "description": "Faintest TESS magnitude to include (default 16)"},
         max_stars={"type": "integer", "minimum": 1, "maximum": 200,
                    "description": "Most stars to list, brightest first (default 50)"}),
-    fn=_as_tool_error(extractable_light_curves),
+    fn=extractable_light_curves,
 )
 
-SHORT_CADENCE_CANDIDATES = Tool(
+SHORT_CADENCE_CANDIDATES = exoplanet_tool(
     name="short_cadence_candidates",
     description=(
         "Rank a field's stars for a future TESS short-cadence (2-min/20-s) request by fixed "
@@ -211,15 +236,15 @@ SHORT_CADENCE_CANDIDATES = Tool(
         contamination_max={"type": "number", "minimum": 0, "description": "Largest TIC Rcont (default 0.1)"},
         exclude_existing_short_cadence={"type": "boolean", "description": "Drop stars with 2-min/20-s data (default true)"},
         max_results={"type": "integer", "minimum": 1, "maximum": 50, "description": "Most candidates to list (default 10)"}),
-    fn=_as_tool_error(short_cadence_candidates),
+    fn=short_cadence_candidates,
 )
 
 
-def exoplanet_tools() -> list[Tool]:
+def exoplanet_tools() -> list[StructuredTool]:
     return [RESOLVE_TARGET, EXOPLANET_CONE_SEARCH, GET_PLANETS]
 
 
-def agent_tools() -> list[Tool]:
+def agent_tools() -> list[StructuredTool]:
     """Everything the fact-checked exoplanet agent uses: the archive, and the papers."""
     return exoplanet_tools() + [TOI_CONE_SEARCH, HST_JWST_PROGRAMS, FIND_PAPERS, GET_ABSTRACT,
                                 EXTRACTABLE_LIGHT_CURVES, SHORT_CADENCE_CANDIDATES]
