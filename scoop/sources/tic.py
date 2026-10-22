@@ -1,26 +1,21 @@
 """TESS Input Catalog stars (TIC v8.2, VizieR) brighter than a magnitude limit, on demand.
 
 The limit is an option the user sets on the page (default Tmag < 16; the reason is
-shown with it). The query is exoplanets/tess.py's tic_search, shared with the agent.
+shown with it). The query is scoop/exoplanets/tess.py's tic_search, shared with the agent.
 """
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 from . import Column, Option, Source, layer, register
 
-ROOT = Path(__file__).resolve().parents[2]
 MAX_RADIUS_ARCMIN = 60
 EXOFOP_URL = "https://exofop.ipac.caltech.edu/tess/target.php?id="
 COLOR = "#c3c2b7"
 
 
 def _tess():
-    if str(ROOT) not in sys.path:  # exoplanets/ is a top-level package beside scoop/
-        sys.path.insert(0, str(ROOT))
-    from exoplanets import tess
+    from ..exoplanets import tess
 
     return tess
 

@@ -27,21 +27,21 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from ..chat import build_chat_graph
-from ..chat.prompt import WORKSPACE_PROMPT
-from .. import gaia_estimate
-from ..chat.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
-from ..chat.exoplanet_agent import build_exoplanet_tool
-from ..chat.pm_agent import FIELD_READ_TOOLS, build_pm_handoff_tool
-from ..chat.pm_tools import build_pm_tools
-from ..chat.region_tools import build_region_tools
-from ..chat.visual import build_map_tools
-from ..chat.python_tool import build_python_tools
-from ..chat.kernel_tool import build_kernel_tools
-from ..chat.web_tools import build_web_tools
-from ..cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
-from ..fields import FieldStore, field_region, finite_json
-from ..freshness import freshness
+from ..agents import build_chat_graph
+from ..agents.prompt import WORKSPACE_PROMPT
+from ..archives import gaia_estimate
+from ..agents.data_agent import FIELD_TOOLS, build_estimate_tool, build_handoff_tool, size_gated
+from ..agents.exoplanet_agent import build_exoplanet_tool
+from ..agents.pm_agent import FIELD_READ_TOOLS, build_pm_handoff_tool
+from ..agents.pm_tools import build_pm_tools
+from ..agents.region_tools import build_region_tools
+from ..agents.visual import build_map_tools
+from ..agents.python_tool import build_python_tools
+from ..agents.kernel_tool import build_kernel_tools
+from ..agents.web_tools import build_web_tools
+from ..runtime.cost import CostTracker, describe as describe_cost, estimate_tokens, price_for
+from ..science.fields import FieldStore, field_region, finite_json
+from ..runtime.freshness import freshness
 from ..literature.models import SearchRequest
 from ..literature.serialization import result_payload
 from .ids import THREAD_ID, THREAD_ID_RULE
@@ -136,7 +136,7 @@ def _reason(text: str) -> str:
 
 def _audit_record(request_id: str, thread_id: str, started: float, events: list[dict],
                   usage: dict[str, int], error: str | None, cost: dict | None = None) -> dict:
-    """One line per turn, named after the fields in metrics_schema.json.
+    """One line per turn, named after the fields in evaluation/scorecard/metrics_schema.json.
 
     Judgment fields (task_success, user_accepted, citations_valid) are left for
     evaluation to add; the server cannot know them when the turn ends.
@@ -202,14 +202,14 @@ def create_app(
 
     The ADS client must already be active (entered) for the app's lifetime.
     Map tools are rebuilt per turn for the field and layers the browser reports. ``web`` is
-    a (search, read) pair from scoop.web for the web tools; ``python`` a PythonSandbox;
+    a (search, read) pair from scoop.archives.web for the web tools; ``python`` a PythonSandbox;
     ``kernel`` an AnalysisKernel in the user's own environment (off unless given, or made
     from settings by ``make_kernel``; ``list_kernels`` names the kernels Settings may choose);
     ``list_models`` an async ``(base_url, api_key) -> models`` for the Settings model search;
     ``figure_store`` keeps tool images so the browser gets URLs instead of the images;
     ``trace_store`` keeps developer traces of each turn for the Debug tab. With
     ``audit_path``, each turn appends one JSON line (no message text). ``costs`` is a
-    scoop.cost.CostTracker: it estimates each turn before it runs, holds each
+    scoop.runtime.cost.CostTracker: it estimates each turn before it runs, holds each
     conversation's budget, and learns from the tokens the turn actually used.
     """
     checkpointer = checkpointer or InMemorySaver()
@@ -488,7 +488,7 @@ def create_app(
     # suggested changes (reports under triage_dir, owner-only, beside the traces).
     triager = None
     if triage_dir is not None and triage_every_s > 0:
-        from ..triage_agent import TriageScheduler
+        from ..agents.triage_agent import TriageScheduler
         triager = TriageScheduler(model=lambda: live["model"], audit_path=audit_path,
                                   fields_dir=Path(fields.root) if fields else None,
                                   trace_dir=getattr(trace_store, "directory", None), out_dir=triage_dir,

@@ -20,8 +20,8 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .checks import FAIL, INFO, PASS, SKIP, WARN, record_key
-from .geometry import Region
+from evaluation.checks import FAIL, INFO, PASS, SKIP, WARN, record_key
+from evaluation.geometry import Region
 
 STATUSES = [PASS, FAIL, WARN, SKIP]
 
@@ -113,7 +113,7 @@ def write_report(result, results, out_dir: Path, name: str = "report", source=No
 
 
 def main(argv=None):
-    from .verify import verify_field, verify_result_file
+    from evaluation.verify import verify_field, verify_result_file
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("target", help="a result.json, a *_field.json, or a field key (e.g. draco_1)")

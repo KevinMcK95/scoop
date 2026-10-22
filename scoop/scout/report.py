@@ -5,9 +5,9 @@ harvested, what was judged and why, what was written, and what a reviewer should
 check first. It is the body of the monthly pull request, and it is written even
 when a scan finds nothing, because "nothing new this month" is a useful record.
 
-``audit_record`` emits one JSON line in the shape ``metrics_schema.json``
+``audit_record`` emits one JSON line in the shape ``evaluation/scorecard/metrics_schema.json``
 requires, so a scan appears in the weekly scorecard
-(``scripts/metrics_scorecard.py``) alongside ordinary requests.
+(``evaluation/scorecard/metrics_scorecard.py``) alongside ordinary requests.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from .candidates import Candidate
 from .coverage import STALE_AFTER_DAYS, Coverage
 from .triage import Scan
 
-# USD per million tokens for a model scoop.cost does not price. Override from the CLI.
+# USD per million tokens for a model scoop.runtime.cost does not price. Override from the CLI.
 USD_PER_MTOK_IN = 3.0
 USD_PER_MTOK_OUT = 15.0
 
@@ -137,7 +137,7 @@ def write_report(root: Path, text: str, today: date) -> Path:
 def audit_record(*, scan: Scan, candidates: tuple[Candidate, ...], latency_ms: float,
                  usd_in: float = USD_PER_MTOK_IN, usd_out: float = USD_PER_MTOK_OUT,
                  estimated_cost_usd: float = 0.0, request_id: str | None = None) -> dict:
-    """One scan as a metrics event (see ``metrics_schema.json``).
+    """One scan as a metrics event (see ``evaluation/scorecard/metrics_schema.json``).
 
     ``user_accepted`` is False until someone merges the pull request, which the
     scan cannot know; ``escalated`` is True when the scan found a gap, because a

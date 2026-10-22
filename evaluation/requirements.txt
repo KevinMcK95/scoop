@@ -1,2 +1,0 @@
-# Extra dependency for the evaluation MCP server (on top of the repository requirements.txt).
-mcp>=1.2

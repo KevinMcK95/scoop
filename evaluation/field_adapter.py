@@ -1,6 +1,6 @@
-"""Turn a SCOOP field (pipeline output, see ``scoop/fields.py``) into a result the checks read.
+"""Turn a SCOOP field (pipeline output, see ``scoop/science/fields.py``) into a result the checks read.
 
-A field is what ``smoke_tests/lvdb_field.py`` writes as ``<key>_field.json``
+A field is what ``scoop/pipeline/lvdb_field.py`` writes as ``<key>_field.json``
 and what the workspace server loads: one table per data source, the queried
 region (an ellipse traced by vertices), and on-demand rows from
 ``<key>_extra.json``.
@@ -26,7 +26,7 @@ from astropy.time import Time
 # Archive names the ID re-checks recognize, by field table.
 ARCHIVES = {"gaia": "Gaia DR3", "observations": "MAST", "simbad_galaxies": "SIMBAD"}
 
-# What smoke_tests/lvdb_field.py keeps from MAST (query_mast and select_observations).
+# What scoop/pipeline/lvdb_field.py keeps from MAST (query_mast and select_observations).
 MAST_SELECTION = {"obs_collection": ["HST", "JWST"], "dataproduct_type": ["image"],
                   "exclude_project": ["HAP"], "min_calib_level": 2}
 
@@ -58,7 +58,7 @@ def load_field(field: str | Path, root: str | Path = "out"):
 
     Returns ``(field, path)``.
     """
-    from scoop.fields import FieldStore, field_from_viewer_data
+    from scoop.science.fields import FieldStore, field_from_viewer_data
 
     path = Path(field)
     if path.suffix == ".json" and path.is_file():
@@ -133,7 +133,7 @@ def result_from_field(field: dict, path: Path) -> dict:
     if target.get("rhalf_arcmin"):
         # Centers of extended objects differ between catalogs by a fraction of their size.
         tolerances["target_arcsec"] = max(2.0, 0.1 * target["rhalf_arcmin"] * 60)
-    from .geometry import Region
+    from evaluation.geometry import Region
 
     region = Region(target["ra"], target["dec"], polygon=field["region"])
     return {

@@ -3,12 +3,12 @@ import json
 import unittest
 from unittest import mock
 
-from scoop.web import check_url, html_to_text
+from scoop.archives.web import check_url, html_to_text
 
 try:
     import httpx
 
-    from scoop.web import page_reader, web_searcher
+    from scoop.archives.web import page_reader, web_searcher
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] != "httpx":
         raise
@@ -17,7 +17,7 @@ else:
     HAS_HTTPX = True
 
 try:
-    from scoop.chat.web_tools import build_web_tools
+    from scoop.agents.web_tools import build_web_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langchain_core", "pydantic"}:
         raise
@@ -76,7 +76,7 @@ class FetchTests(unittest.TestCase):
             async with self.client(handler) as client:
                 return await page_reader(client)("https://example.org/page")
 
-        with mock.patch("scoop.web._check_public", public):
+        with mock.patch("scoop.archives.web._check_public", public):
             text = run(go())
         self.assertTrue(text.startswith("# Title"))
         self.assertIn("[Cut at 20,000", text)
@@ -102,7 +102,7 @@ class FetchTests(unittest.TestCase):
             async with self.client(handler) as client:
                 return await page_reader(client)(f"https://example.org{path}")
 
-        with mock.patch("scoop.web._check_public", check):
+        with mock.patch("scoop.archives.web._check_public", check):
             self.assertEqual(run(go("/page")), "ok")
             with self.assertRaises(ValueError):
                 run(go("/old"))
@@ -113,7 +113,7 @@ class FetchTests(unittest.TestCase):
             async with self.client(lambda r: httpx.Response(200, content=b"\x00", headers={"content-type": "image/png"})) as client:
                 return await page_reader(client)("https://example.org/a.png", raw=True)
 
-        with mock.patch("scoop.web._check_public", public), self.assertRaises(ValueError):
+        with mock.patch("scoop.archives.web._check_public", public), self.assertRaises(ValueError):
             run(go())
 
     def test_search_reads_the_mcp_stream(self):

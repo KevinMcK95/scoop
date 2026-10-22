@@ -5,7 +5,7 @@ requested field**, **complete** and **correct**, by going back to the archives
 themselves.
 
 > **Status:** verifies the pipeline's real output (fields from
-> `smoke_tests/lvdb_field.py`, as loaded by the workspace server), and any
+> `scoop/pipeline/lvdb_field.py`, as loaded by the workspace server), and any
 > `result.json`. Also available as an **MCP server**, so Claude Code, the
 > LangGraph chat or any MCP client can call the checks as tools.
 
@@ -15,7 +15,7 @@ themselves.
 | --- | --- |
 | `verify.py` | One-call API: `verify_field`, `verify_result_file`, plus quick lookups (`lookup_ids`, `check_papers`, `check_links`, `check_positions`, `check_gw`). Accepts teammates' shapes too (nested `provenance`, ADS payloads from `scoop.literature`). Returns JSON-friendly summaries. |
 | `mcp_server.py` | The same functions as MCP tools. |
-| `field_adapter.py` | Turns a SCOOP field (`<key>_field.json`, via `scoop.fields`) into the result format the checks read: records with their links, the target's reference papers, the ellipse region, the pipeline's MAST selection and tolerances for its rounding. |
+| `field_adapter.py` | Turns a SCOOP field (`<key>_field.json`, via `scoop.science.fields`) into the result format the checks read: records with their links, the target's reference papers, the ellipse region, the pipeline's MAST selection and tolerances for its rounding. |
 | `links.py` | Link checks: dead links, HTTP errors, "not found" pages and generic "soft 404" pages. |
 | `checks.py` | Core checks (provenance, region, ID re-checks for Gaia/MAST/SIMBAD, sanity, completeness, files), sampling, and `run_all`. Gaia queries go to the Heidelberg ARI mirror, with ESA as the fallback. |
 | `gw.py` | Reads flat and multi-order HEALPix sky maps; credible level and line-of-sight distance at the target; GW checks. |
@@ -25,12 +25,13 @@ themselves.
 | `gather_example.py` | Stand-in data agent for testing the checks: gathers real data for one target into `result.json`; `--inject-fakes` adds deliberately wrong records. |
 | `benchmark.json` | Benchmark targets and what each result must include. |
 | `run_checks.py` | Command line: verify a field or a `result.json` and write a report. |
-| `requirements.txt` | Extra dependency for the MCP server (`mcp`). |
+| `exoplanets/` | The exoplanet agent's question benchmark and its scorer. |
+| `scorecard/` | The metrics scorecard: event schema, sample events and the scorer. |
 
 ## Verify pipeline output
 
 ```bash
-python smoke_tests/lvdb_field.py --out out/draco        # Kevin's pipeline (if not run yet)
+python -m scoop.pipeline.lvdb_field --out out/draco        # Kevin's pipeline (if not run yet)
 python -m evaluation.run_checks draco_1 --root out       # or: out/draco/draco_1_field.json
 ```
 
@@ -88,7 +89,7 @@ and gives a 95% upper limit on the failure rate of the whole group, e.g.
 `--sample 0` (command line); `seed` picks a different sample.
 
 **Claude Code** (from the repository root, with the environment from the
-main README plus `pip install -r evaluation/requirements.txt`):
+`pip install -e '.[eval]'`):
 
 ```bash
 claude mcp add scoop-eval -- "$PWD/.venv/bin/python" "$PWD/evaluation/mcp_server.py"
@@ -178,7 +179,7 @@ SIMBAD and only warns.
 
 ## Results so far
 
-### Pipeline output: Draco (`smoke_tests/lvdb_field.py`, 2 r_half ellipse)
+### Pipeline output: Draco (`scoop/pipeline/lvdb_field.py`, 2 r_half ellipse)
 
 | Check | Result |
 | --- | --- |

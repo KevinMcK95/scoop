@@ -15,11 +15,11 @@ import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .checks import FAIL, INFO, SKIP, WARN, _number, run_all
-from .field_adapter import load_field, result_from_field
-from .geometry import Region, separation_deg
-from .run_checks import score_fakes, write_report
-from .timeouts import set_socket_timeout
+from evaluation.checks import FAIL, INFO, SKIP, WARN, _number, run_all
+from evaluation.field_adapter import load_field, result_from_field
+from evaluation.geometry import Region, separation_deg
+from evaluation.run_checks import score_fakes, write_report
+from evaluation.timeouts import set_socket_timeout
 
 BENCHMARK = Path(__file__).parent / "benchmark.json"
 
@@ -136,7 +136,7 @@ def lookup_ids(archive: str, ids: list[str]) -> dict:
     ids = [str(i).strip() for i in ids]
     found = {}
     if archive == "gaia":
-        from .checks import gaia_query
+        from evaluation.checks import gaia_query
         for i in range(0, len(ids), 500):
             chunk = [str(int(x)) for x in ids[i:i + 500]]
             t, _ = gaia_query("SELECT source_id, ra, dec, phot_g_mean_mag FROM gaiadr3.gaia_source "
@@ -162,7 +162,7 @@ def lookup_ids(archive: str, ids: list[str]) -> dict:
             found[orig] = {"main_id": str(r["main_id"]), "ra": float(r["ra"]), "dec": float(r["dec"]),
                            "otype": str(r["otype"])}
     elif archive == "ads":
-        from .literature import _bibcode_query, ads_search
+        from evaluation.literature import _bibcode_query, ads_search
         for d in ads_search(_bibcode_query(ids), ["bibcode", "title", "author", "year"], rows=len(ids)):
             found[d["bibcode"]] = {"title": (d.get("title") or [""])[0],
                                    "first_author": (d.get("author") or [None])[0], "year": d.get("year")}
@@ -173,7 +173,7 @@ def lookup_ids(archive: str, ids: list[str]) -> dict:
 
 def check_papers(bibcodes: list[str], target: str | None = None, titles: list[str] | None = None) -> dict:
     """Are these papers real (ADS), do titles match, and (with ``target``) are they about it?"""
-    from .literature import check_papers_exist, check_papers_linked
+    from evaluation.literature import check_papers_exist, check_papers_linked
 
     set_socket_timeout()
     titles = titles or [None] * len(bibcodes)
@@ -204,7 +204,7 @@ def check_positions(ra: float, dec: float, radius_arcmin: float | None = None, p
 
 def check_links(urls: list[str]) -> dict:
     """Do these links work and point at what they claim? (See evaluation/links.py.)"""
-    from .links import check_links as _check
+    from evaluation.links import check_links as _check
 
     set_socket_timeout()
     records = [{"archive": "link", "native_id": u, "access_url": u} for u in urls]
@@ -215,7 +215,7 @@ def check_links(urls: list[str]) -> dict:
 
 def check_gw(event: str, ra: float, dec: float, skymap_url: str | None = None) -> dict:
     """Where does (ra, dec) fall in a GW event's sky map? Defaults to the public GWTC-1 map."""
-    from .gw import GWTC1_SKYMAP, credible_level, distance_at, fetch, read_skymap
+    from evaluation.gw import GWTC1_SKYMAP, credible_level, distance_at, fetch, read_skymap
 
     set_socket_timeout()
     url = skymap_url or GWTC1_SKYMAP.format(event=event)

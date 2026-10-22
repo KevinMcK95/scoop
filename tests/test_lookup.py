@@ -1,7 +1,7 @@
 import asyncio
 import unittest
 
-from scoop.lookup import cone_adql, lookup_position, parse_tap_json, references_adql
+from scoop.archives.lookup import cone_adql, lookup_position, parse_tap_json, references_adql
 
 # Shape of SIMBAD TAP FORMAT=json output (metadata + data rows).
 CONE = {"metadata": [{"name": n} for n in ("oid", "main_id", "ra", "dec", "otype", "nbref", "dist")],

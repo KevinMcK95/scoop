@@ -1,6 +1,6 @@
 """TESS Objects of Interest (NASA Exoplanet Archive toi table), queried on demand.
 
-Uses ``exoplanets/archive.py``'s TOI cone search, like the confirmed hosts in
+Uses ``scoop/exoplanets/archive.py``'s TOI cone search, like the confirmed hosts in
 ``exoplanets.py``. One row per TOI, split into layers by TFOPWG disposition:
 open candidates are shown; planets already confirmed or known, and false
 positives, are offered under "Add data".
@@ -8,12 +8,9 @@ positives, are offered under "Add data".
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 from . import Column, Source, layer, register
 
-ROOT = Path(__file__).resolve().parents[2]
 MAX_RADIUS_ARCMIN = 60  # as for the confirmed hosts
 EXOFOP_URL = "https://exofop.ipac.caltech.edu/tess/target.php?id="
 COLOR = "#f0d264"  # the confirmed hosts' gold: same planets, different stage
@@ -24,9 +21,7 @@ def rows(data: dict) -> list[dict]:
 
 
 def _cone(ra: float, dec: float, radius_arcmin: float) -> dict:
-    if str(ROOT) not in sys.path:  # exoplanets/ is a top-level package beside scoop/
-        sys.path.insert(0, str(ROOT))
-    from exoplanets.archive import toi_cone_search
+    from ..exoplanets.archive import toi_cone_search
 
     return toi_cone_search(ra, dec, radius_arcmin)
 

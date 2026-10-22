@@ -3,7 +3,7 @@ import unittest
 
 try:
     import numpy as np
-    from scoop.regions import GreatCircleFrame, Region, adql_condition, separation
+    from scoop.science.regions import GreatCircleFrame, Region, adql_condition, separation
 except ModuleNotFoundError as exc:
     if exc.name != "numpy":
         raise
@@ -110,7 +110,7 @@ class RegionTests(unittest.TestCase):
         import json
         import tempfile
         from pathlib import Path
-        from scoop.regions import read_spec
+        from scoop.science.regions import read_spec
         from scoop.server.jobs import JobManager
         spec = {"kind": "box", "ra": 150.0, "dec": 2.0, "width_deg": 0.7, "height_deg": 0.7, "cuts": {"gmax": 20}}
         with tempfile.TemporaryDirectory() as tmp:

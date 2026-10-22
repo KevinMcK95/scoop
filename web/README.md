@@ -44,7 +44,7 @@ warning is expected. Sky imagery comes from HiPS servers over the network.
 - `src/lib/sky/aladin.ts`: a small, hand-declared boundary to Aladin Lite, which ships no
   TypeScript declarations.
 
-Map changes the agent asks for (`update_map` and friends in `scoop/chat/visual.py`) arrive
+Map changes the agent asks for (`update_map` and friends in `scoop/agents/visual.py`) arrive
 as typed actions. The workspace validates and applies them, and reports on the next turn
 whether each was applied, so the agent never assumes the user saw something they did not.
 No chat text is executed.

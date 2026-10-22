@@ -37,11 +37,11 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 from astroquery.mast import Observations
 
-from .checks import gaia_query
-from .geometry import parse_s_region
-from .gw import GWTC1_SKYMAP, credible_level, fetch, read_skymap
-from .literature import ads_object_query, ads_search
-from .timeouts import TimeLimitExceeded, call_with_timeout, set_socket_timeout
+from evaluation.checks import gaia_query
+from evaluation.geometry import parse_s_region
+from evaluation.gw import GWTC1_SKYMAP, credible_level, fetch, read_skymap
+from evaluation.literature import ads_object_query, ads_search
+from evaluation.timeouts import TimeLimitExceeded, call_with_timeout, set_socket_timeout
 
 MAST_DOWNLOAD = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 IMAGE_PRODUCTS = ["DRZ", "DRC", "I2D"]

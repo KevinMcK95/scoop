@@ -3,8 +3,8 @@ import math
 import unittest
 
 try:
-    from scoop.chat.region_tools import MAX_GAIA_ROWS, build_region_tools
-    from scoop import streams
+    from scoop.agents.region_tools import MAX_GAIA_ROWS, build_region_tools
+    from scoop.science import streams
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "numpy"}:
         raise
@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     numpy = None
 
-from scoop.fields import field_from_viewer_data
+from scoop.science.fields import field_from_viewer_data
 from tests.field_fixture import viewer_data
 
 
@@ -84,7 +84,7 @@ class RegionToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_count_says_why_and_not_to_repeat_it(self):
         from unittest import mock
-        from scoop import gaia_status
+        from scoop.archives import gaia_status
         self.jobs.fail = "counting timed out after 300 s"
         st = {"diagnosis": ["heidelberg has 2 executing and 19 queued job(s) from this IP"]}
         with mock.patch.object(gaia_status, "status", return_value=st):
@@ -114,7 +114,7 @@ class RegionToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gaia_status_tool_reports_findings(self):
         from unittest import mock
-        from scoop import gaia_status
+        from scoop.archives import gaia_status
         st = {"servers": {}, "queues": {}, "aborted": ["7"], "diagnosis": ["Aborted 1 stale SCOOP job(s)"]}
         with mock.patch.object(gaia_status, "status", return_value=st) as called:
             out = await self.call("gaia_status", {"clean_up": True})
@@ -142,7 +142,7 @@ class RegionToolTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipIf(numpy is None, "numpy absent")
 class StreamFieldTests(unittest.TestCase):
     def test_band_fields_get_stream_coordinates_and_presets(self):
-        from scoop.regions import Region
+        from scoop.science.regions import Region
         data = viewer_data()
         t = data["target"]
         track = [[t["ra"] - 1 + 0.1 * k, t["dec"]] for k in range(21)]
@@ -162,8 +162,8 @@ class StreamFieldTests(unittest.TestCase):
 
     @unittest.skipIf(build_region_tools is None, "optional chat dependencies absent")
     def test_region_coverage_uses_the_region(self):
-        from scoop.chat.visual import _coverage
-        from scoop.regions import Region
+        from scoop.agents.visual import _coverage
+        from scoop.science.regions import Region
         box = Region.from_spec({"kind": "box", "ra": 150.0, "dec": 2.0, "width_deg": 1.0, "height_deg": 1.0})
         field = {"query_region": box.to_spec()}
         self.assertEqual(_coverage(field, 150.0, 2.0, 0.1)[0], "inside")

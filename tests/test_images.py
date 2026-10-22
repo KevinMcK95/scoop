@@ -1,10 +1,10 @@
 import unittest
 
-from scoop.images import SURVEYS, cutout_params, data_url
+from scoop.archives.images import SURVEYS, cutout_params, data_url
 
 try:
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-    from scoop.chat.graph import shorten_old_results, with_images
+    from scoop.agents.graph import shorten_old_results, with_images
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core"}:
         raise

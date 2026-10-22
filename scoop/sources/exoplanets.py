@@ -1,19 +1,16 @@
 """Confirmed planet hosts (NASA Exoplanet Archive), queried on demand.
 
-Uses Xuan Ji's ``exoplanets/archive.py`` cone search (plain functions, no agent
+Uses Xuan Ji's ``scoop/exoplanets/archive.py`` cone search (plain functions, no agent
 harness; synchronous, with its record/replay HTTP layer), run in a worker thread.
 Each host carries its planets (parameters and discovery paper) for the Selected panel.
 """
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 from urllib.parse import quote
 
 from . import Column, Source, detail, layer, register
 
-ROOT = Path(__file__).resolve().parents[2]
 MAX_RADIUS_ARCMIN = 60  # the cone search's own limit
 OVERVIEW_URL = "https://exoplanetarchive.ipac.caltech.edu/overview/"
 ADS_URL = "https://ui.adsabs.harvard.edu/abs/"
@@ -27,9 +24,7 @@ def rows(data: dict) -> list[dict]:
 
 
 def _cone(ra: float, dec: float, radius_arcmin: float) -> tuple[dict, dict[str, list[dict]]]:
-    if str(ROOT) not in sys.path:  # exoplanets/ is a top-level package beside scoop/
-        sys.path.insert(0, str(ROOT))
-    from exoplanets.archive import exoplanet_cone_search, planets_in_cone
+    from ..exoplanets.archive import exoplanet_cone_search, planets_in_cone
 
     return exoplanet_cone_search(ra, dec, radius_arcmin), planets_in_cone(ra, dec, radius_arcmin)
 

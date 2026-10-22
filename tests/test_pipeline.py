@@ -1,7 +1,5 @@
-"""Pure helpers of the field pipeline (smoke_tests/lvdb_field.py); no network."""
-import sys
+"""Pure helpers of the field pipeline (scoop/pipeline/lvdb_field.py); no network."""
 import unittest
-from pathlib import Path
 
 try:
     import numpy as np
@@ -14,8 +12,7 @@ except ModuleNotFoundError:
 class LeftJoinTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "smoke_tests"))
-        import lvdb_field
+        from scoop.pipeline import lvdb_field
         cls.left_join = staticmethod(lvdb_field.left_join)
 
     def test_an_empty_side_keeps_every_row_and_adds_masked_columns(self):

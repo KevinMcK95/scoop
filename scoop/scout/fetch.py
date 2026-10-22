@@ -1,16 +1,16 @@
 """A narrow, allowlisted fetcher for verifying a candidate against the archive itself.
 
-``skills/meta/new_survey_skill.md`` requires that every fact in a skill come
+``scoop/skills/meta/new_survey_skill.md`` requires that every fact in a skill come
 from a source fetched in the session, never from the model's memory. ADS tells
 the scout a dataset exists; only the archive's own pages say what is in it, so
 the scout needs to read them.
 
-This is a deliberately narrower thing than ``scoop/web.py``, which gives the
+This is a deliberately narrower thing than ``scoop/archives/web.py``, which gives the
 chat agent the open web (any public host, on a user's request, with a person
 reading the answer). The scout runs unattended on a schedule, so the controls
 for unattended agents apply in full: an allowlist of archive and
 publisher domains, robots.txt, a per-host rate limit, a response size cap and a
-content-type cap. HTML becomes text through ``scoop.web.html_to_text``, so there
+content-type cap. HTML becomes text through ``scoop.archives.web.html_to_text``, so there
 is one such parser in the repository and not two. Everything refused is refused
 with a message the model can act on, so it asks for a different page instead of
 inventing the answer.
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
-from ..web import check_url, html_to_text
+from ..archives.web import check_url, html_to_text
 
 USER_AGENT = "SCOOP-dataset-scout/0.1 (+https://github.com/KevinMcK95/scoop)"
 MAX_BYTES = 400_000

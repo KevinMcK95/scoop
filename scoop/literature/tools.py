@@ -11,7 +11,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from pydantic import Field, StringConstraints
 
-from ..chat.tools import publish_result
+from ..agents.tools import publish_result
 from .ads import ADSClient
 from .models import ADSResult, CitationsRequest, PaperRequest, SearchRequest
 from .serialization import result_payload

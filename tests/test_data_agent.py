@@ -9,14 +9,14 @@ try:
 except ModuleNotFoundError:
     Table = None
 
-from scoop import discovery
-from scoop.fields import field_from_viewer_data
+from scoop.archives import discovery
+from scoop.science.fields import field_from_viewer_data
 from tests.field_fixture import viewer_data
 
 try:
     from langchain_core.messages import AIMessage
-    from scoop.chat.data_agent import DATA_AGENT_PROMPT, build_data_tools, build_handoff_tool
-    from scoop.chat.prompt import WORKSPACE_PROMPT
+    from scoop.agents.data_agent import DATA_AGENT_PROMPT, build_data_tools, build_handoff_tool
+    from scoop.agents.prompt import WORKSPACE_PROMPT
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
         raise
@@ -117,7 +117,7 @@ class LinkTests(unittest.TestCase):
 
 class GaiaLinkTests(unittest.TestCase):
     def tables(self, rows, gaia_id_values=None):
-        from scoop.fields import _columns
+        from scoop.science.fields import _columns
         gaia = [{"id": "1433143832631934848", "ra": 260.0, "dec": 57.9},
                 {"id": "1433143832631934976", "ra": 260.01, "dec": 57.9}]
         new = {"label": "New catalog", "kind": "catalog", "rows": rows, "columns": _columns(rows),
@@ -125,7 +125,7 @@ class GaiaLinkTests(unittest.TestCase):
         return {"gaia": {"rows": gaia, "columns": _columns(gaia), "descriptions": {}}, "new": new}
 
     def test_gaia_id_column_wins_over_position(self):
-        from scoop.fields import link_to_gaia
+        from scoop.science.fields import link_to_gaia
         # Placed on the second star, but its Gaia ID names the first one.
         tables = self.tables([{"id": "a", "ra": 260.01, "dec": 57.9, "GaiaDR3": "1433143832631934848", "mag": 17}])
         link_to_gaia(tables, "new")
@@ -138,7 +138,7 @@ class GaiaLinkTests(unittest.TestCase):
         self.assertIn("in_new", tables["gaia"]["columns"])
 
     def test_position_match_within_one_arcsec(self):
-        from scoop.fields import link_to_gaia
+        from scoop.science.fields import link_to_gaia
         tables = self.tables([{"id": "near", "ra": 260.0 + 0.5 / 3600 / 0.5329, "dec": 57.9},  # ~0.5″ east
                               {"id": "far", "ra": 260.005, "dec": 57.9}])
         link_to_gaia(tables, "new")
@@ -148,7 +148,7 @@ class GaiaLinkTests(unittest.TestCase):
         self.assertIsNone(far["gaia_id"])
 
     def test_velocities_reach_the_standard_columns_and_the_gaia_stars(self):
-        from scoop.fields import add_measurements, link_to_gaia, measurement_roles
+        from scoop.science.fields import add_measurements, link_to_gaia, measurement_roles
         rows = [{"id": "a1", "ra": 260.0, "dec": 57.9, "RVel": 78.0, "e_RVel": 1.0, "[Fe/H]": -2.0, "e_[Fe/H]": 0.1},
                 {"id": "a2", "ra": 260.0, "dec": 57.9, "RVel": 80.0, "e_RVel": 1.0, "[Fe/H]": -2.2, "e_[Fe/H]": 0.1},
                 {"id": "b", "ra": 260.01, "dec": 57.9, "RVel": 60.0, "e_RVel": 2.0}]
@@ -169,20 +169,20 @@ class GaiaLinkTests(unittest.TestCase):
         self.assertNotIn("rv_source", second)
 
     def test_declared_roles_win_and_errors_need_values(self):
-        from scoop.fields import measurement_roles
+        from scoop.science.fields import measurement_roles
         cols = ["Vel", "eVel", "rv", "e_FeH_x"]
         self.assertEqual(measurement_roles(cols, {"rv": "Vel", "rv_err": "eVel"}), {"rv": "Vel", "rv_err": "eVel"})
         self.assertEqual(measurement_roles(["e_rvel", "mag"]), {})  # an error without its value is dropped
 
     def test_float_gaia_ids_are_never_trusted(self):
-        from scoop.fields import _gaia_id_column
+        from scoop.science.fields import _gaia_id_column
         self.assertIsNone(_gaia_id_column([{"Gaia": 1.433143832631935e18}]))
         self.assertEqual(_gaia_id_column([{"Gaia": "1433143832631934848"}]), "Gaia")
 
 
 class ObservationColumnTests(unittest.TestCase):
     def test_obscore_columns_become_the_standard_ones(self):
-        from scoop.observations import add_observation_columns
+        from scoop.science.observations import add_observation_columns
         row = add_observation_columns({"facility_name": "CFHT 3.6m", "instrument_name": "MegaPrime",
                                        "t_min": 51544.5, "t_max": 51544.5, "t_exptime": 600.0,
                                        "em_min": 6.66e-07, "em_max": 6.782e-07, "proposal_id": "05AF01"})
@@ -205,7 +205,7 @@ class ObservationColumnTests(unittest.TestCase):
 
     @unittest.skipUnless(HAS_CHAT, "optional chat dependencies absent")
     def test_overlaps_across_two_footprint_tables(self):
-        from scoop.chat.visual import overlap_report
+        from scoop.agents.visual import overlap_report
         field = self.stored_cfht_field()
         rep = overlap_report(field, "observations", [{"column": "tel", "op": "==", "value": "HST"}], None,
                              0, 5, table_b="cfht")
@@ -320,8 +320,8 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         from langchain_core.tools import tool
         from typing import Annotated
         from langchain_core.tools import InjectedToolCallId
-        from scoop.chat.data_agent import build_estimate_tool, size_gated
-        from scoop.chat.tools import publish_result
+        from scoop.agents.data_agent import build_estimate_tool, size_gated
+        from scoop.agents.tools import publish_result
         started = []
 
         @tool
@@ -397,8 +397,8 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
         field = field_from_viewer_data(viewer_data())
         for t in build_data_tools(field=field, store_rows=None, added=[]):
             self.assertTrue(re.search(rf"\b{t.name}\b", DATA_AGENT_PROMPT), t.name)
-        from scoop.chat.data_agent import FIELD_TOOLS
-        from scoop.chat.region_tools import build_region_tools
+        from scoop.agents.data_agent import FIELD_TOOLS
+        from scoop.agents.region_tools import build_region_tools
         for name in [*FIELD_TOOLS, "estimate_gaia", *(t.name for t in build_region_tools())]:
             self.assertTrue(re.search(rf"\b{name}\b", DATA_AGENT_PROMPT), name)
 

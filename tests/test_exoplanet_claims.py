@@ -3,7 +3,7 @@ import json
 import unittest
 
 from agentbook.models import tool_result_block, tool_use_block
-from exoplanets.checks import check_claims, quote_in, render_claims
+from scoop.exoplanets.checks import check_claims, quote_in, render_claims
 from tests.test_exoplanet_checks import PLANETS
 
 TESKE = "2025ApJ...995L..39T"

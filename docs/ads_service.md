@@ -149,7 +149,7 @@ pip install -e '.[chat,literature]'
 ```
 
 ```python
-from scoop.chat import build_chat_graph
+from scoop.agents import build_chat_graph
 from scoop.literature.ads import ADSClient
 from scoop.literature.tools import build_ads_tools
 

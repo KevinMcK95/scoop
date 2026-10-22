@@ -5,20 +5,20 @@ import time
 import unittest
 from pathlib import Path
 
-from scoop.freshness import field_freshness, freshness, scout_status
+from scoop.runtime.freshness import field_freshness, freshness, scout_status
 
 
 class FreshnessTests(unittest.TestCase):
     def test_old_fields_and_new_sources_are_worth_mentioning(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            (tmp / "skills" / "surveys").mkdir(parents=True)
+            (tmp / "scoop" / "skills" / "surveys").mkdir(parents=True)
             (tmp / "scoop" / "sources").mkdir(parents=True)
             field_path = tmp / "draco_1_field.json"
             field_path.write_text("{}")
             built = time.time() - 40 * 86400
             os.utime(field_path, (built, built))
-            (tmp / "skills" / "surveys" / "euclid.md").write_text("new")  # written after the field
+            (tmp / "scoop" / "skills" / "surveys" / "euclid.md").write_text("new")  # written after the field
             for module in ("tic", "tess_tois", "exoplanets", "mast_tso"):
                 (tmp / "scoop" / "sources" / f"{module}.py").write_text("")
             out = field_freshness({"tables": {"gaia": {}, "tic": {}}}, field_path, repo=tmp)

@@ -14,7 +14,7 @@ except ModuleNotFoundError as exc:
     HAS_CHAT_DEPS = False
 else:
     HAS_CHAT_DEPS = True
-    from scoop.chat import build_chat_graph, merge_artifacts, publish_result
+    from scoop.agents import build_chat_graph, merge_artifacts, publish_result
 
 
 class ScriptedModel:

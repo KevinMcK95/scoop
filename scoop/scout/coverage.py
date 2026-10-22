@@ -4,7 +4,7 @@ The scout can only spot a gap if it knows what is not a gap. That knowledge
 already exists in two places, so this module reads both instead of keeping a
 third list that would drift:
 
-- ``skills/**/*.md`` — one skill per survey or archive, with the release it is
+- ``scoop/skills/**/*.md`` — one skill per survey or archive, with the release it is
   pinned to and the date its facts were last checked (``sources_checked``).
 - ``scoop.sources.SOURCES`` — the data sources actually wired into the field
   pipeline. A survey with a skill but no source module is documented but not
@@ -74,7 +74,7 @@ class Covered:
 class Coverage:
     skills: tuple[Covered, ...]
     source_modules: tuple[str, ...]
-    to_write: str  # the "To write" note from skills/index.md, verbatim
+    to_write: str  # the "To write" note from scoop/skills/index.md, verbatim
 
     def by_name(self, name: str) -> Covered | None:
         return next((s for s in self.skills if s.name == name), None)
@@ -150,7 +150,7 @@ def _releases(body: str) -> tuple[str, ...]:
 
 def read_coverage(root: Path, *, source_modules: tuple[str, ...] | None = None) -> Coverage:
     """Read the inventory from a checkout. ``root`` is the repository root."""
-    skills_dir = root / "skills"
+    skills_dir = root / "scoop" / "skills"
     if source_modules is None:
         from ..sources import SOURCES  # importing registers every source module
 

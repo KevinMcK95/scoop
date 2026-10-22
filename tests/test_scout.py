@@ -25,7 +25,7 @@ from scoop.scout.state import State
 from scoop.scout.triage import Scan, triage
 
 REPO = Path(__file__).resolve().parents[1]
-METRICS_SCHEMA = json.loads((REPO / "metrics_schema.json").read_text(encoding="utf-8"))
+METRICS_SCHEMA = json.loads((REPO / "evaluation" / "scorecard" / "metrics_schema.json").read_text(encoding="utf-8"))
 
 INDEX = """# SCOOP skills index
 
@@ -67,14 +67,14 @@ SECTIONS = {key: f"{key} content" for key in (
 def fixture_root() -> Path:
     """A minimal checkout: one skill, an index, and the scout's playbook."""
     root = Path(tempfile.mkdtemp())
-    (root / "skills" / "surveys").mkdir(parents=True)
-    (root / "skills" / "meta").mkdir(parents=True)
-    (root / "skills" / "literature").mkdir(parents=True)
+    (root / "scoop" / "skills" / "surveys").mkdir(parents=True)
+    (root / "scoop" / "skills" / "meta").mkdir(parents=True)
+    (root / "scoop" / "skills" / "literature").mkdir(parents=True)
     (root / "scoop" / "sources").mkdir(parents=True)
     (root / "smoke_tests").mkdir()
-    (root / "skills" / "index.md").write_text(INDEX, encoding="utf-8")
-    (root / "skills" / "surveys" / "gaia.md").write_text(GAIA_SKILL, encoding="utf-8")
-    (root / "skills" / "meta" / "new_survey_skill.md").write_text(
+    (root / "scoop" / "skills" / "index.md").write_text(INDEX, encoding="utf-8")
+    (root / "scoop" / "skills" / "surveys" / "gaia.md").write_text(GAIA_SKILL, encoding="utf-8")
+    (root / "scoop" / "skills" / "meta" / "new_survey_skill.md").write_text(
         "---\nname: new_survey_skill\n---\n\n# Writing a new survey skill\n", encoding="utf-8")
     return root
 
@@ -157,7 +157,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_only_skills_that_state_archive_facts_go_stale(self):
         root = fixture_root()
-        (root / "skills" / "meta" / "playbook.md").write_text(
+        (root / "scoop" / "skills" / "meta" / "playbook.md").write_text(
             "---\nname: playbook\n---\n# A playbook\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         # A playbook has no archive facts, so it never needs re-checking, even
@@ -168,7 +168,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_a_survey_skill_that_never_recorded_a_check_is_due(self):
         root = fixture_root()
-        (root / "skills" / "surveys" / "foo.md").write_text(
+        (root / "scoop" / "skills" / "surveys" / "foo.md").write_text(
             "---\nname: foo\n---\n# Foo\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         self.assertTrue(coverage.by_name("foo").is_stale(date(2026, 10, 20)))
@@ -182,7 +182,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_generic_filename_words_are_not_aliases(self):
         root = fixture_root()
-        (root / "skills" / "surveys" / "sdss_spectra.md").write_text(
+        (root / "scoop" / "skills" / "surveys" / "sdss_spectra.md").write_text(
             "---\nname: sdss_spectra\n---\n# SDSS\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         self.assertEqual(coverage.by_name("sdss_spectra").aliases, ("sdss",))
@@ -387,15 +387,15 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_a_skill_only_proposal_writes_a_draft_and_an_index_row(self):
         written = scaffold(self.root, a_proposal(), today=self.today)
-        self.assertEqual(written.paths, ["skills/surveys/foo_survey.md", "skills/index.md"])
+        self.assertEqual(written.paths, ["scoop/skills/surveys/foo_survey.md", "scoop/skills/index.md"])
         self.assertIn("cannot query it yet", " ".join(written.notes))
-        skill = (self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
+        skill = (self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
         self.assertIn("status: draft", skill)
         self.assertIn("sources_checked: 2026-10-20 (\n  https://noirlab.edu/foo/dr1\n  )", skill)
         self.assertIn("No person has reviewed it", skill)
         for heading in ("What's here", "What's NOT here", "Not yet verified"):
             self.assertIn(f"## {heading}", skill)
-        index = (self.root / "skills" / "index.md").read_text(encoding="utf-8")
+        index = (self.root / "scoop" / "skills" / "index.md").read_text(encoding="utf-8")
         self.assertIn("| [foo_survey](surveys/foo_survey.md) |", index)
         # Added to the surveys table, not the literature one.
         self.assertLess(index.index("foo_survey"), index.index("## Literature"))
@@ -403,8 +403,8 @@ class ScaffoldTests(unittest.TestCase):
     def test_a_service_proposal_also_writes_a_source_module_and_a_probe(self):
         written = scaffold(self.root, a_proposal(service=A_SERVICE, probe_ra=150.1, probe_dec=2.2),
                            today=self.today)
-        self.assertEqual(written.paths, ["skills/surveys/foo_survey.md", "scoop/sources/foo_survey.py",
-                                         "smoke_tests/foo_survey_probe.py", "skills/index.md"])
+        self.assertEqual(written.paths, ["scoop/skills/surveys/foo_survey.md", "scoop/sources/foo_survey.py",
+                                         "smoke_tests/foo_survey_probe.py", "scoop/skills/index.md"])
         source = (self.root / "scoop" / "sources" / "foo_survey.py").read_text(encoding="utf-8")
         compile(source, "foo_survey.py", "exec")  # the template produces valid Python
         self.assertIn('TAP_URL = "https://datalab.noirlab.edu/tap"', source)
@@ -426,17 +426,17 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_nothing_is_overwritten_and_nothing_is_written_partially(self):
         scaffold(self.root, a_proposal(), today=self.today)
-        before = (self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
+        before = (self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
         with self.assertRaisesRegex(ScaffoldError, "already exists"):
             scaffold(self.root, a_proposal(service=A_SERVICE, probe_ra=1.0, probe_dec=2.0),
                      today=self.today)
-        self.assertEqual((self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8"),
+        self.assertEqual((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8"),
                          before)
         self.assertFalse((self.root / "scoop" / "sources" / "foo_survey.py").exists())
 
     def test_an_index_row_is_added_once(self):
         proposal = a_proposal()
-        index = self.root / "skills" / "index.md"
+        index = self.root / "scoop" / "skills" / "index.md"
         self.assertTrue(add_index_row(index, proposal))
         self.assertFalse(add_index_row(index, proposal))
         self.assertEqual(index.read_text(encoding="utf-8").count("surveys/foo_survey.md"), 1)
@@ -494,7 +494,7 @@ class TriageTests(unittest.TestCase):
         self.assertEqual([v.verdict for v in scan.verdicts], ["new", "update", "not_a_release"])
         self.assertEqual([v.bibcode for v in scan.gaps()], ["2026arXiv1A", "2026arXiv2B"])
         self.assertEqual([w.slug for w in scan.written], ["foo_survey"])
-        self.assertTrue((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertTrue((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
         self.assertEqual(scan.fetched, ["https://noirlab.edu/foo/dr1"])
         self.assertEqual(scan.tool_failures, 0)
 
@@ -507,7 +507,7 @@ class TriageTests(unittest.TestCase):
         ])
         self.assertEqual(scan.written, [])
         self.assertEqual(scan.tool_failures, 1)
-        self.assertFalse((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
 
     def test_a_proposal_needs_a_gap_verdict_first(self):
         scan = self.run_triage([
@@ -542,7 +542,7 @@ class TriageTests(unittest.TestCase):
             proposal("bar_survey", "2026arXiv2B"),
         ], max_proposals=1)
         self.assertEqual([w.slug for w in scan.written], ["foo_survey"])
-        self.assertFalse((self.root / "skills" / "surveys" / "bar_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "bar_survey.md").exists())
 
     def test_a_dry_run_validates_a_proposal_without_writing_it(self):
         scan = self.run_triage([
@@ -554,7 +554,7 @@ class TriageTests(unittest.TestCase):
         ], dry_run=True)
         self.assertEqual(scan.written, [])
         self.assertEqual(scan.tool_failures, 0)
-        self.assertFalse((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
 
     def test_the_playbook_is_in_the_system_prompt(self):
         model = self.FakeModel(script_for([]))

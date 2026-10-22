@@ -3,8 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoop.fields import (FieldStore, column_stats, default_layers, field_from_viewer_data, matches,
-                          table_summary, validate_filter)
+from scoop.science.fields import FieldStore, column_stats, default_layers, field_from_viewer_data, matches, table_summary, validate_filter
 from tests.field_fixture import viewer_data
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "filter_cases.json").read_text())
@@ -130,7 +129,7 @@ class FieldTests(unittest.TestCase):
         self.assertNotIn("s_region", summary["columns"])
 
     def test_point_tables_get_tangent_plane_offsets(self):
-        from scoop.spatial import project
+        from scoop.science.spatial import project
         gaia = self.field["tables"]["gaia"]
         self.assertEqual(gaia["units"]["xi"], "arcmin")
         target = self.field["target"]

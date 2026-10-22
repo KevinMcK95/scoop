@@ -4,14 +4,14 @@ import unittest
 
 try:
     import astropy  # noqa: F401
-    from scoop import pm
+    from scoop.science import pm
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"astropy", "numpy"}:
         raise
     pm = None
 
 try:
-    from scoop.chat.pm_tools import build_pm_tools, field_epochs
+    from scoop.agents.pm_tools import build_pm_tools, field_epochs
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "astropy", "numpy"}:
         raise
@@ -19,7 +19,7 @@ except ModuleNotFoundError as exc:
 else:
     HAS_CHAT = True
 
-from scoop.fields import field_from_viewer_data
+from scoop.science.fields import field_from_viewer_data
 from tests.field_fixture import viewer_data
 
 
@@ -73,7 +73,7 @@ class PlanningTests(unittest.TestCase):
 @unittest.skipIf(pm is None, "astropy absent")
 class MemberFitTests(unittest.TestCase):
     def test_zero_dispersion_gives_an_upper_limit_and_a_known_mean(self):
-        from scoop.members import fit_1d
+        from scoop.science.members import fit_1d
         rows = [{"id": str(i), "v": x, "e": 1.0} for i, x in enumerate([-1.0, 1.0] * 50)]
         fit = fit_1d(rows, "v", "e")
         self.assertAlmostEqual(fit["mean"], 0.0)
@@ -83,7 +83,7 @@ class MemberFitTests(unittest.TestCase):
         self.assertGreater(fit["sigma_int_upper_95"], 0.0)
 
     def test_dispersion_above_errors_is_recovered(self):
-        from scoop.members import fit_1d
+        from scoop.science.members import fit_1d
         # Values ±3 with errors 1: intrinsic sigma^2 = 9 - 1, as maximum likelihood gives.
         rows = [{"id": str(i), "v": x, "e": 1.0} for i, x in enumerate([-3.0, 3.0] * 200)]
         fit = fit_1d(rows, "v", "e", clip_sigma=None)
@@ -120,8 +120,8 @@ def synthetic_dwarf(seed=5, n_members=300, n_foreground=600):
 @unittest.skipIf(pm is None, "astropy absent")
 class SelectionTests(unittest.TestCase):
     def test_cells_outline_with_holes_filled(self):
-        from scoop.members import cells_to_polygons
-        from scoop.fields import plane_polygon_contains
+        from scoop.science.members import cells_to_polygons
+        from scoop.science.fields import plane_polygon_contains
         ring = {(i, j) for i in range(3) for j in range(3)} - {(1, 1)}  # a 3x3 block with a hole
         polys = cells_to_polygons(ring | {(5, 0)}, 0.0, 0.1, 10.0, 0.5)
         self.assertEqual(len(polys), 2)
@@ -130,7 +130,7 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(plane_polygon_contains(polys[0], 0.35, 10.75))
 
     def test_recovers_members_with_and_without_a_prior(self):
-        from scoop.members import fit_pm, select_members
+        from scoop.science.members import fit_pm, select_members
         rows = synthetic_dwarf()
         for prior in ((0.04, -0.19), None):
             sel = select_members(rows, distance_kpc=80.0, pm_prior=prior, sigma_pm=0.02, r_max=2.0)
@@ -206,7 +206,7 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exp["best_published"]["citation"], "A et al. 2020")
 
     def test_exposures_group_into_visits_and_instruments_filter(self):
-        from scoop.chat.pm_tools import visits
+        from scoop.agents.pm_tools import visits
         exposures = [{"instrument": "CFHT MegaPrime", "year": 2017.50, "id": "a", "table": "c"},
                      {"instrument": "CFHT MegaPrime", "year": 2017.51, "id": "b", "table": "c"},  # 4 days later
                      {"instrument": "CFHT MegaPrime", "year": 2019.00, "id": "c", "table": "c"},
@@ -266,7 +266,7 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         ids = next(c["value"] for c in action["filter"] if c["op"] == "in")
         self.assertTrue(all(isinstance(i, str) for i in ids))  # Gaia IDs stay exact strings
         self.assertTrue(any(c["op"] == "lasso" for c in action["filter"]))
-        from scoop.fields import matches, validate_filter
+        from scoop.science.fields import matches, validate_filter
         validate_filter(action["filter"], {"id", *self.field["tables"]["gaia"]["columns"]})
         shown = [r for r in self.field["tables"]["gaia"]["rows"] if matches(r, action["filter"])]
         self.assertEqual(len(shown), len(ids))  # the layer is exactly the members
@@ -281,7 +281,7 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(again.update["artifacts"]["c2"]["actions"][0]["type"], "layer.update")
 
     async def test_map_tools_can_update_the_layer_auto_members_added(self):
-        from scoop.chat.visual import build_map_tools
+        from scoop.agents.visual import build_map_tools
         self.field["tables"]["gaia"]["rows"] = synthetic_dwarf()
         known: dict = {}
         tools = {t.name: t for t in build_pm_tools(field=self.field, lvdb_cache=None, known_layers=known,
@@ -293,7 +293,7 @@ class PmToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("agent:members:gaia", result.update["artifacts"]["c2"]["actions"][0]["layerId"])
 
     def test_prompt_names_every_pm_tool(self):
-        from scoop.chat.pm_agent import PM_AGENT_PROMPT  # the proper-motion agent calls them
+        from scoop.agents.pm_agent import PM_AGENT_PROMPT  # the proper-motion agent calls them
         for name in self.tools:
             self.assertIn(name, PM_AGENT_PROMPT)
 

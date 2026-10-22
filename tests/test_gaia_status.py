@@ -3,7 +3,7 @@ import socket
 import unittest
 from unittest import mock
 
-from scoop import gaia_status
+from scoop.archives import gaia_status
 
 LISTING = """<jobs>
   <jobref id="1"><phase>EXECUTING</phase><ownerId>ANONYMOUS</ownerId><creationTime>2026-10-21T13:21:28Z</creationTime></jobref>

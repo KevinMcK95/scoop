@@ -2,7 +2,7 @@ import json
 import unittest
 
 try:
-    from scoop.chat.visual import build_map_tools
+    from scoop.agents.visual import build_map_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
         raise
@@ -10,7 +10,7 @@ except ModuleNotFoundError as exc:
 else:
     HAS_DEPS = True
 
-from scoop.fields import default_layers, field_from_viewer_data
+from scoop.science.fields import default_layers, field_from_viewer_data
 from tests.field_fixture import viewer_data
 
 

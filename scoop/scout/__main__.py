@@ -20,7 +20,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from ..cost import price_for
+from ..runtime.cost import price_for
 from ..literature.ads import ADSClient
 from .candidates import harvest
 from .coverage import STALE_AFTER_DAYS, read_coverage
@@ -59,7 +59,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model", default="claude-opus-5-5")
     parser.add_argument("--model-provider", choices=("anthropic", "openai"), default="anthropic")
     parser.add_argument("--usd-per-mtok-in", type=float, default=None,
-                        help="default: the model's price in scoop.cost")
+                        help="default: the model's price in scoop.runtime.cost")
     parser.add_argument("--usd-per-mtok-out", type=float, default=None)
     parser.add_argument("--json", action="store_true", help="print the scan summary as JSON")
     args = parser.parse_args(argv)

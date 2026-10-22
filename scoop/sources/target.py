@@ -1,5 +1,5 @@
 """The field's target: an LVDB object (center, half-light ellipses) or a cone."""
-from ..lvdb import LVDB_RELEASE
+from ..archives.lvdb import LVDB_RELEASE
 from . import Source, eq, layer, register
 from ._palette import COLORS
 

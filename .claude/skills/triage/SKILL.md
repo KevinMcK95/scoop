@@ -12,7 +12,7 @@ branch, for a person to review.
 ## 1. Collect
 
 ```bash
-python scripts/triage_failures.py --audit-log <server --audit-log> --fields <server --fields> --since <YYYY-MM-DD>
+python -m scoop.runtime.triage --audit-log <server --audit-log> --fields <server --fields> --since <YYYY-MM-DD>
 ```
 
 Defaults when the server ran with its defaults: `out/turns.jsonl` and the `--fields`
@@ -26,8 +26,8 @@ labelled:
 - **SCOOP bug** (an exception in our code; field runs carry the traceback's SCOOP frames
   and a run record under `<fields>/_runs/`): fix.
 - **agent mistake or tool limit** (the tool refused the call): fix the cause, which is
-  usually the tool's description or the agent's prompt (`scoop/chat/prompt.py`,
-  `DATA_AGENT_PROMPT` in `scoop/chat/data_agent.py`), or make the tool accept a harmless
+  usually the tool's description or the agent's prompt (`scoop/agents/prompt.py`,
+  `DATA_AGENT_PROMPT` in `scoop/agents/data_agent.py`), or make the tool accept a harmless
   variant (as `clean_name` does for labels). Several refusals of one kind in a row (the
   agent retrying) mean the error message doesn't say how to fix the call: improve it.
 
@@ -37,7 +37,7 @@ that may already have fixed it (`git log -S '<distinctive text>'`).
 ## 2. Reproduce each bug before changing anything
 
 - A field run: rerun its arguments (the run record's `args`) with
-  `python smoke_tests/lvdb_field.py --out <scratch dir> <args>`, on the smallest input that
+  `python -m scoop.pipeline.lvdb_field --out <scratch dir> <args>`, on the smallest input that
   fails (a few arcminutes; never a large region or the Galactic plane). Reuse the record's
   `cache/` when the failure is after the archive queries.
 - A tool call: call the tool in a unit test with the failure's `args` (see
@@ -65,7 +65,7 @@ that may already have fixed it (`git log -S '<distinctive text>'`).
 ## Never
 
 - Retry big queries to reproduce a failure; abort any TAP jobs you start (see
-  `scoop/gaia_status.py`).
+  `scoop/archives/gaia_status.py`).
 - Weaken a check to make a failure disappear (Gaia IDs stay exact integers; TLS
   verification stays on; tokens stay out of logs and commits).
 - Change behaviour the user asked for (defaults, thresholds) to silence a failure; ask.

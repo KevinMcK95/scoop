@@ -6,8 +6,8 @@ from pathlib import Path
 try:
     from langchain_core.messages import AIMessage
     from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-    from scoop.chat import build_chat_graph
-    from scoop.chat.visual import build_map_tools
+    from scoop.agents import build_chat_graph
+    from scoop.agents.visual import build_map_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "aiosqlite", "pydantic"}:
         raise

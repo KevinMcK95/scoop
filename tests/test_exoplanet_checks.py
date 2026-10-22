@@ -3,7 +3,7 @@ import json
 import unittest
 
 from agentbook.models import tool_result_block, tool_use_block
-from exoplanets.checks import check_answer, find_bibcodes, sentences
+from scoop.exoplanets.checks import check_answer, find_bibcodes, sentences
 
 # What get_planets returns, trimmed to one planet (values as in the archive).
 PLANETS = {"hostname": "TRAPPIST-1", "distance_pc": 12.429888, "n_planets": 7, "planets": [{

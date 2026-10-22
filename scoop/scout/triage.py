@@ -153,7 +153,7 @@ DRY_RUN_NOTE = ("This is a dry run: `propose_dataset` will validate a proposal a
 
 
 def _playbook(root: Path) -> str:
-    path = root / "skills" / "meta" / "new_survey_skill.md"
+    path = root / "scoop" / "skills" / "meta" / "new_survey_skill.md"
     if not path.exists():
         raise FileNotFoundError(f"{path} is the scout's playbook and is missing")
     return path.read_text(encoding="utf-8")
@@ -180,9 +180,9 @@ def build_tools(coverage: Coverage, candidates: tuple[Candidate, ...], scan: Sca
         return coverage.summary()
 
     def read_skill(path: str) -> str:
-        skill = (root / "skills" / path).resolve()
-        if not skill.is_relative_to((root / "skills").resolve()) or not skill.exists():
-            raise ToolError(f"No skill at skills/{path}. Use a path from `coverage_inventory`.")
+        skill = (root / "scoop" / "skills" / path).resolve()
+        if not skill.is_relative_to((root / "scoop" / "skills").resolve()) or not skill.exists():
+            raise ToolError(f"No skill at scoop/skills/{path}. Use a path from `coverage_inventory`.")
         return skill.read_text(encoding="utf-8")
 
     def fetch_page(url: str) -> str:
@@ -234,7 +234,7 @@ def build_tools(coverage: Coverage, candidates: tuple[Candidate, ...], scan: Sca
         if dry_run:
             accepted[0] += 1
             scan.rejected.append(f"{slug}: validated but not written (dry run)")
-            return {"dry_run": True, "would_write": [f"skills/surveys/{slug}.md"]
+            return {"dry_run": True, "would_write": [f"scoop/skills/surveys/{slug}.md"]
                     + ([f"scoop/sources/{slug}.py", f"smoke_tests/{slug}_probe.py"]
                        if proposal.service else []),
                     "remaining_proposals": max_proposals - accepted[0]}

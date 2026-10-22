@@ -9,9 +9,9 @@ import unittest
 
 from agentbook.models import FakeModel, call
 from agentbook.tools import ToolError, ToolRegistry
-from exoplanets.agent import SYSTEM, ask, request_text
-from exoplanets.evaluate import score
-from exoplanets.tools import GET_ABSTRACT, GET_PLANETS
+from scoop.exoplanets.agent import SYSTEM, ask, request_text
+from evaluation.exoplanets.evaluate import score
+from scoop.exoplanets.tools import GET_ABSTRACT, GET_PLANETS
 from tests.test_exoplanet_checks import PLANETS
 from tests.test_exoplanet_claims import ABSTRACT, QUOTE, TESKE
 
@@ -150,7 +150,7 @@ class ConstraintFlowTests(unittest.TestCase):
         self.assertTrue(result.checked)
 
     def test_tic_constraints_are_about_stars(self):
-        from exoplanets.agent import render_clarify
+        from scoop.exoplanets.agent import render_clarify
         text = render_clarify({"constraints": ["M dwarfs"], "table": "tic", "count": 1})
         self.assertIn("How should I select “M dwarfs” stars?", text)
         self.assertIn("e.g. of Teff, radius or log g", text)

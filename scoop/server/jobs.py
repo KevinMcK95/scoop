@@ -1,6 +1,6 @@
 """Background runs of the field pipeline, with progress for the browser.
 
-Runs ``smoke_tests/lvdb_field.py`` (Kevin's pipeline) as a subprocess with an
+Runs the field pipeline (``python -m scoop.pipeline.lvdb_field``) as a subprocess with an
 argument list (no shell); its ``[decision]`` lines are the progress log. The
 output lands in ``<fields>/<key>/<key>_field.json``, where FieldStore finds it.
 """
@@ -71,10 +71,16 @@ class Job:
                 "decisions": self.decisions, "error": self.error}
 
 
+PIPELINE = "scoop.pipeline.lvdb_field"
+
+
 class JobManager:
-    def __init__(self, fields_root: Path, script: Path, python: str = sys.executable,
+    """``script`` replaces the installed pipeline module (tests run a stand-in)."""
+
+    def __init__(self, fields_root: Path, script: Path | None = None, python: str = sys.executable,
                  timeout_s: float = 900.0) -> None:
-        self.root, self.script, self.python, self.timeout_s = Path(fields_root), Path(script), python, timeout_s
+        self.root, self.python, self.timeout_s = Path(fields_root), python, timeout_s
+        self.script = Path(script) if script is not None else None
         self.plans = self.root / "region_plans"
         self.jobs: dict[str, Job] = {}
         self._tasks: set[asyncio.Task] = set()
@@ -139,13 +145,22 @@ class JobManager:
         path = self.plans / f"{plan_id}.json"
         return json.loads(path.read_text()) if PLAN.fullmatch(plan_id or "") and path.exists() else None
 
+    def _command(self) -> list[str]:
+        return [self.python, str(self.script.resolve())] if self.script else [self.python, "-m", PIPELINE]
+
+    def _cwd(self) -> str:
+        if self.script:
+            return str(self.script.parent)
+        self.root.mkdir(parents=True, exist_ok=True)
+        return str(self.root)
+
     async def count_plan(self, plan_id: str, timeout_s: float = 300.0) -> dict:
         """Gaia row counts for a plan (the pipeline's --count-only), without building a field."""
         if self.load_plan(plan_id) is None:
             raise ValueError(f"no region plan {plan_id!r}")
         process = await asyncio.create_subprocess_exec(
-            self.python, str(self.script.resolve()), "--out", str(self.plans / f"{plan_id}_count"),
-            "--region", str(self.plans / f"{plan_id}.json"), "--count-only", cwd=str(self.script.parent),
+            *self._command(), "--out", str(self.plans / f"{plan_id}_count"),
+            "--region", str(self.plans / f"{plan_id}.json"), "--count-only", cwd=self._cwd(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
             async with asyncio.timeout(timeout_s):
@@ -185,8 +200,7 @@ class JobManager:
         out = (self.root / job.key).resolve()
         try:
             process = await asyncio.create_subprocess_exec(
-                self.python, str(self.script.resolve()), "--out", str(out), *job.args,
-                cwd=str(self.script.parent),
+                *self._command(), "--out", str(out), *job.args, cwd=self._cwd(),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             async with asyncio.timeout(timeout_s):
                 async for raw in process.stdout:

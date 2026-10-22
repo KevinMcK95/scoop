@@ -22,7 +22,7 @@ from astropy.io import fits
 from astropy.time import Time
 from astropy.wcs import WCS, FITSFixedWarning
 
-from .geometry import Region, separation_deg
+from evaluation.geometry import Region, separation_deg
 
 PASS, FAIL, WARN, SKIP = "pass", "fail", "warn", "skip"
 INFO = "info"  # notes such as what was sampled; not counted as pass or fail
@@ -72,7 +72,7 @@ SPECTRAL_RANGES = {
 }
 
 # Gaia: the Heidelberg ARI mirror is faster and steadier than ESA; ESA is the fallback.
-# Heidelberg silently caps jobs at 100,000 rows unless maxrec is passed (skills/surveys/gaia.md).
+# Heidelberg silently caps jobs at 100,000 rows unless maxrec is passed (scoop/skills/surveys/gaia.md).
 HEIDELBERG_TAP = "https://gaia.ari.uni-heidelberg.de/tap"
 
 # Row counts that usually mean a service's default row limit was hit.
@@ -654,10 +654,10 @@ def run_all(result, base_dir: Path, timeout: float = 300, benchmark=None, only=N
     archive or website per record run on a reproducible random sample of
     each big group, and the report states how many were checked.
     """
-    from .gw import check_localizations
-    from .links import check_links, distinct_links
-    from .literature import check_arxiv, check_must_include, check_papers_exist, check_papers_linked
-    from .timeouts import TimeLimitExceeded, call_with_timeout, with_retries
+    from evaluation.gw import check_localizations
+    from evaluation.links import check_links, distinct_links
+    from evaluation.literature import check_arxiv, check_must_include, check_papers_exist, check_papers_linked
+    from evaluation.timeouts import TimeLimitExceeded, call_with_timeout, with_retries
 
     records = result["records"]
     sampled, cut = sample_records(records, sample, seed)

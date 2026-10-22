@@ -5,7 +5,7 @@ from pathlib import Path
 
 try:
     from langchain_core.messages import AIMessage
-    from scoop.triage_agent import TriageScheduler, build_triage_tools
+    from scoop.agents.triage_agent import TriageScheduler, build_triage_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
         raise
@@ -83,7 +83,7 @@ class TriageAgentTests(unittest.IsolatedAsyncioTestCase):
         async def run(name, args):
             return await tools[name].ainvoke({"type": "tool_call", "name": name, "id": "x", "args": args})
 
-        self.assertIn("def classify", (await run("read_source", {"path": "scoop/triage.py", "end": 400})).content)
+        self.assertIn("def classify", (await run("read_source", {"path": "scoop/runtime/triage.py", "end": 400})).content)
         for private in ("../../etc/passwd", ".git/config", "web/node_modules/x.js", "out/turns.jsonl"):
             self.assertEqual((await run("read_source", {"path": private})).status, "error", private)
         found = await run("search_source", {"pattern": r"def clean_name"})

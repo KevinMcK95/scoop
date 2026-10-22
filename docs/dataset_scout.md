@@ -6,13 +6,13 @@ quietly answers from a four-year-old catalogue. The scout is a scheduled agent
 that looks for that decay once a month and files a pull request about it.
 
 It is the automated counterpart of
-[`skills/meta/new_survey_skill.md`](../skills/meta/new_survey_skill.md), which
+[`scoop/skills/meta/new_survey_skill.md`](../scoop/skills/meta/new_survey_skill.md), which
 says how to write a survey skill when a *request* needs one. The scout loads
 that playbook verbatim into its system prompt, so there is one description of
 what a good skill looks like, not two.
 
 - Code: [`scoop/scout/`](../scoop/scout/)
-- Operational playbook: [`skills/meta/dataset_scout.md`](../skills/meta/dataset_scout.md)
+- Operational playbook: [`scoop/skills/meta/dataset_scout.md`](../scoop/skills/meta/dataset_scout.md)
 - Schedule: [`.github/workflows/dataset-scout.yml`](../.github/workflows/dataset-scout.yml)
 - Tests: [`tests/test_scout.py`](../tests/test_scout.py)
 
@@ -25,7 +25,7 @@ what a good skill looks like, not two.
     (bibcodes already judged)    ▼
                             candidates
                                  │
-  skills/**  ──┐                 │
+  scoop/skills/**  ──┐                 │
   SOURCES   ───┼─ coverage.read_coverage() ──► inventory
                │                 │                 │
                │                 ▼                 ▼
@@ -40,10 +40,10 @@ what a good skill looks like, not two.
                │          └────────────────────────────────┘
                │                 │
                │                 ▼  scaffold()
-               └──────►  skills/surveys/<slug>.md   (status: draft)
+               └──────►  scoop/skills/surveys/<slug>.md   (status: draft)
                          scoop/sources/<slug>.py    (registered, queryable)
                          smoke_tests/<slug>_probe.py
-                         skills/index.md            (a row)
+                         scoop/skills/index.md            (a row)
                                  │
                                  ▼
                          docs/scout/<date>.md  ──► the pull-request body
@@ -95,11 +95,11 @@ Every control is code, not prompt text, following `agentbook.guardrails`:
 | The open web | https only, archive-domain allowlist, robots.txt, per-host rate limit, 400 kB and MIME caps, scripts stripped | `scout/fetch.py` |
 
 `scout/fetch.py` is deliberately narrower than
-[`scoop/web.py`](../scoop/web.py), which gives the chat agent the open web: that
+[`scoop/archives/web.py`](../scoop/archives/web.py), which gives the chat agent the open web: that
 is the right call there, because a person asked for the page and is reading the
 answer. The scout runs unattended once a month, so it may only read archive and
 publisher domains, and only pages their robots.txt allows. It shares
-`scoop.web.html_to_text` and `check_url`, so there is one HTML reader in the
+`scoop.archives.web.html_to_text` and `check_url`, so there is one HTML reader in the
 repository rather than two, and passes JSON and XML through untouched — a
 VOTable or `TAP_SCHEMA` reply is only useful with its tags.
 
@@ -109,8 +109,8 @@ VOTable or `TAP_SCHEMA` reply is only useful with its tags.
 | Unreviewed work being trusted | `status: draft` in the frontmatter and in the report | `scaffold.py`, `report.py` |
 
 Each scan appends one event in the shape of
-[`metrics_schema.json`](../metrics_schema.json), so it shows up in
-`scripts/metrics_scorecard.py` alongside ordinary requests. `escalated` is true
+[`evaluation/scorecard/metrics_schema.json`](../evaluation/scorecard/metrics_schema.json), so it shows up in
+`evaluation/scorecard/metrics_scorecard.py` alongside ordinary requests. `escalated` is true
 when the scan found a gap, because a gap is exactly what needs a person, and
 `user_accepted` stays false until someone merges the pull request.
 

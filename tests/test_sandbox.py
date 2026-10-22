@@ -3,10 +3,10 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from scoop.sandbox import PythonSandbox, table_payload
+from scoop.runtime.sandbox import PythonSandbox, table_payload
 
 try:
-    from scoop.chat.python_tool import build_python_tools
+    from scoop.agents.python_tool import build_python_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langchain_core", "pydantic"}:
         raise
@@ -70,7 +70,7 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(len(sandbox.calls), 1)
 
 
-@unittest.skipUnless(READY, "Python sandbox not set up here (needs macOS, Node and `npm run setup` in sandbox/)")
+@unittest.skipUnless(READY, "Python sandbox not set up here (needs macOS, Node and `npm run setup` in scoop/runtime/sandbox/)")
 class SandboxTests(unittest.TestCase):
     """The real sandbox: computations work; files, processes and the network do not."""
 
