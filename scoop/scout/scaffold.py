@@ -4,15 +4,15 @@ This is the "smoothly integrates" half of the scout, and it is deliberately
 plain code: the model supplies the facts it verified, this module decides where
 they go and in what shape. A proposal becomes up to four things:
 
-- ``skills/surveys/<slug>.md`` — a draft skill in the exact template from
-  ``skills/meta/new_survey_skill.md``, so every data agent can read it the same
+- ``scoop/skills/surveys/<slug>.md`` — a draft skill in the exact template from
+  ``scoop/skills/meta/new_survey_skill.md``, so every data agent can read it the same
   way as the reviewed ones;
 - ``smoke_tests/<slug>_probe.py`` — the probe that re-checks the facts, runnable
   on release day or whenever the skill looks stale;
 - ``scoop/sources/<slug>.py`` — a registered data source, which is all the field
   pipeline needs to start returning the survey's rows (``scoop/sources`` is
   discovered automatically);
-- a row in ``skills/index.md``, so agents find the skill at all.
+- a row in ``scoop/skills/index.md``, so agents find the skill at all.
 
 Three rules keep this safe to run unattended: nothing is overwritten, every path
 is checked to be inside the checkout, and everything is written with
@@ -160,7 +160,7 @@ def skill_markdown(proposal: Proposal, today: date) -> str:
 SOURCE_TEMPLATE = '''"""{survey} ({release}), queried on demand.
 
 Draft: written by the dataset scout on {today} from {bibcode}; not yet reviewed.
-See skills/surveys/{slug}.md for what this release holds and its gotchas.
+See scoop/skills/surveys/{slug}.md for what this release holds and its gotchas.
 """
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ PROBE_TEMPLATE = '''"""Probe {survey} ({release}): counts, timings and coverage 
 
 Draft, written by the dataset scout on {today}. Re-run this when the skill looks
 stale or a new release is announced, and compare the numbers with
-skills/surveys/{slug}.md.
+scoop/skills/surveys/{slug}.md.
 
     python smoke_tests/{slug}_probe.py
 """
@@ -284,14 +284,14 @@ def _index_row(proposal: Proposal) -> str:
 
 
 def add_index_row(index: Path, proposal: Proposal) -> bool:
-    """Add the skill to the surveys table in ``skills/index.md``. False if already listed."""
+    """Add the skill to the surveys table in ``scoop/skills/index.md``. False if already listed."""
     text = index.read_text(encoding="utf-8")
     if f"surveys/{proposal.slug}.md" in text:
         return False
     lines = text.splitlines(keepends=True)
     start = next((i for i, line in enumerate(lines) if line.startswith("## Surveys and archives")), None)
     if start is None:
-        raise ScaffoldError("skills/index.md has no 'Surveys and archives' section to add a row to")
+        raise ScaffoldError("scoop/skills/index.md has no 'Surveys and archives' section to add a row to")
     end = start
     for i in range(start, len(lines)):
         if lines[i].startswith("|"):
@@ -307,7 +307,7 @@ def scaffold(root: Path, proposal: Proposal, *, today: date | None = None) -> Wr
     """Write a proposal's files. Raises ``ScaffoldError`` without writing anything partial."""
     today = today or date.today()
     written = Written(slug=proposal.slug)
-    files = {f"skills/surveys/{proposal.slug}.md": skill_markdown(proposal, today)}
+    files = {f"scoop/skills/surveys/{proposal.slug}.md": skill_markdown(proposal, today)}
     if proposal.service is None:
         written.notes.append(
             "No TAP endpoint was verified, so no data-source module or probe was written: "
@@ -337,6 +337,6 @@ def scaffold(root: Path, proposal: Proposal, *, today: date | None = None) -> Wr
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(files[relative], encoding="utf-8")
         written.paths.append(relative)
-    if add_index_row(root / "skills" / "index.md", proposal):
-        written.paths.append("skills/index.md")
+    if add_index_row(root / "scoop" / "skills" / "index.md", proposal):
+        written.paths.append("scoop/skills/index.md")
     return written

@@ -9,10 +9,10 @@ try:
 except ModuleNotFoundError:
     raise unittest.SkipTest("optional literature dependency httpx absent")
 
-from scoop.domain import Publication
+from scoop.literature.records import Publication
 from scoop.literature.ads import ADSClient, SEARCH_API
 from scoop.literature.models import CitationsRequest, PaperRequest, SearchRequest
-from scoop.models import SearchStatus
+from scoop.literature.records import SearchStatus
 
 
 BIBCODE = "2023ApJ...950L..12A"

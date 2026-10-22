@@ -2,13 +2,13 @@
 import json
 import unittest
 
-from scoop.fields import field_from_viewer_data
+from scoop.science.fields import field_from_viewer_data
 from scoop.sources import SOURCES, Column, Source, eq, layer, register
 from scoop.sources.exoplanets import overview_link, planet
-from scoop.fields import matches
-from exoplanets.archive import radec_box
-from exoplanets.mast import parse
-from exoplanets.tess import mjd_date
+from scoop.science.fields import matches
+from scoop.exoplanets.archive import radec_box
+from scoop.exoplanets.mast import parse
+from scoop.exoplanets.tess import mjd_date
 from tests.field_fixture import viewer_data
 
 
@@ -180,7 +180,7 @@ class QueryOnDemandTests(unittest.TestCase):
     def setUp(self):
         import tempfile
         from pathlib import Path
-        from scoop.fields import FieldStore
+        from scoop.science.fields import FieldStore
         self.regions = []
 
         async def query(region):

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoop import triage as tri  # noqa: E402
+from scoop.runtime import triage as tri  # noqa: E402
 
 
 class TriageTests(unittest.TestCase):

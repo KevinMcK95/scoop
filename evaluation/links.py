@@ -14,7 +14,7 @@ links are checked through the ADS API: the bibcode must exist.
 ``mast:`` URIs are checked through MAST's download endpoint. SkyServer's
 certificate chain isn't in the bundle ``requests`` ships with, so on a
 certificate error the check retries with the operating system's bundle
-(``$SCOOP_CA_BUNDLE`` overrides), as smoke_tests/lvdb_field.py does. It never
+(``$SCOOP_CA_BUNDLE`` overrides), as scoop/pipeline/lvdb_field.py does. It never
 turns verification off.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 import requests
 
-from .checks import FAIL, PASS, WARN, CheckResult, record_key
+from evaluation.checks import FAIL, PASS, WARN, CheckResult, record_key
 
 MAST_DOWNLOAD = "https://mast.stsci.edu/api/v0.1/Download/file?uri="
 USER_AGENT = "SCOOP-evaluation/0.1 link check (+https://github.com/KevinMcK95/scoop)"
@@ -92,7 +92,7 @@ def _ads_link(url: str):
     m = re.match(r"/abs/([^/]+)", parsed.path)
     if parsed.netloc != "ui.adsabs.harvard.edu" or not m:
         return None
-    from .literature import _bibcode_query, ads_search, ads_token
+    from evaluation.literature import _bibcode_query, ads_search, ads_token
 
     if not ads_token():
         return None

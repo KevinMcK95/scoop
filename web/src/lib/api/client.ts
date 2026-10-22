@@ -8,7 +8,7 @@ export interface ActionAcknowledgment {
   error?: string;
 }
 
-// What a conversation may spend, has spent, and has left (scoop/cost.py).
+// What a conversation may spend, has spent, and has left (scoop/runtime/cost.py).
 export interface BudgetView {
   thread_id: string;
   budget_usd: number;

@@ -1,7 +1,7 @@
 """The dataset scout: inventory, harvest, triage, scaffolding and the report.
 
 Nothing here touches the network: ADS is a fake client, the web fetcher is a
-fake transport, and the model is ``agentbook.FakeModel``.
+fake transport, and the model is ``ScriptedModel``, a scripted LangChain chat model.
 """
 from __future__ import annotations
 
@@ -14,18 +14,17 @@ from datetime import date
 from pathlib import Path
 
 from scoop.literature.models import ADSError, ADSResult, BibliographicPaper, SearchRequest
-from scoop.domain import EntityRef, Publication
-from scoop.models import Provenance, SearchStatus
+from scoop.literature.records import EntityRef, Provenance, Publication, SearchStatus
 from scoop.scout.candidates import CHANNELS, Candidate, harvest
 from scoop.scout.coverage import parse_frontmatter, read_coverage
 from scoop.scout.fetch import Fetcher, FetchError, allowed, to_text
 from scoop.scout.report import audit_record, report_markdown
 from scoop.scout.scaffold import Proposal, ScaffoldError, Service, add_index_row, scaffold
 from scoop.scout.state import State
-from scoop.scout.triage import Scan, triage
+from scoop.scout.triage import Scan, Usage, triage
 
 REPO = Path(__file__).resolve().parents[1]
-METRICS_SCHEMA = json.loads((REPO / "metrics_schema.json").read_text(encoding="utf-8"))
+METRICS_SCHEMA = json.loads((REPO / "evaluation" / "scorecard" / "metrics_schema.json").read_text(encoding="utf-8"))
 
 INDEX = """# SCOOP skills index
 
@@ -67,14 +66,14 @@ SECTIONS = {key: f"{key} content" for key in (
 def fixture_root() -> Path:
     """A minimal checkout: one skill, an index, and the scout's playbook."""
     root = Path(tempfile.mkdtemp())
-    (root / "skills" / "surveys").mkdir(parents=True)
-    (root / "skills" / "meta").mkdir(parents=True)
-    (root / "skills" / "literature").mkdir(parents=True)
+    (root / "scoop" / "skills" / "surveys").mkdir(parents=True)
+    (root / "scoop" / "skills" / "meta").mkdir(parents=True)
+    (root / "scoop" / "skills" / "literature").mkdir(parents=True)
     (root / "scoop" / "sources").mkdir(parents=True)
     (root / "smoke_tests").mkdir()
-    (root / "skills" / "index.md").write_text(INDEX, encoding="utf-8")
-    (root / "skills" / "surveys" / "gaia.md").write_text(GAIA_SKILL, encoding="utf-8")
-    (root / "skills" / "meta" / "new_survey_skill.md").write_text(
+    (root / "scoop" / "skills" / "index.md").write_text(INDEX, encoding="utf-8")
+    (root / "scoop" / "skills" / "surveys" / "gaia.md").write_text(GAIA_SKILL, encoding="utf-8")
+    (root / "scoop" / "skills" / "meta" / "new_survey_skill.md").write_text(
         "---\nname: new_survey_skill\n---\n\n# Writing a new survey skill\n", encoding="utf-8")
     return root
 
@@ -157,7 +156,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_only_skills_that_state_archive_facts_go_stale(self):
         root = fixture_root()
-        (root / "skills" / "meta" / "playbook.md").write_text(
+        (root / "scoop" / "skills" / "meta" / "playbook.md").write_text(
             "---\nname: playbook\n---\n# A playbook\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         # A playbook has no archive facts, so it never needs re-checking, even
@@ -168,7 +167,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_a_survey_skill_that_never_recorded_a_check_is_due(self):
         root = fixture_root()
-        (root / "skills" / "surveys" / "foo.md").write_text(
+        (root / "scoop" / "skills" / "surveys" / "foo.md").write_text(
             "---\nname: foo\n---\n# Foo\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         self.assertTrue(coverage.by_name("foo").is_stale(date(2026, 10, 20)))
@@ -182,7 +181,7 @@ class CoverageTests(unittest.TestCase):
 
     def test_generic_filename_words_are_not_aliases(self):
         root = fixture_root()
-        (root / "skills" / "surveys" / "sdss_spectra.md").write_text(
+        (root / "scoop" / "skills" / "surveys" / "sdss_spectra.md").write_text(
             "---\nname: sdss_spectra\n---\n# SDSS\n", encoding="utf-8")
         coverage = read_coverage(root, source_modules=())
         self.assertEqual(coverage.by_name("sdss_spectra").aliases, ("sdss",))
@@ -387,15 +386,15 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_a_skill_only_proposal_writes_a_draft_and_an_index_row(self):
         written = scaffold(self.root, a_proposal(), today=self.today)
-        self.assertEqual(written.paths, ["skills/surveys/foo_survey.md", "skills/index.md"])
+        self.assertEqual(written.paths, ["scoop/skills/surveys/foo_survey.md", "scoop/skills/index.md"])
         self.assertIn("cannot query it yet", " ".join(written.notes))
-        skill = (self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
+        skill = (self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
         self.assertIn("status: draft", skill)
         self.assertIn("sources_checked: 2026-10-20 (\n  https://noirlab.edu/foo/dr1\n  )", skill)
         self.assertIn("No person has reviewed it", skill)
         for heading in ("What's here", "What's NOT here", "Not yet verified"):
             self.assertIn(f"## {heading}", skill)
-        index = (self.root / "skills" / "index.md").read_text(encoding="utf-8")
+        index = (self.root / "scoop" / "skills" / "index.md").read_text(encoding="utf-8")
         self.assertIn("| [foo_survey](surveys/foo_survey.md) |", index)
         # Added to the surveys table, not the literature one.
         self.assertLess(index.index("foo_survey"), index.index("## Literature"))
@@ -403,8 +402,8 @@ class ScaffoldTests(unittest.TestCase):
     def test_a_service_proposal_also_writes_a_source_module_and_a_probe(self):
         written = scaffold(self.root, a_proposal(service=A_SERVICE, probe_ra=150.1, probe_dec=2.2),
                            today=self.today)
-        self.assertEqual(written.paths, ["skills/surveys/foo_survey.md", "scoop/sources/foo_survey.py",
-                                         "smoke_tests/foo_survey_probe.py", "skills/index.md"])
+        self.assertEqual(written.paths, ["scoop/skills/surveys/foo_survey.md", "scoop/sources/foo_survey.py",
+                                         "smoke_tests/foo_survey_probe.py", "scoop/skills/index.md"])
         source = (self.root / "scoop" / "sources" / "foo_survey.py").read_text(encoding="utf-8")
         compile(source, "foo_survey.py", "exec")  # the template produces valid Python
         self.assertIn('TAP_URL = "https://datalab.noirlab.edu/tap"', source)
@@ -426,32 +425,76 @@ class ScaffoldTests(unittest.TestCase):
 
     def test_nothing_is_overwritten_and_nothing_is_written_partially(self):
         scaffold(self.root, a_proposal(), today=self.today)
-        before = (self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
+        before = (self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8")
         with self.assertRaisesRegex(ScaffoldError, "already exists"):
             scaffold(self.root, a_proposal(service=A_SERVICE, probe_ra=1.0, probe_dec=2.0),
                      today=self.today)
-        self.assertEqual((self.root / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8"),
+        self.assertEqual((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").read_text(encoding="utf-8"),
                          before)
         self.assertFalse((self.root / "scoop" / "sources" / "foo_survey.py").exists())
 
     def test_an_index_row_is_added_once(self):
         proposal = a_proposal()
-        index = self.root / "skills" / "index.md"
+        index = self.root / "scoop" / "skills" / "index.md"
         self.assertTrue(add_index_row(index, proposal))
         self.assertFalse(add_index_row(index, proposal))
         self.assertEqual(index.read_text(encoding="utf-8").count("surveys/foo_survey.md"), 1)
 
 
+def call(name: str, **args) -> dict:
+    """A scripted tool call: call("record_verdict", bibcode="X", ...)."""
+    return {"name": name, "args": args}
+
+
+class ScriptedModel:
+    """A LangChain chat model that replays a script, for the scout's loop.
+
+    A turn is a string (the final answer), a ``call(...)`` dict (one tool call)
+    or a list of them (text plus several tool calls in one reply). Every reply
+    reports ``usage`` tokens, the way a provider's usage metadata would, and
+    every request is kept in ``requests``.
+    """
+
+    def __init__(self, turns, usage=(100, 10)):
+        self.turns = iter(turns)
+        self.usage = usage
+        self.requests: list[list] = []
+        self.tools: list = []
+        self._next_id = 0
+
+    def bind_tools(self, tools):
+        self.tools = list(tools)
+        return self
+
+    def invoke(self, messages, config=None):
+        from langchain_core.messages import AIMessage
+
+        self.requests.append(list(messages))
+        try:
+            turn = next(self.turns)
+        except StopIteration:
+            raise RuntimeError(f"script exhausted after {len(self.requests) - 1} turns") from None
+        items = turn if isinstance(turn, list) else [turn]
+        calls = []
+        for item in items:
+            if isinstance(item, dict):
+                self._next_id += 1
+                calls.append({**item, "id": f"call_{self._next_id:03d}", "type": "tool_call"})
+        text = "\n".join(item for item in items if isinstance(item, str))
+        tokens_in, tokens_out = self.usage
+        return AIMessage(content=text, tool_calls=calls,
+                         usage_metadata={"input_tokens": tokens_in, "output_tokens": tokens_out,
+                                         "total_tokens": tokens_in + tokens_out})
+
+
 def script_for(turns):
-    """FakeModel turns, with a closing summary appended."""
+    """Scripted turns, with a closing summary appended."""
     return [*turns, "Judged every candidate; see the report."]
 
 
 class TriageTests(unittest.TestCase):
     def setUp(self):
-        from agentbook.models import FakeModel, call
-
-        self.FakeModel, self.call = FakeModel, call
+        self.call = call
         self.root = fixture_root()
         self.coverage = read_coverage(self.root, source_modules=("gaia",))
         self.candidates = (
@@ -469,8 +512,8 @@ class TriageTests(unittest.TestCase):
         })
         self.fetcher = Fetcher(client=self.transport, min_interval=0.0)
 
-    def run_triage(self, turns, **kwargs):
-        return triage(self.FakeModel(script_for(turns)), self.candidates, self.coverage,
+    def run_triage(self, turns, model=None, **kwargs):
+        return triage(model or ScriptedModel(script_for(turns)), self.candidates, self.coverage,
                       root=self.root, since=date(2026, 9, 20), until=date(2026, 10, 20),
                       today=date(2026, 10, 20), fetcher=self.fetcher, **kwargs)
 
@@ -494,7 +537,7 @@ class TriageTests(unittest.TestCase):
         self.assertEqual([v.verdict for v in scan.verdicts], ["new", "update", "not_a_release"])
         self.assertEqual([v.bibcode for v in scan.gaps()], ["2026arXiv1A", "2026arXiv2B"])
         self.assertEqual([w.slug for w in scan.written], ["foo_survey"])
-        self.assertTrue((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertTrue((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
         self.assertEqual(scan.fetched, ["https://noirlab.edu/foo/dr1"])
         self.assertEqual(scan.tool_failures, 0)
 
@@ -507,7 +550,7 @@ class TriageTests(unittest.TestCase):
         ])
         self.assertEqual(scan.written, [])
         self.assertEqual(scan.tool_failures, 1)
-        self.assertFalse((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
 
     def test_a_proposal_needs_a_gap_verdict_first(self):
         scan = self.run_triage([
@@ -542,7 +585,7 @@ class TriageTests(unittest.TestCase):
             proposal("bar_survey", "2026arXiv2B"),
         ], max_proposals=1)
         self.assertEqual([w.slug for w in scan.written], ["foo_survey"])
-        self.assertFalse((self.root / "skills" / "surveys" / "bar_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "bar_survey.md").exists())
 
     def test_a_dry_run_validates_a_proposal_without_writing_it(self):
         scan = self.run_triage([
@@ -554,26 +597,76 @@ class TriageTests(unittest.TestCase):
         ], dry_run=True)
         self.assertEqual(scan.written, [])
         self.assertEqual(scan.tool_failures, 0)
-        self.assertFalse((self.root / "skills" / "surveys" / "foo_survey.md").exists())
+        self.assertFalse((self.root / "scoop" / "skills" / "surveys" / "foo_survey.md").exists())
 
     def test_the_playbook_is_in_the_system_prompt(self):
-        model = self.FakeModel(script_for([]))
+        model = ScriptedModel(script_for([]))
         triage(model, self.candidates, self.coverage, root=self.root, since=date(2026, 9, 20),
                until=date(2026, 10, 20), today=date(2026, 10, 20), fetcher=self.fetcher)
-        system = model.requests[0]["system"]
-        self.assertIn("Writing a new survey skill", system)
-        self.assertIn("2026arXiv1A", json.dumps(model.requests[0]["messages"]))
+        system, task = model.requests[0][:2]
+        self.assertEqual(system.type, "system")
+        self.assertIn("Writing a new survey skill", system.content)
+        self.assertIn("2026arXiv1A", task.content)
+        self.assertEqual([t.name for t in model.tools], ["coverage_inventory", "read_skill",
+                                                         "fetch_page", "record_verdict",
+                                                         "propose_dataset"])
 
     def test_the_step_budget_stops_a_runaway_scan_with_its_verdicts_intact(self):
         turns = [self.call("record_verdict", bibcode="2026arXiv1A", verdict="new", reason="New.")]
         turns += [self.call("coverage_inventory") for _ in range(10)]
         scan = self.run_triage(turns, max_steps=4)
-        self.assertTrue(scan.stop_reason.startswith("budget") or scan.stop_reason == "max_steps")
+        self.assertEqual(scan.stop_reason, "budget: step limit (4/4)")
         self.assertEqual([v.bibcode for v in scan.verdicts], ["2026arXiv1A"])
 
+    def test_a_budget_stopped_scan_still_reports_its_steps_and_tokens(self):
+        # Each scripted reply reports 100 input and 10 output tokens.
+        turns = [self.call("read_skill", path=f"surveys/{n}.md") for n in range(10)]
+        scan = self.run_triage(turns, max_steps=4)
+        self.assertEqual(scan.steps, 4)
+        self.assertEqual((scan.usage.input_tokens, scan.usage.output_tokens), (400, 40))
+        record = audit_record(scan=scan, candidates=self.candidates, latency_ms=1.0,
+                              usd_in=5.0, usd_out=25.0)
+        self.assertTrue(record["budget_exceeded"])
+        self.assertEqual(record["actual_cost_usd"], round((400 * 5.0 + 40 * 25.0) / 1e6, 4))
+
+    def test_the_token_budget_counts_the_model_s_reported_usage(self):
+        turns = [self.call("read_skill", path=f"surveys/{n}.md") for n in range(10)]
+        scan = self.run_triage(turns, max_tokens_total=250)
+        self.assertEqual(scan.stop_reason, "budget: token budget (330/250)")
+        self.assertEqual(scan.steps, 3)
+        self.assertEqual(scan.usage, Usage(300, 30))
+
+    def test_the_time_limit_stops_a_scan_after_the_step_in_progress(self):
+        scan = self.run_triage([self.call("coverage_inventory")] * 3, max_seconds=0.0)
+        self.assertEqual(scan.stop_reason, "budget: time limit (0 s)")
+        self.assertEqual((scan.steps, scan.tool_calls), (1, 1))
+
+    def test_a_final_answer_ends_the_scan_even_on_its_last_step(self):
+        scan = self.run_triage([self.call("coverage_inventory")], max_steps=2)
+        self.assertEqual(scan.stop_reason, "done")
+        self.assertEqual(scan.summary, "Judged every candidate; see the report.")
+
     def test_an_identical_repeated_call_is_refused_rather_than_run_again(self):
-        scan = self.run_triage([self.call("coverage_inventory") for _ in range(5)], max_steps=8)
-        self.assertGreater(scan.tool_failures, 0)
+        model = ScriptedModel(script_for([self.call("coverage_inventory") for _ in range(5)]))
+        scan = self.run_triage([], model=model, max_steps=8)
+        self.assertEqual((scan.tool_calls, scan.tool_failures), (5, 3))
+        refusal = model.requests[3][-1]
+        self.assertEqual(refusal.status, "error")
+        self.assertTrue(refusal.content.startswith("Refused: coverage_inventory was already called 2 times"))
+
+    def test_a_tool_error_reaches_the_model_as_an_error_tool_message(self):
+        model = ScriptedModel(script_for([self.call("read_skill", path="surveys/nope.md"),
+                                          self.call("record_verdict", bibcode="2026arXiv1A"),
+                                          self.call("no_such_tool")]))
+        scan = self.run_triage([], model=model)
+        self.assertEqual((scan.tool_calls, scan.tool_failures), (3, 3))
+        missing, invalid, unknown = (request[-1] for request in model.requests[1:4])
+        self.assertEqual((missing.status, missing.tool_call_id), ("error", "call_001"))
+        self.assertEqual(missing.content, "No skill at scoop/skills/surveys/nope.md. "
+                                          "Use a path from `coverage_inventory`.")
+        self.assertTrue(invalid.content.startswith(
+            "Invalid arguments for record_verdict (arguments): 'verdict' is a required property."))
+        self.assertTrue(unknown.content.startswith("Unknown tool 'no_such_tool'."))
 
 
 class ReportTests(unittest.TestCase):
@@ -672,9 +765,7 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(self.windows[0][0], date(2026, 9, 19))
 
     def test_a_real_scan_records_verdicts_and_advances_the_window(self):
-        from agentbook.models import FakeModel, call
-
-        model = FakeModel([call("record_verdict", bibcode="2026arXiv1A", verdict="covered",
+        model = ScriptedModel([call("record_verdict", bibcode="2026arXiv1A", verdict="covered",
                                 reason="Already in the gaia skill."), "Nothing new."])
         self.assertEqual(self.run_cli(model=model), 0)
         state = State.load(self.root / ".scout_state.json")

@@ -1,4 +1,4 @@
-"""Cost estimation, budget checks and calibration (scoop/cost.py)."""
+"""Cost estimation, budget checks and calibration (scoop/runtime/cost.py)."""
 from __future__ import annotations
 
 import json
@@ -7,8 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoop import cost
-from scoop.cost import CostTracker
+from scoop.runtime import cost
+from scoop.runtime.cost import CostTracker
 
 
 class PricingTests(unittest.TestCase):

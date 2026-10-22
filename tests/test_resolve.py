@@ -1,6 +1,6 @@
 import unittest
 
-from scoop.resolve import parse_sesame
+from scoop.archives.resolve import parse_sesame
 
 M31 = """<?xml version="1.0" encoding="UTF-8"?>
 <Sesame xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -32,7 +32,7 @@ class SesameTests(unittest.TestCase):
 
 class FallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_simbad_answers_when_sesame_is_unreachable(self):
-        from scoop.resolve import sesame_resolver
+        from scoop.archives.resolve import sesame_resolver
 
         class Response:
             def __init__(self, text):

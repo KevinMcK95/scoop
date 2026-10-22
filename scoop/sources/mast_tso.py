@@ -5,19 +5,16 @@ most exoplanet work: transit and eclipse spectroscopy is stored as time series
 (JWST NIRSpec BOTS, NIRISS SOSS, MIRI) or spectra (HST WFC3 grisms, STIS, COS), and
 spectra of directly imaged planets as IFU cubes (NIRSpec IFU, MIRI MRS).
 This source adds those, one row per observation, with a summary per program. The
-MAST query itself is in exoplanets/mast.py, shared with the exoplanet agent.
+MAST query itself is in scoop/exoplanets/mast.py, shared with the exoplanet agent.
 """
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 from . import Column, Source, eq, layer, register
 from ._palette import COLORS
 from .mast import program_link
 
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def rows(data: dict) -> list[dict]:
@@ -25,9 +22,7 @@ def rows(data: dict) -> list[dict]:
 
 
 def _mast():
-    if str(ROOT) not in sys.path:  # exoplanets/ is a top-level package beside scoop/
-        sys.path.insert(0, str(ROOT))
-    from exoplanets import mast
+    from ..exoplanets import mast
 
     return mast
 

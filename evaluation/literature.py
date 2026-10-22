@@ -19,7 +19,7 @@ from pathlib import Path
 
 import requests
 
-from .checks import FAIL, PASS, SKIP, WARN, CheckResult, record_key
+from evaluation.checks import FAIL, PASS, SKIP, WARN, CheckResult, record_key
 
 ADS_SEARCH = "https://api.adsabs.harvard.edu/v1/search/query"
 ADS_OBJECTS = "https://api.adsabs.harvard.edu/v1/objects/query"

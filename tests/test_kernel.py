@@ -3,10 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scoop.kernel import AnalysisKernel, _truncate, available_kernels
+from scoop.runtime.kernel import AnalysisKernel, _truncate, available_kernels
 
 try:
-    from scoop.chat.kernel_tool import build_kernel_tools
+    from scoop.agents.kernel_tool import build_kernel_tools
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langchain_core", "pydantic"}:
         raise

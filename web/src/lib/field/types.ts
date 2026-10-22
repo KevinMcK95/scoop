@@ -1,4 +1,4 @@
-// Mirrors scoop/fields.py and scoop/chat/visual.py. See docs/map_interaction.md.
+// Mirrors scoop/science/fields.py and scoop/agents/visual.py. See docs/map_interaction.md.
 
 export type Value = string | number | boolean | null;
 export type Op = '==' | '!=' | '<' | '<=' | '>' | '>=' | 'in' | 'exists' | 'within' | 'inside' | 'lasso';

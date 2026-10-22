@@ -10,7 +10,7 @@ Register with Claude Code (from the repository root):
     claude mcp add scoop-eval -- "$PWD/.venv/bin/python" "$PWD/evaluation/mcp_server.py"
 
 Relative paths in tool arguments (e.g. ``root="out"``) resolve against the
-repository root. Needs ``mcp`` (see evaluation/requirements.txt).
+repository root. Needs ``mcp`` (``pip install -e '.[eval]'``).
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def quiet(fn):
 @quiet
 def verify_field(field: str, root: str = "out", sample: float = 100, seed: int = 0,
                  only: list[str] | None = None, timeout: float = 300) -> dict:
-    """Verify a SCOOP field: the output of smoke_tests/lvdb_field.py / the workspace server.
+    """Verify a SCOOP field: the output of scoop/pipeline/lvdb_field.py / the workspace server.
 
     field: a field key such as "draco_1" (searched under root) or a path to <key>_field.json.
     sample: per archive, how many records to re-check against the archive and how many links to

@@ -19,8 +19,8 @@ except ModuleNotFoundError as exc:
 else:
     HAS_SERVER_DEPS = True
     from scoop.literature.models import ADSResult
-    from scoop.models import SearchStatus
-    from scoop.fields import FieldStore
+    from scoop.literature.records import SearchStatus
+    from scoop.science.fields import FieldStore
     from scoop.server import create_app
     from tests.field_fixture import viewer_data
 
@@ -127,7 +127,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("Circle M31", json.dumps(record))
         # The model sees the browser context, delimited as data, under the workspace prompt.
         self.assertIn("<workspace_context>", model.calls[0][-1].content)
-        from scoop.chat.prompt import WORKSPACE_PROMPT
+        from scoop.agents.prompt import WORKSPACE_PROMPT
         self.assertEqual(model.calls[0][0].content, WORKSPACE_PROMPT)
 
     def test_unknown_row_id_is_a_failed_tool_call(self):
@@ -146,7 +146,7 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(any(event["type"] == "artifact" for event in stream))
 
     def test_a_conversation_budget_is_estimated_against_and_drawn_down(self):
-        from scoop.cost import CostTracker
+        from scoop.runtime.cost import CostTracker
 
         answer = AIMessage(content="Draco is a dwarf spheroidal.",
                            usage_metadata={"input_tokens": 120_000, "output_tokens": 800, "total_tokens": 120_800})
@@ -173,7 +173,7 @@ class ServerTests(unittest.TestCase):
         self.assertIn("left of this conversation", actual["note"])
 
     def test_without_a_budget_nothing_is_costed_or_calibrated(self):
-        from scoop.cost import CostTracker
+        from scoop.runtime.cost import CostTracker
 
         answer = AIMessage(content="ok", usage_metadata={"input_tokens": 1000, "output_tokens": 10, "total_tokens": 1010})
         model = ScriptedModel(answer)
@@ -186,7 +186,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(kinds(stream), ["assistant", "done"])
 
     def test_a_command_the_remaining_budget_cannot_cover_does_not_run(self):
-        from scoop.cost import CostTracker
+        from scoop.runtime.cost import CostTracker
 
         model = ScriptedModel(AIMessage(content="never reached"))
         model.model_name = "claude-opus-5-5"
@@ -438,7 +438,7 @@ class StartPageTests(unittest.TestCase):
         # From the start page there is no field; after load_field, the proper-motion agent's
         # tools (like the map tools) must work on the newly loaded field in the same turn.
         try:
-            from scoop import pm
+            from scoop.science import pm
             from tests.test_pm import lvdb_tables
         except ModuleNotFoundError:
             self.skipTest("astropy absent")
@@ -480,7 +480,7 @@ class ParallelCommandEventTests(unittest.IsolatedAsyncioTestCase):
         from langgraph.graph import START, StateGraph
         from langgraph.prebuilt import ToolNode
 
-        from scoop.chat import ChatState, publish_result
+        from scoop.agents import ChatState, publish_result
         from scoop.server.app import _events
 
         def make(name):

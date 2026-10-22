@@ -5,7 +5,7 @@ import unittest
 try:
     import httpx
     from langchain_core.messages import AIMessage
-    from scoop.chat import build_chat_graph
+    from scoop.agents import build_chat_graph
     from scoop.literature.ads import ADSClient
     from scoop.literature.tools import build_ads_tools
 except ModuleNotFoundError as exc:

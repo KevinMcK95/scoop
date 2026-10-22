@@ -55,7 +55,7 @@ def kernel_maker(made: list):
     """Analysis kernels from settings (off without one); ``made`` collects them to close at exit."""
 
     def make(settings):
-        from ..kernel import DEFAULT_CWD, AnalysisKernel
+        from ..runtime.kernel import DEFAULT_CWD, AnalysisKernel
 
         name = settings.get("kernel")
         if not name or name == "off":  # "off" saved in Settings overrides SCOOP_KERNEL
@@ -87,15 +87,15 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                  threads_path: Path, triage_every_min: float = 60.0) -> None:
     import httpx
 
-    from ..fields import FieldStore
-    from ..images import cutout_fetcher
-    from ..kernel import available_kernels
-    from ..sandbox import PythonSandbox
-    from ..web import page_reader, web_searcher
-    from ..lookup import simbad_query
-    from ..lvdb import LVDBIndex
-    from ..resolve import sesame_resolver
-    from ..cost import CostTracker, load_prices
+    from ..science.fields import FieldStore
+    from ..archives.images import cutout_fetcher
+    from ..runtime.kernel import available_kernels
+    from ..runtime.sandbox import PythonSandbox
+    from ..archives.web import page_reader, web_searcher
+    from ..archives.lookup import simbad_query
+    from ..archives.lvdb import LVDBIndex
+    from ..archives.resolve import sesame_resolver
+    from ..runtime.cost import CostTracker, load_prices
     from . import create_app
     from .figures import FigureStore
     from .jobs import JobManager
@@ -135,8 +135,7 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
                 await kernel.close()
 
         stack.push_async_callback(close_kernels)
-        script = ROOT / "smoke_tests" / "lvdb_field.py"
-        jobs = JobManager(fields_dir, script) if script.exists() else None
+        jobs = JobManager(fields_dir)
         app = create_app(audit_path=audit_path, fields=fields, settings=settings, make_model=make_model,
                          checkpointer=checkpointer, costs=CostTracker(settings_path.with_name("costs.json")),
                          make_ads=ads_maker(web), resolver=sesame_resolver(web), simbad=simbad_query(web),
@@ -158,22 +157,29 @@ async def _serve(host: str, port: int, audit_path: Path | None, fields_dir: Path
         await uvicorn.Server(uvicorn.Config(app, host=host, port=port)).serve()
 
 
-# Defaults resolve from the repository root, so the server works from any directory.
-ROOT = Path(__file__).resolve().parents[2]
+def data_dir() -> Path:
+    """Where fields and the audit log live: $SCOOP_DATA_DIR; else out/ in a source checkout
+    (where the team's fields already are); else ~/.local/share/scoop for an installed package."""
+    if os.environ.get("SCOOP_DATA_DIR"):
+        return Path(os.environ["SCOOP_DATA_DIR"]).expanduser()
+    checkout = Path(__file__).resolve().parents[2]
+    if (checkout / "pyproject.toml").exists():
+        return checkout / "out"
+    return Path.home() / ".local" / "share" / "scoop"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
-    parser.add_argument("--audit-log", type=Path, default=ROOT / "out" / "turns.jsonl",
+    parser.add_argument("--audit-log", type=Path, default=data_dir() / "turns.jsonl",
                         help="append one JSON line per chat turn")
     parser.add_argument("--settings", type=Path, default=None,
                         help="settings file (default ~/.config/scoop/settings.json)")
     parser.add_argument("--threads", type=Path, default=None,
                         help="agent memory database (default ~/.config/scoop/threads.sqlite)")
-    parser.add_argument("--fields", type=Path, default=ROOT / "out",
-                        help="directory of smoke-test outputs (<dir>/*/<key>_field.json)")
+    parser.add_argument("--fields", type=Path, default=data_dir(),
+                        help="directory of field-pipeline outputs (<dir>/*/<key>_field.json)")
     parser.add_argument("--triage-every", type=float, default=60.0, metavar="MINUTES",
                         help="run the triage agent on new failures at most this often, once the workspace "
                              "has been idle 10 minutes (0: off). Reports: beside the settings, in triage/")

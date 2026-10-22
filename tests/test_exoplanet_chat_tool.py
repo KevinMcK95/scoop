@@ -5,8 +5,7 @@ import unittest
 from types import SimpleNamespace
 
 try:
-    from agentbook.models import FakeModel
-    from scoop.chat.exoplanet_agent import build_exoplanet_tool, field_context, relay_text
+    from scoop.agents.exoplanet_agent import build_exoplanet_tool, field_context, relay_text
 except ModuleNotFoundError as exc:  # the light environment has no chat dependencies
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "httpx", "openai"}:
         raise
@@ -40,7 +39,8 @@ class ExoplanetChatToolTests(unittest.TestCase):
 
     def test_a_vague_constraint_comes_back_as_the_agents_question(self):
         clarify = json.dumps({"clarify": {"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 0}})
-        tool = build_exoplanet_tool(field=FIELD, make_model=lambda: FakeModel([clarify]))
+        from tests.test_exoplanet_agent import ScriptedModel
+        tool = build_exoplanet_tool(field=FIELD, model=ScriptedModel([clarify]))
         command = invoke(tool, question="Add confirmed planet hosts with constraints: habitable.")
         message = command.update["messages"][0]
         self.assertIn("How should I select “habitable” planets?", message.content)
@@ -49,7 +49,7 @@ class ExoplanetChatToolTests(unittest.TestCase):
         self.assertNotIn("Highlighted", message.content)
 
     def test_without_a_model_it_says_so(self):
-        tool = build_exoplanet_tool(field=FIELD, make_model=lambda: None)
+        tool = build_exoplanet_tool(field=FIELD, model=None)
         message = invoke(tool, question="Does TOI-561 b have an atmosphere?")
         self.assertIn("needs a chat model", message.content)
 
@@ -63,7 +63,7 @@ class AddDataOptionsTests(unittest.TestCase):
     """The chat's add_data passes options (e.g. a TIC magnitude limit) to a source's query."""
 
     def setUp(self):
-        from scoop.chat.visual import build_map_tools
+        from scoop.agents.visual import build_map_tools
 
         self.calls = []
 

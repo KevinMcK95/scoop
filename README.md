@@ -78,8 +78,8 @@ Volume Database is downloaded once) and the map loads it. Follow with *"can you 
 proper motion measurement for draco? population fitting after identifying likely
 members?"*. More in [docs/demos.md](docs/demos.md).
 
-Optional extras: `run_python` (sandboxed Python for the agent, macOS + Node: `cd sandbox
-&& npm ci && npm run setup`) and `run_kernel` (your own Jupyter environment); see
+Optional extras: `run_python` (sandboxed Python for the agent, macOS + Node: `cd
+scoop/runtime/sandbox && npm ci && npm run setup`) and `run_kernel` (your own Jupyter environment); see
 [More about the workspace](#more-about-the-workspace).
 
 ## What you can do today
@@ -140,12 +140,12 @@ flowchart LR
 
 | Agent | Runs | Built on | Started by |
 | --- | --- | --- | --- |
-| **Chat agent** | in the workspace | LangGraph ([`scoop/chat/graph.py`](scoop/chat/graph.py)) | every user message |
-| **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/data_agent.py`](scoop/chat/data_agent.py)) | the chat agent's `ask_data_agent` |
-| **Proper-motion agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/chat/pm_agent.py`](scoop/chat/pm_agent.py)) | the chat agent's `ask_pm_agent` |
-| **Exoplanet agent** | in the workspace, inside a chat turn (also standalone) | [`agentbook`](agentbook/loop.py) ([`exoplanets/agent.py`](exoplanets/agent.py), chat tool [`scoop/chat/exoplanet_agent.py`](scoop/chat/exoplanet_agent.py)) | the chat agent's `ask_exoplanet_agent`; Python, its benchmark |
-| **Triage agent** | in the workspace server, on a timer | LangGraph ([`scoop/triage_agent.py`](scoop/triage_agent.py)) | at most hourly (`--triage-every`), after 10 idle minutes, when there are new failures |
-| **Dataset scout** | GitHub Actions, monthly | `agentbook` ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
+| **Chat agent** | in the workspace | LangGraph ([`scoop/agents/graph.py`](scoop/agents/graph.py)) | every user message |
+| **Data agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/agents/data_agent.py`](scoop/agents/data_agent.py)) | the chat agent's `ask_data_agent` |
+| **Proper-motion agent** | in the workspace, inside a chat turn | LangGraph, its own prompt and tools ([`scoop/agents/pm_agent.py`](scoop/agents/pm_agent.py)) | the chat agent's `ask_pm_agent` |
+| **Exoplanet agent** | in the workspace, inside a chat turn (also standalone) | LangGraph, answers checked in code ([`scoop/exoplanets/agent.py`](scoop/exoplanets/agent.py), chat tool [`scoop/agents/exoplanet_agent.py`](scoop/agents/exoplanet_agent.py)) | the chat agent's `ask_exoplanet_agent`; Python, its benchmark |
+| **Triage agent** | in the workspace server, on a timer | LangGraph ([`scoop/agents/triage_agent.py`](scoop/agents/triage_agent.py)) | at most hourly (`--triage-every`), after 10 idle minutes, when there are new failures |
+| **Dataset scout** | GitHub Actions, monthly | a LangChain model in a budgeted loop ([`scoop/scout/`](scoop/scout/__main__.py)) | schedule, or by hand |
 
 No agent changes SCOOP's code: the data agent reads failed runs and reports them during
 a turn; the triage agent reads new failures, the traces of the turns they happened in
@@ -156,12 +156,12 @@ line), a sketch of the fix and a test (reports beside the traces, listed at
 #### The workspace agents
 
 The chat agent, the data agent and the proper-motion agent are LangGraph agents with
-typed tools (`START → agent → tools → agent → END`; [`scoop/chat/graph.py`](scoop/chat/graph.py)).
+typed tools (`START → agent → tools → agent → END`; [`scoop/agents/graph.py`](scoop/agents/graph.py)).
 The **chat agent** talks to the user and works on the loaded field; the **data agent**
 decides everything that is downloaded; the **proper-motion agent** selects members and
 measures and plans proper motions. These two run inside the chat agent's turn
-([`scoop/chat/subagent.py`](scoop/chat/subagent.py)): what they show reaches the map,
-and their failed calls reach the audit log. The **exoplanet agent** (on `agentbook`) is
+([`scoop/agents/subagent.py`](scoop/agents/subagent.py)): what they show reaches the map,
+and their failed calls reach the audit log. The **exoplanet agent** (on the same chat model) is
 handed exoplanet questions the same way, through `ask_exoplanet_agent`. Archive access stays in deterministic tools,
 the field pipeline and data-source modules; the agents choose and explain, they never
 invent data.
@@ -195,23 +195,23 @@ flowchart LR
 
 | Agent | What it does |
 | --- | --- |
-| **Chat agent** ([prompt](scoop/chat/prompt.py)) | Answers from the loaded field and shows the answer on the map: layers, highlights, plots (CMD, proper motions, RVs), annotations. Analyses what is there (counts, statistics, overlaps and time baselines of HST/JWST footprints, cross-matches), reads the literature (ADS) and the web, and runs Python. It never starts a download and doesn't do proper-motion or exoplanet work itself: it passes those requests to the data agent, the proper-motion agent and the exoplanet agent in plain words, relays their reports, asks the user to confirm large downloads and the assumptions behind a measurement, and shows the results. |
-| **Proper-motion agent** ([prompt and tools](scoop/chat/pm_agent.py)) | For Local Volume Database objects: what a measurement could reach (internal dispersion, reflex and perspective, published errors, stars needed), what a new HST/JWST epoch or waiting would give, what has been published and whether it agrees, member selection of its own (radius, parallax, proper motion, empirical CMD region, velocities; shown as "Members (SCOOP)"), and maximum-likelihood fits of those or the user's Members (bulk motion, dispersion, RVs) against each paper, rerun without the priors or with inflated errors to show what the result depends on. Position errors and floors are inputs it states, never picks silently. |
-| **Data agent** ([prompt and tools](scoop/chat/data_agent.py)) | Decides what is fetched, from where and how much. Sizes every request first (Gaia counts in about a second); starts new fields for an LVDB object, a cone, a box, polygon or stellar-stream band (with cuts in the stream's frame), and adds data the field lacks from SCOOP's archive plug-ins, VizieR or any TAP service, following SCOOP's skills. Large requests come back as a plan for the user (above 60,000 Gaia sources for a cone or LVDB field, 500,000 for a region). Checks the Gaia servers and its own job queue, reads failed runs' logs, retries transient failures once and reports SCOOP bugs with their traceback. Defaults: Gaia and SIMBAD galaxies; HST/JWST observations, QSO catalogs and spectra only when asked; images are never downloaded. |
+| **Chat agent** ([prompt](scoop/agents/prompt.py)) | Answers from the loaded field and shows the answer on the map: layers, highlights, plots (CMD, proper motions, RVs), annotations. Analyses what is there (counts, statistics, overlaps and time baselines of HST/JWST footprints, cross-matches), reads the literature (ADS) and the web, and runs Python. It never starts a download and doesn't do proper-motion or exoplanet work itself: it passes those requests to the data agent, the proper-motion agent and the exoplanet agent in plain words, relays their reports, asks the user to confirm large downloads and the assumptions behind a measurement, and shows the results. |
+| **Proper-motion agent** ([prompt and tools](scoop/agents/pm_agent.py)) | For Local Volume Database objects: what a measurement could reach (internal dispersion, reflex and perspective, published errors, stars needed), what a new HST/JWST epoch or waiting would give, what has been published and whether it agrees, member selection of its own (radius, parallax, proper motion, empirical CMD region, velocities; shown as "Members (SCOOP)"), and maximum-likelihood fits of those or the user's Members (bulk motion, dispersion, RVs) against each paper, rerun without the priors or with inflated errors to show what the result depends on. Position errors and floors are inputs it states, never picks silently. |
+| **Data agent** ([prompt and tools](scoop/agents/data_agent.py)) | Decides what is fetched, from where and how much. Sizes every request first (Gaia counts in about a second); starts new fields for an LVDB object, a cone, a box, polygon or stellar-stream band (with cuts in the stream's frame), and adds data the field lacks from SCOOP's archive plug-ins, VizieR or any TAP service, following SCOOP's skills. Large requests come back as a plan for the user (above 60,000 Gaia sources for a cone or LVDB field, 500,000 for a region). Checks the Gaia servers and its own job queue, reads failed runs' logs, retries transient failures once and reports SCOOP bugs with their traceback. Defaults: Gaia and SIMBAD galaxies; HST/JWST observations, QSO catalogs and spectra only when asked; images are never downloaded. |
 
 Around them:
 
-- **Field pipeline** ([`smoke_tests/lvdb_field.py`](smoke_tests/lvdb_field.py)): the background
+- **Field pipeline** ([`scoop/pipeline/lvdb_field.py`](scoop/pipeline/lvdb_field.py)): the background
   job a field comes from: cones, LVDB objects and regions (boxes, polygons, galstreams or
   paper tracks), queried archive by archive with each decision recorded and shown.
 - **Cost budgets** ([What a command costs](#what-a-command-costs)): an optional per-conversation
   budget, an estimate before each command and its actual cost after.
-- **Freshness** ([`scoop/freshness.py`](scoop/freshness.py)): every turn's context says how old
+- **Freshness** ([`scoop/runtime/freshness.py`](scoop/runtime/freshness.py)): every turn's context says how old
   the loaded field is, which data-source plug-ins and survey skills SCOOP gained since it was
   built, and when the dataset scout last looked for new data releases. On the first turn of
   a conversation the chat agent mentions an old field (over 30 days) or new sources once,
   and offers to refresh it or add them through the data agent.
-- **Exoplanet agent** ([`exoplanets/`](exoplanets/agent.py)): answers planet questions with
+- **Exoplanet agent** ([`scoop/exoplanets/`](scoop/exoplanets/agent.py)): answers planet questions with
   every claim quoted from a tool result and checked (one retry when a check fails); the
   chat agent hands it exoplanet questions (`ask_exoplanet_agent`) and shows its answer
   word for word with its checked line, and it highlights matching rows of the field's
@@ -235,7 +235,7 @@ flowchart LR
 ```
 
   The [dataset scout](#dataset-scout) finds datasets SCOOP lacks; `/triage`
-  ([skill](.claude/skills/triage/SKILL.md), [`scripts/triage_failures.py`](scripts/triage_failures.py))
+  ([skill](.claude/skills/triage/SKILL.md), [`scoop/runtime/triage.py`](scoop/runtime/triage.py))
   turns the triage agent's suggestions into tested fixes. Both open branches for a person
   to review; nothing changes SCOOP's code unreviewed.
   [Evaluation](evaluation/README.md) checks both halves of an answer: the **data checks**
@@ -301,7 +301,7 @@ how to check coverage and cost before downloading, how to query it, its
 gotchas, the default decisions the agent makes, and how it explains them to
 the user (e.g. "Skipping Gaia RVS spectra: they only exist for bright stars,
 and the members of this galaxy are much fainter. Say 'include Gaia RVS' to
-override."). See [skills/index.md](skills/index.md).
+override."). See [scoop/skills/index.md](scoop/skills/index.md).
 
 Splitting the work this way means:
 
@@ -325,7 +325,7 @@ starts a fresh conversation with no field, looking at the whole sky.
 The agent can also run its own Python (`run_python`): numpy, pandas, scipy, astropy,
 matplotlib and scikit-learn in Pyodide (Python in WebAssembly), with the field's
 tables and no network or file access. It needs macOS and Node; set it up once with
-`cd sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/sandbox.py`](scoop/sandbox.py).
+`cd scoop/runtime/sandbox && npm ci && npm run setup` (about 70 MB). See [`scoop/runtime/sandbox.py`](scoop/runtime/sandbox.py).
 
 For work the sandbox cannot do (your own packages and data files, more memory and time),
 `run_kernel` runs the agent's code in a persistent Jupyter kernel in your own environment, keeping variables
@@ -338,7 +338,7 @@ pip install -e '.[kernel]'
 python -m scoop.server   # then ⚙ Settings → Analysis kernel: myenv
 ```
 
-See [`scoop/kernel.py`](scoop/kernel.py).
+See [`scoop/runtime/kernel.py`](scoop/runtime/kernel.py).
 
 Server options: `python -m scoop.server --help` (port, where fields, settings,
 conversations and the audit log live, and `--triage-every`). Developer mode (⚙ Settings)
@@ -362,7 +362,7 @@ See the [map and agent interaction design](docs/map_interaction.md) and the
 | Time domain & multi-messenger | — | ZTF, ATLAS, TNS; GW sky maps (GraceDB), IceCube, GCN, CHIME |
 
 New archives are plug-ins in [`scoop/sources/`](scoop/sources/__init__.py) plus a skill in
-[`skills/`](skills/index.md); the [dataset scout](#dataset-scout) drafts both for new data
+[`skills/`](scoop/skills/index.md); the [dataset scout](#dataset-scout) drafts both for new data
 releases.
 
 ## What a command costs
@@ -400,15 +400,13 @@ reported as unpriced rather than priced at another model's rate. Only a
 self-hosted endpoint that is not listed online needs
 `SCOOP_MODEL_PRICE_USD_PER_MTOK="input,output[,cached]"` (USD per million tokens).
 
-[`scoop/cost.py`](scoop/cost.py) is also usable on its own:
+[`scoop/runtime/cost.py`](scoop/runtime/cost.py) is also usable on its own:
 
 ```bash
-python -m scoop.cost "Summarize this abstract" claude-opus-5-5   # one estimate
-# or run any command through the budget check and the calibration loop:
-python3 scripts/auto_calibrated_runner.py "Summarize this abstract" --model gpt-4 --budget-usd 0.05
+python -m scoop.runtime.cost "Summarize this abstract" claude-opus-5-5   # one estimate
 ```
 
-Playbook: [skills/cost-checking.skill.md](skills/cost-checking.skill.md).
+Playbook: [scoop/skills/cost-checking.skill.md](scoop/skills/cost-checking.skill.md).
 
 ## Dataset scout
 
@@ -422,8 +420,8 @@ for the window since the last scan, compares them against what the skills and
 the registered data sources already cover, and for each real gap verifies the
 dataset against the archive's own pages and writes:
 
-- a draft skill in [`skills/surveys/`](skills/index.md), in the template from
-  [`new_survey_skill`](skills/meta/new_survey_skill.md);
+- a draft skill in [`scoop/skills/surveys/`](scoop/skills/index.md), in the template from
+  [`new_survey_skill`](scoop/skills/meta/new_survey_skill.md);
 - a registered module in [`scoop/sources/`](scoop/sources/__init__.py), which is
   all the field pipeline needs to start returning the survey's rows;
 - a probe in `smoke_tests/` that re-checks the facts;
@@ -440,7 +438,7 @@ ADS_API_TOKEN=... ANTHROPIC_API_KEY=... python -m scoop.scout --max-proposals 2
 ```
 
 Design and limits: [docs/dataset_scout.md](docs/dataset_scout.md). Running and
-reviewing a scan: [skills/meta/dataset_scout.md](skills/meta/dataset_scout.md).
+reviewing a scan: [scoop/skills/meta/dataset_scout.md](scoop/skills/meta/dataset_scout.md).
 
 ## Evaluation and demos
 
@@ -463,8 +461,8 @@ reviewing a scan: [skills/meta/dataset_scout.md](skills/meta/dataset_scout.md).
   HTML viewer:
 
   ```bash
-  python smoke_tests/lvdb_field.py --out out/draco --serve                       # an LVDB object (Draco)
-  python smoke_tests/lvdb_field.py --out out/t1 --ra 346.62 --dec -5.04 --radius-arcmin 5 --name "TRAPPIST-1"
+  python -m scoop.pipeline.lvdb_field --out out/draco --serve                       # an LVDB object (Draco)
+  python -m scoop.pipeline.lvdb_field --out out/t1 --ra 346.62 --dec -5.04 --radius-arcmin 5 --name "TRAPPIST-1"
   ```
 
 ## Inspiration: Aladin
@@ -589,6 +587,32 @@ coordinates and a radius), SCOOP:
   archive query.
 - **Downloads.** Each result keeps the access URL (DataLink, SIA/SSA, archive
   APIs) for its products, so files can be fetched on demand, with caching.
+
+## Repository layout
+
+```
+scoop/                the installable package (pip install -e '.[server]')
+  server/             HTTP API, settings, background jobs, traces   python -m scoop.server
+  agents/             the LangGraph agents: chat, data, proper-motion, exoplanet, triage, and their tools
+  sources/            data-source plug-ins (one module per archive table)
+  pipeline/           the field pipeline the server runs for new fields   python -m scoop.pipeline.lvdb_field
+  science/            fields, regions, streams, footprints, proper motions, member fits
+  archives/           clients: SIMBAD, Sesame, LVDB, Gaia status, VO discovery, image cutouts, the web
+  exoplanets/         exoplanet archive queries and the exoplanet agent's checks
+  literature/         ADS client and records
+  runtime/            cost budgets, run_python sandbox (with its Node runner), run_kernel, freshness, triage
+  scout/              the monthly dataset scout                         python -m scoop.scout
+  skills/             what each archive holds and how to query it; read by the agents
+web/                  the SvelteKit workspace
+evaluation/           data checks, spot checks, benchmarks, the metrics scorecard (pip install -e '.[eval]')
+smoke_tests/          hand-run probes against live archives
+tests/                unit tests, offline (python -m pytest)
+docs/                 design notes
+```
+
+Fields and the audit log go to `$SCOOP_DATA_DIR`: by default `out/` in a checkout and
+`~/.local/share/scoop` for an installed package. Settings, conversations, traces and budgets
+are in `~/.config/scoop/`.
 
 ## Contributing
 

@@ -16,10 +16,10 @@ chat = [
     "langgraph>=1.2.16,<2",
     "langchain-core>=1.6.12,<2",
 ]
-# The exoplanet data source runs Xuan Ji's exoplanets/archive.py (plain requests); the
-# exoplanet agent runs on agentbook (tool schemas checked with jsonschema).
-exoplanets = ["requests>=2.32,<3", "jsonschema>=4.21,<5"]
-# The field pipeline (smoke_tests/lvdb_field.py), which the workspace runs for new fields:
+# The exoplanet data source and agent (scoop/exoplanets/): archive queries over plain
+# requests; the agent's tool arguments are checked with jsonschema, and it runs on LangGraph.
+exoplanets = ["scoop-sky[chat]", "requests>=2.32,<3", "jsonschema>=4.21,<5"]
+# The field pipeline (python -m scoop.pipeline.lvdb_field), which the workspace runs for new fields:
 # MOCs for footprints and coverage, astroquery for MAST/Gaia/VizieR/SIMBAD, matplotlib for
 # the static map. A fresh `.[server]` install lacked mocpy and could not build any field.
 fields = [
@@ -31,34 +31,52 @@ fields = [
     "requests>=2.32,<3",
     "pyvo>=1.5,<2",
 ]
-# The monthly dataset scout: ADS over httpx, the agentbook loop (jsonschema), and
-# a model client. Data sources it generates query TAP with pyvo.
+# The monthly dataset scout: ADS over httpx, a LangChain model (Anthropic, or any
+# OpenAI-compatible endpoint), tool arguments checked with jsonschema. Data sources it
+# generates query TAP with pyvo.
 scout = [
     "scoop-sky[literature]",
+    "langchain-core>=1.6.12,<2",
+    "langchain-anthropic>=1,<2",
+    "langchain-openai>=1,<2",
     "jsonschema>=4.21,<5",
-    "anthropic>=0.49,<1",
     "pyvo>=1.5,<2",
 ]
-# run_kernel (scoop/kernel.py): a Jupyter kernel in the user's own analysis environment.
+# run_kernel (scoop/runtime/kernel.py): a Jupyter kernel in the user's own analysis environment.
 kernel = ["jupyter_client>=8,<9"]
-# The data agent (scoop/discovery.py): VO registry, TAP, VizieR, MOC server.
+# The data agent (scoop/archives/discovery.py): VO registry, TAP, VizieR, MOC server.
 discovery = [
     "pyvo>=1.9,<2",
     "astroquery>=0.4.11",
     "astropy>=7",
     "requests>=2.32,<3",
 ]
-# Stellar-stream tracks for region searches along streams (scoop/streams.py reads its files).
+# Stellar-stream tracks for region searches along streams (scoop/science/streams.py reads its files).
 streams = ["galstreams>=1.2.1,<2"]
 server = [
     "scoop-sky[chat,literature,discovery,streams,fields,exoplanets]",
-    # Proper-motion and member fits (scoop/pm.py, scoop/members.py) behind the chat's PM tools.
+    # Proper-motion and member fits (scoop/science/pm.py, scoop/science/members.py) behind the chat's PM tools.
     "scipy>=1.11",
     "starlette>=0.46,<2",
     "uvicorn>=0.34,<1",
     "langchain-openai>=1,<2",
     "langgraph-checkpoint-sqlite>=3,<4",
 ]
+# Developer tooling outside the package: evaluation/ (data checks, spot checks, the MCP
+# server, the metrics scorecard) and the tests.
+eval = [
+    "scoop-sky[fields,literature]",
+    "mcp>=1.2",
+]
+dev = [
+    "scoop-sky[server,kernel,scout,eval]",
+    "pytest>=8",
+]
 
 [tool.setuptools.packages.find]
 include = ["scoop", "scoop.*"]
+
+[tool.setuptools.package-data]
+# Skills the agents read at runtime, and the run_python sandbox's Node runner.
+scoop = ["skills/**/*.md", "runtime/sandbox/runner.mjs", "runtime/sandbox/package.json",
+         "runtime/sandbox/package-lock.json"]

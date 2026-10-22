@@ -1,8 +1,7 @@
 import math
 import unittest
 
-from scoop.spatial import (Footprint, footprint_contains, footprint_overlaps_circle, parse_stcs,
-                           polygon_contains_circle, separation_deg)
+from scoop.science.spatial import Footprint, footprint_contains, footprint_overlaps_circle, parse_stcs, polygon_contains_circle, separation_deg
 
 SQUARE = "POLYGON ICRS 260.0 57.9 260.1 57.9 260.1 58.0 260.0 58.0"
 

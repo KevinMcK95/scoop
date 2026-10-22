@@ -2,19 +2,17 @@
 
     python smoke_tests/pm_expectations.py --lvdb-key draco_1 [--n-stars 200] [--star-error 0.03]
 
-The calculations live in scoop/pm.py (also used by the chat agent's proper-motion
-tools); see skills/astrometry/proper_motions.md.
+The calculations live in scoop/science/pm.py (also used by the chat agent's proper-motion
+tools); see scoop/skills/astrometry/proper_motions.md.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scoop import pm  # noqa: E402
+from scoop.science import pm
 
 
 def main():

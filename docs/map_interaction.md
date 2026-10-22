@@ -2,7 +2,7 @@
 
 SCOOP is visualizer-first: the sky map is the product, and chat, literature and
 tables serve it. The user and the agent work on the same map. This plan merges
-Kevin's field viewer (`smoke_tests/sky_viewer.py`) with the `web/` workspace
+Kevin's field viewer (`scoop/pipeline/sky_viewer.py`) with the `web/` workspace
 into one app, and defines how the agent operates the map.
 
 ## Principles

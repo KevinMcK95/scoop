@@ -6,7 +6,7 @@ three of which are plain code:
 1. **Harvest** (``candidates``): ask ADS for data-release and catalogue papers
    entered since the last scan. ADS indexes arXiv eprints, so this covers both.
 2. **Inventory** (``coverage``): read what SCOOP already covers, from the skills
-   in ``skills/`` and the registered data sources in ``scoop.sources``.
+   in ``scoop/skills/`` and the registered data sources in ``scoop.sources``.
 3. **Triage** (``triage``): the one judgment call, and the only model-driven
    step. For each candidate the model decides whether it is a real data release,
    which survey it belongs to, and whether that survey (at that release) is

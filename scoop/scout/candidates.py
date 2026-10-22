@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from ..literature.models import SearchRequest
-from ..models import SearchStatus
+from ..literature.records import SearchStatus
 
 PAGE_SIZE = 50  # the ADS client's maximum
 

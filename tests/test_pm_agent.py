@@ -5,16 +5,16 @@ from pathlib import Path
 
 try:
     from langchain_core.messages import AIMessage
-    from scoop.chat.pm_agent import PM_AGENT_PROMPT, build_pm_handoff_tool
-    from scoop.chat.pm_tools import build_pm_tools
-    from scoop.chat.prompt import WORKSPACE_PROMPT
-    from scoop.chat.tools import publish_result
+    from scoop.agents.pm_agent import PM_AGENT_PROMPT, build_pm_handoff_tool
+    from scoop.agents.pm_tools import build_pm_tools
+    from scoop.agents.prompt import WORKSPACE_PROMPT
+    from scoop.agents.tools import publish_result
 except ModuleNotFoundError as exc:
     if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic", "numpy"}:
         raise
     build_pm_handoff_tool = None
 
-from scoop.fields import field_from_viewer_data
+from scoop.science.fields import field_from_viewer_data
 from tests.field_fixture import viewer_data
 
 

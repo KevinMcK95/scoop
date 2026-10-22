@@ -1,4 +1,4 @@
-// Applying map actions to map state. The server validates first (scoop/chat/visual.py);
+// Applying map actions to map state. The server validates first (scoop/agents/visual.py);
 // the browser checks again because it is the renderer and the user may have changed things.
 import { matches } from './filter';
 import { SHAPES } from './types';

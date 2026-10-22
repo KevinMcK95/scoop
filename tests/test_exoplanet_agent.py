@@ -1,17 +1,23 @@
 """The exoplanet agent's loop: answer, check, and send a failed answer back once.
 
-A scripted FakeModel plays the agent and the tools return saved results, so these run
+A scripted model plays the agent and the tools return saved results, so these run
 offline and do not depend on the archive or ADS being up.
 """
-import dataclasses
+import asyncio
 import json
 import unittest
 
-from agentbook.models import FakeModel, call
-from agentbook.tools import ToolError, ToolRegistry
-from exoplanets.agent import SYSTEM, ask, request_text
-from exoplanets.evaluate import score
-from exoplanets.tools import GET_ABSTRACT, GET_PLANETS
+try:
+    from langchain_core.messages import AIMessage
+    from scoop.exoplanets.agent import SYSTEM, ask as ask_async, request_text
+except ModuleNotFoundError as exc:  # the light environment has no chat dependencies
+    if exc.name.split(".")[0] not in {"langgraph", "langchain_core", "pydantic"}:
+        raise
+    raise unittest.SkipTest("optional chat dependencies absent")
+
+from evaluation.exoplanets.evaluate import score
+from scoop.exoplanets.archive import ArchiveError
+from scoop.exoplanets.tools import GET_ABSTRACT, GET_PLANETS, exoplanet_tool
 from tests.test_exoplanet_checks import PLANETS
 from tests.test_exoplanet_claims import ABSTRACT, QUOTE, TESKE
 
@@ -21,30 +27,61 @@ GOOD = json.dumps({"claims": [{"text": "JWST/NIRSpec found the dayside inconsist
 OVERSTATED = json.dumps({"claims": [{"text": "TOI-561 b has a thick atmosphere.", "source": TESKE, "quote": QUOTE}]})
 
 
-def registry(abstract=lambda bibcode: ABSTRACT, planets=lambda hostname: {}) -> ToolRegistry:
-    return ToolRegistry([dataclasses.replace(GET_ABSTRACT, fn=abstract),
-                         dataclasses.replace(GET_PLANETS, fn=planets)])
+def call(name: str, **args) -> dict:
+    """A scripted tool call: call("get_abstract", bibcode=...)."""
+    return {"tool": name, "args": args}
+
+
+class ScriptedModel:
+    """A LangChain chat model for tests: each turn is the final answer (a string) or a
+    call(...) to make. Every request (the messages it was sent) is kept in `requests`."""
+
+    def __init__(self, script: list):
+        self.script = iter(script)
+        self.requests: list[list] = []
+        self.calls = 0
+
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages, config=None):
+        self.requests.append(list(messages))
+        turn = next(self.script)
+        if isinstance(turn, str):
+            return AIMessage(content=turn)
+        self.calls += 1
+        return AIMessage(content="", tool_calls=[{"name": turn["tool"], "args": turn["args"],
+                                                  "id": f"call_{self.calls:03d}", "type": "tool_call"}])
+
+
+def ask(*args, **kwargs):
+    return asyncio.run(ask_async(*args, **kwargs))
+
+
+def registry(abstract=lambda bibcode: ABSTRACT, planets=lambda hostname: {}) -> list:
+    return [exoplanet_tool(GET_ABSTRACT.name, GET_ABSTRACT.description, GET_ABSTRACT.args_schema, abstract),
+            exoplanet_tool(GET_PLANETS.name, GET_PLANETS.description, GET_PLANETS.args_schema, planets)]
 
 
 class AgentLoopTests(unittest.TestCase):
     def test_a_good_first_answer_is_returned_as_checked(self):
-        model = FakeModel([call("get_abstract", bibcode=TESKE), GOOD])
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), GOOD])
         result = ask(QUESTION, model, registry())
         self.assertTrue(result.checked, result.report.summary())
         self.assertEqual(result.attempts, 1)
-        self.assertEqual(model.requests[0]["system"], SYSTEM)
+        self.assertEqual(model.requests[0][0].content, SYSTEM)
         self.assertIn(f"> “{QUOTE}”", result.text)  # the user sees the paper's own words
 
     def test_an_overstated_answer_goes_back_and_is_fixed(self):
-        model = FakeModel([call("get_abstract", bibcode=TESKE), OVERSTATED, GOOD])
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), OVERSTATED, GOOD])
         result = ask(QUESTION, model, registry())
         self.assertTrue(result.checked)
         self.assertEqual(result.attempts, 2)
-        retry = model.requests[2]["messages"][-1]["content"]  # what the model was told
+        retry = model.requests[2][-1].content  # what the model was told
         self.assertIn("states as certain what the paper hedges", retry)
 
     def test_an_answer_that_fails_twice_is_returned_unchecked_with_its_report(self):
-        model = FakeModel([call("get_abstract", bibcode=TESKE), OVERSTATED, OVERSTATED])
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), OVERSTATED, OVERSTATED])
         result = ask(QUESTION, model, registry())
         self.assertFalse(result.checked)
         self.assertEqual(result.attempts, 2)
@@ -52,20 +89,29 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_with_ads_down_the_honest_answer_passes(self):
         def down(bibcode):
-            raise ToolError("ADS request failed (HTTPError, HTTP 503). Report that the literature "
-                            "search is unavailable rather than citing papers from memory.")
+            raise ArchiveError("ADS request failed (HTTPError, HTTP 503). Report that the literature "
+                               "search is unavailable rather than citing papers from memory.")
 
         honest = json.dumps({"claims": [{"text": "The literature search is unavailable (HTTP 503), so I cannot "
                                                  "say what has been published.", "source": "ADS",
                                          "quote": "ADS request failed (HTTPError, HTTP 503)"}]})
-        model = FakeModel([call("get_abstract", bibcode=TESKE), honest])
-        self.assertTrue(ask(QUESTION, model, registry(down)).checked)
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), honest])
+        result = ask(QUESTION, model, registry(down))
+        self.assertTrue(result.checked)
+        failed = result.messages[2]  # the model reads the archive's own message, as an error
+        self.assertEqual((failed.status, failed.content[:24]), ("error", "ADS request failed (HTTP"))
+
+    def test_a_run_that_hits_the_step_limit_is_not_checked(self):
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), call("get_abstract", bibcode=TESKE), GOOD])
+        result = ask(QUESTION, model, registry(), max_steps=2)
+        self.assertFalse(result.checked)
+        self.assertEqual((len(model.requests), result.attempts), (2, 1))  # stopped, and not sent back
 
     def test_with_ads_down_a_paper_from_memory_is_caught(self):
         def down(bibcode):
-            raise ToolError("ADS request failed (HTTPError, HTTP 503).")
+            raise ArchiveError("ADS request failed (HTTPError, HTTP 503).")
 
-        model = FakeModel([call("get_abstract", bibcode=TESKE), GOOD, GOOD])
+        model = ScriptedModel([call("get_abstract", bibcode=TESKE), GOOD, GOOD])
         result = ask(QUESTION, model, registry(down))
         self.assertFalse(result.checked)
         self.assertIn("abstract was not fetched", result.report.problems[0])
@@ -75,7 +121,7 @@ class BenchmarkScoreTests(unittest.TestCase):
     CASE = {"id": "toi561b-atmosphere", "must_cite": [TESKE, "2026AJ....172..239B"]}
 
     def test_a_checked_answer_missing_a_required_paper_fails_the_benchmark(self):
-        result = ask(QUESTION, FakeModel([call("get_abstract", bibcode=TESKE), GOOD]), registry())
+        result = ask(QUESTION, ScriptedModel([call("get_abstract", bibcode=TESKE), GOOD]), registry())
         s = score(self.CASE, result)
         self.assertTrue(s.checked)  # true to its source...
         self.assertEqual(s.missing, ["2026AJ....172..239B"])  # ...but incomplete
@@ -95,7 +141,7 @@ class ConstraintFlowTests(unittest.TestCase):
                          "highlight": {"table": "exoplanet_hosts", "ids": ["TRAPPIST-1"], "label": "Habitable"}})
 
     def test_unconfirmed_constraints_get_a_proposal_to_show_the_user(self):
-        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.PROPOSAL])
+        model = ScriptedModel([call("get_planets", hostname="TRAPPIST-1"), self.PROPOSAL])
         result = ask(self.REQUEST, model, registry(), context=self.FIELD)
         self.assertEqual(result.kind, "proposal")
         self.assertTrue(result.checked, result.report.summary())
@@ -107,24 +153,24 @@ class ConstraintFlowTests(unittest.TestCase):
         vague = json.dumps({"proposal": {"criteria": [{"constraint": "atmosphere claimed",
                                                        "means": "a paper says so", "uses": "literature"}],
                                          "question": "OK?"}})
-        model = FakeModel([vague, self.PROPOSAL])
+        model = ScriptedModel([vague, self.PROPOSAL])
         result = ask(self.REQUEST, model, registry())
         self.assertEqual(result.attempts, 2)
-        self.assertIn("literature_planets", model.requests[1]["messages"][-1]["content"])
+        self.assertIn("literature_planets", model.requests[1][-1].content)
 
     def test_confirmed_criteria_are_applied_and_highlighted(self):
-        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.PASSES])
+        model = ScriptedModel([call("get_planets", hostname="TRAPPIST-1"), self.PASSES])
         result = ask(self.REQUEST, model, registry(planets=lambda hostname: PLANETS), context=self.FIELD,
                      criteria="habitable = insolation 0.25-1.5 Earth")
         self.assertEqual(result.kind, "result")
         self.assertTrue(result.checked, result.report.summary())
         self.assertEqual(result.highlight["ids"], ["TRAPPIST-1"])
-        sent = model.requests[0]["messages"][0]["content"]
+        sent = model.requests[0][1].content  # after the system prompt
         self.assertIn("Confirmed criteria (apply exactly these): habitable = insolation", sent)
 
     def test_a_highlight_id_no_tool_returned_fails(self):
         invented = json.dumps({**json.loads(self.PASSES), "highlight": {"table": "exoplanet_hosts", "ids": ["Kepler-442"]}})
-        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), invented, invented])
+        model = ScriptedModel([call("get_planets", hostname="TRAPPIST-1"), invented, invented])
         result = ask(self.REQUEST, model, registry(planets=lambda hostname: PLANETS), criteria="habitable")
         self.assertFalse(result.checked)
         self.assertIn("Highlight id Kepler-442 was not returned by any tool", result.report.problems[0])
@@ -132,7 +178,7 @@ class ConstraintFlowTests(unittest.TestCase):
     CLARIFY = json.dumps({"clarify": {"constraints": ["habitable"], "table": "exoplanet_hosts", "count": 7}})
 
     def test_a_vague_constraint_offers_a_definition_or_claims_with_the_planet_count(self):
-        model = FakeModel([call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
+        model = ScriptedModel([call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
         result = ask("Add confirmed planet hosts with constraints: habitable.", model,
                      registry(planets=lambda hostname: PLANETS))
         self.assertEqual(result.kind, "clarify")
@@ -142,15 +188,15 @@ class ConstraintFlowTests(unittest.TestCase):
         self.assertIn("2. **By claims in the literature:** find which of the 7 planets in this field", result.text)
 
     def test_a_count_not_taken_from_a_tool_is_sent_back(self):
-        model = FakeModel([self.CLARIFY, call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
+        model = ScriptedModel([self.CLARIFY, call("get_planets", hostname="TRAPPIST-1"), self.CLARIFY])
         result = ask("Add confirmed planet hosts with constraints: habitable.", model,
                      registry(planets=lambda hostname: PLANETS))
         self.assertEqual(result.attempts, 2)
-        self.assertIn("Count the objects with a tool", model.requests[1]["messages"][-1]["content"])
+        self.assertIn("Count the objects with a tool", model.requests[1][-1].content)
         self.assertTrue(result.checked)
 
     def test_tic_constraints_are_about_stars(self):
-        from exoplanets.agent import render_clarify
+        from scoop.exoplanets.agent import render_clarify
         text = render_clarify({"constraints": ["M dwarfs"], "table": "tic", "count": 1})
         self.assertIn("How should I select “M dwarfs” stars?", text)
         self.assertIn("e.g. of Teff, radius or log g", text)
@@ -165,7 +211,7 @@ class ConstraintFlowTests(unittest.TestCase):
 
     def suggest(self, criterion):
         proposal = json.dumps({"proposal": {"criteria": [criterion], "literature_planets": 0, "question": "Is this okay?"}})
-        model = FakeModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal, proposal])
+        model = ScriptedModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal, proposal])
         return ask("Habitable: I have no definition, suggest one.", model, registry(abstract=lambda bibcode: self.HZ))
 
     def test_a_suggested_definition_shows_its_one_reference_and_quote(self):
@@ -180,12 +226,12 @@ class ConstraintFlowTests(unittest.TestCase):
         referenced = {**given, "suggested": True, "source": "2099TestJ...1....1A",
                       "quote": "the habitable zone as insolation from 0.3 to 1.2 times the Earth's"}
         proposal = lambda c: json.dumps({"proposal": {"criteria": [c], "literature_planets": 0, "question": "Is this okay?"}})
-        model = FakeModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal(referenced), proposal(given)])
+        model = ScriptedModel([call("get_abstract", bibcode=self.HZ["bibcode"]), proposal(referenced), proposal(given)])
         result = ask("Show me the planets with equilibrium temperature from 300 K to 500 K", model,
                      registry(abstract=lambda bibcode: self.HZ))
         self.assertEqual(result.attempts, 2)
         self.assertIn("the user gave this range and did not ask for a suggestion",
-                      model.requests[2]["messages"][-1]["content"])
+                      model.requests[2][-1].content)
         self.assertTrue(result.checked)
         self.assertNotIn("suggested from", result.text)
 

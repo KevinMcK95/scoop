@@ -20,7 +20,7 @@ import numpy as np
 import requests
 from astropy.io import fits
 
-from .checks import FAIL, PASS, CheckResult, record_key
+from evaluation.checks import FAIL, PASS, CheckResult, record_key
 
 GWTC1_SKYMAP = "https://dcc.ligo.org/public/0157/P1800381/007/{event}_skymap.fits.gz"
 

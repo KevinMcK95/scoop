@@ -1,10 +1,10 @@
-// Same semantics as scoop/fields.py:matches; both run tests/fixtures/filter_cases.json.
+// Same semantics as scoop/science/fields.py:matches; both run tests/fixtures/filter_cases.json.
 import type { Clause, Row } from './types';
 
 const isNumber = (v: unknown): v is number => typeof v === 'number';
 const RAD = Math.PI / 180;
 
-/** Great-circle separation in degrees (haversine), as scoop/spatial.py. */
+/** Great-circle separation in degrees (haversine), as scoop/science/spatial.py. */
 export function separation(ra1: number, dec1: number, ra2: number, dec2: number): number {
   const h = Math.sin(((dec2 - dec1) * RAD) / 2) ** 2 +
     Math.cos(dec1 * RAD) * Math.cos(dec2 * RAD) * Math.sin(((ra2 - ra1) * RAD) / 2) ** 2;
@@ -20,7 +20,7 @@ function inList(value: unknown, list: unknown[]): boolean {
   return set.has(value);
 }
 
-/** Point-in-polygon on the sky, tested in a tangent plane about the point (as scoop/spatial.py). */
+/** Point-in-polygon on the sky, tested in a tangent plane about the point (as scoop/science/spatial.py). */
 export function polygonContains(points: [number, number][], ra: number, dec: number): boolean {
   const [a0, d0] = [ra * RAD, dec * RAD];
   const xy: [number, number][] = [];
@@ -40,7 +40,7 @@ export function polygonContains(points: [number, number][], ra: number, dec: num
   return inside;
 }
 
-/** Point in a polygon drawn on a plot (ray casting in the plot's own units), as scoop/fields.py. */
+/** Point in a polygon drawn on a plot (ray casting in the plot's own units), as scoop/science/fields.py. */
 export function planePolygonContains(points: [number, number][], x: number, y: number): boolean {
   let inside = false;
   for (let i = 0; i < points.length; i++) {
